@@ -22,4 +22,5 @@ import Tessera.Teardown
 import Tessera.Fault
 import Tessera.Refinement
 import Tessera.RefinementS
+import Tessera.ExtentMap
 import Tessera.Frames

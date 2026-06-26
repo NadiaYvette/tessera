@@ -1,7 +1,7 @@
 # Tessera — what is proved (capstone)
 
 A self-contained statement of the result. The development is **Lean 4 (v4.16.0,
-core only), ~112 theorems across 18 modules, every result checked to rest only on
+core only), ~118 theorems across 19 modules, every result checked to rest only on
 Lean's standard sound axioms** (`propext`, `Quot.sound`, and `Classical.choice` where
 a noncomputable spec object is defined) — never `sorry`. The **operation matrix is
 complete**: every operation in `proof-obligations.md` Part 2 (fault, map, unmap,
@@ -92,6 +92,7 @@ Each is a failure that actually occurred in telix or pgcl, here proved to be a
 | `free_shared_node_strands_siblings` | freeing a shared PT subtree a sibling aspace still references (telix #2) |
 | `orphan_marker_breaks_wf` | an orphaned shared-PT marker with no owning group (telix #19) |
 | `overhang_undercounts` | per-object refcount under-counts a PT node shared across object boundaries (telix #20) |
+| `insert_overlap_breaks` | inserting an overlapping extent into the B+-tree (ordered map) corrupts the ordering invariant (telix #14 / pgcl #14) |
 
 The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the invariants.
 
@@ -104,10 +105,15 @@ The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the inv
 - **Trusted, not proved:** the hardware behaves as the abstract translation model says
   (the MMU/TLB, invalidation instructions). On **software-refill** architectures this
   trust shrinks to a provable refill handler — see `mmu-variants.md`.
-- **Deferred:** Property 2 (concurrent TLB-shootdown ordering under relaxed memory) — a
-  standalone Coq + Iris / litmus track; and Layer I (the concrete data-structure and
-  imperative refinement). Both are noted, neither is required for the above to be a
-  complete and honest result (as the brief's §5 states of seL4's own lines).
+- **Separate track, done:** Property 2 (concurrent TLB-shootdown ordering under relaxed
+  memory) — the standalone Coq + Iris / litmus development (`../property2/`): the litmus
+  necessity family on the Arm VMSA model, and the Iris protocol proofs under both
+  sequential consistency and weak memory (iRC11/gpfsl).
+- **In progress:** Layer I (refinement to the real implementation) — first rung done
+  (`ExtentMap.lean`, the telix B+-tree's ordered-map semantics refined to Layer A);
+  the balanced tree-node structure, PTE bit-encodings, and literal-Rust validation
+  (e.g. Aeneas) remain. Not required for the above to be a complete, honest result on
+  its own terms (as the brief's §5 states of seL4's own lines).
 
 ## Module index (`../proof/Tessera/`)
 
@@ -118,7 +124,7 @@ The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the inv
 `Swap` (swap-out) · `Teardown` (exit/teardown) · `Fault` (fault/populate, promote-on-fill) ·
 `Tile` (promote/demote coarsening) · `Tiling` (heterogeneous tiling WF) ·
 `Refinement` (superpaging invisible) · `RefinementS` (Layer-S mapping) ·
-`Frames` (physical frames).
+`Frames` (physical frames) · `ExtentMap` (Layer-I: ordered extent map = telix B+-tree, refined to Layer A).
 
 ## Why it is grounded
 

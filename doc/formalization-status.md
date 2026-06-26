@@ -29,7 +29,7 @@ needs. Build/verify instructions live in [`../proof/README.md`](../proof/README.
 |-------|------|-------|--------|
 | **S** — Specification | abstract mapping VA→(PA,perm); the ABI promise | presence (`Tlb.lean`); permissions `tilingMapping` (`RefinementS.lean`); **(frame,perm)** `Tile.grantsF` (`Frames.lean`) | ✅ the full per-granule (physical frame, permission) mapping is well-defined and shown invariant under the representation (M3) |
 | **A** — Algorithm | extents as pure data; ops as pure functions; the central theorems | `Basic.lean`, `Split.lean`, `Tlb.lean` | M1 done; M2 flagship (unmap/TLB) done; rest in progress |
-| **I** — Implementation | concrete B+-tree / PTE bit-encodings / refcounted sharing groups | — | deferred (brief §5); telix's `mm/extent.rs` B+-tree is the eventual refinement target |
+| **I** — Implementation | concrete B+-tree / PTE bit-encodings / refcounted sharing groups | **`ExtentMap.lean`** (ordered extent map = telix `mm/extent.rs` B+-tree semantics) | 🔶 **first rung done**: the ordered-map invariant **refines** Layer-A `WF` (`WFI_imp_WF`, axiom-free); `lookup` sound+complete vs the induced mapping; `insert` refines the set-add and preserves the order, while an overlapping insert is a provable error (telix #14). PTE bit-encodings, refcounted groups, and the balanced tree-node structure remain |
 
 ## Invariants (brief §3) → formal status
 
@@ -157,6 +157,18 @@ use 1. Full treatment: `clustering-rationale.md`.
   `PromotableF` surfaces the real **physical-contiguity** precondition for promotion.
   *Remaining to extend further (optional):* relate the mapping to the `Basic.lean`
   extent set (largely subsumed by `Tile.toExtent`).
+- **M4 — Layer-I refinement (the real implementation).** 🔶 **First rung done**
+  (`ExtentMap.lean`): the **ordered extent map** — the semantic model of telix's
+  `mm/extent.rs` B+-tree (an ordered, non-overlapping map keyed by base). Proved: its
+  ordering invariant **refines** Layer-A `WF` (`WFI_imp_WF`, axiom-free); `lookup` is
+  sound and complete against the induced mapping; `insert` refines the set-add
+  (`insert_mem`) and **preserves** the ordering invariant when the new extent is disjoint
+  (`insert_ordered`), while an overlapping insert provably breaks it
+  (`insert_overlap_breaks` = telix #14 / pgcl #14). This connects the verified algorithm
+  to telix's actual data structure. *Remaining:* the balanced tree-node/fanout structure
+  (a performance-only refinement of this ordered map), the PTE bit-encoding leaf, and the
+  refcounted sharing-group structure — and, further out, validating the literal Rust
+  (e.g. via Aeneas).
 
 ## Formalization decisions (and why)
 
