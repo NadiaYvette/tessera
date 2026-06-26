@@ -16,6 +16,7 @@ import Tessera.Tile
 import Tessera.Tiling
 import Tessera.Cow
 import Tessera.Fork
+import Tessera.PtShare
 import Tessera.Swap
 import Tessera.Teardown
 import Tessera.Fault

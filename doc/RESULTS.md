@@ -1,7 +1,7 @@
 # Tessera — what is proved (capstone)
 
 A self-contained statement of the result. The development is **Lean 4 (v4.16.0,
-core only), ~106 theorems across 17 modules, every result checked to rest only on
+core only), ~112 theorems across 18 modules, every result checked to rest only on
 Lean's standard sound axioms** (`propext`, `Quot.sound`, and `Classical.choice` where
 a noncomputable spec object is defined) — never `sorry`. The **operation matrix is
 complete**: every operation in `proof-obligations.md` Part 2 (fault, map, unmap,
@@ -39,10 +39,14 @@ physical frames `Tile.grantsF : … → Option (frame, perm)` — is **well-defi
   presence/permission; coherence re-established.
 - **KAU integrity + dirty/ref aggregation (inv2, inv5)** — `Kau.dirty_of_mem`/`dirty_iff`,
   `Kau.WF.setSlot` (`Kau.lean`): the per-KAU answer is the honest OR over the `c`-vector.
-- **Shared object / refcount (inv6)** — `Backing.{add,remove}_wf`, `free_iff_unmapped`
-  (`Sharing.lean`); `cowShared_wf`, `cow_conserves`, `cow_no_free_while_shared`
-  (`Cow.lean`): the cached refcount tracks true sharing; COW-break keeps a shared
-  object unreclaimable.
+- **Shared object / refcount (inv6), through Rung 3** — `Backing.{add,remove}_wf`,
+  `free_iff_unmapped` (`Sharing.lean`); `cowShared_wf`, `cow_conserves`,
+  `cow_no_free_while_shared` (`Cow.lean`); `fork_wf`, `forkKernel_breaks_userSafe`
+  (`Fork.lean`); and **concrete sharing** — `mappers_length_wf`, the PT-node refcount
+  discipline `addRef_wf`/`dropRef_wf`, and the structural errors
+  `free_shared_node_strands_siblings`/`orphan_marker_breaks_wf`/`overhang_undercounts`
+  (`PtShare.lean`): the cached refcount tracks true sharing, on backing objects *and*
+  on shared page-table nodes (which may span object boundaries).
 - **Map atomicity (category H)** — `map_atomic`, `goodMap_spec` (`MapAtomic.lean`):
   `map` is all-or-nothing.
 - **Superpage promote/demote under heterogeneous tiling (inv3, inv4, inv5)** —
@@ -85,6 +89,9 @@ Each is a failure that actually occurred in telix or pgcl, here proved to be a
 | `swapOutBuggy_loses_data` / `swapOutBuggy_drops_dirty` | per-KAU (single-slot) swap encoding loses pages / drops a dirty page (pgcl #19) |
 | `teardownLeak_strands` | teardown that under-decrements → unreclaimable leak (category G) |
 | `gapped_not_promotable` / `divergent_not_uniformPerms` | promoting a partially-populated or divergent-permission KAU (invariant 3) |
+| `free_shared_node_strands_siblings` | freeing a shared PT subtree a sibling aspace still references (telix #2) |
+| `orphan_marker_breaks_wf` | an orphaned shared-PT marker with no owning group (telix #19) |
+| `overhang_undercounts` | per-object refcount under-counts a PT node shared across object boundaries (telix #20) |
 
 The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the invariants.
 
@@ -106,7 +113,8 @@ The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the inv
 
 `Basic` (extents, WF) · `Split` (M1 `split`/merge) · `Tlb` (unmap coherence) ·
 `Mprotect` (mprotect coherence) · `Kau` (PTE-vector) · `Sharing` (refcount) ·
-`Cow` (COW-break) · `Fork` (fork/COW-share) · `MapAtomic` (map atomicity) ·
+`Cow` (COW-break) · `Fork` (fork/COW-share) · `PtShare` (Rung-3 concrete sharing, PT-node refcounts) ·
+`MapAtomic` (map atomicity) ·
 `Swap` (swap-out) · `Teardown` (exit/teardown) · `Fault` (fault/populate, promote-on-fill) ·
 `Tile` (promote/demote coarsening) · `Tiling` (heterogeneous tiling WF) ·
 `Refinement` (superpaging invisible) · `RefinementS` (Layer-S mapping) ·

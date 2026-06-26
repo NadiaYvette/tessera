@@ -40,7 +40,7 @@ needs. Build/verify instructions live in [`../proof/README.md`](../proof/README.
 | 3 | Superpage uniformity (promote precondition) | `Tile.Promotable` + `promote_uniform` (`Tile.lean`) | 🔶 promote precondition (adjacent, equal-size, uniform-perms) defined; the promoted tile is uniform |
 | 4 | Consistent split/merge | `WF_split_at` + `WF_merge_at` (`Split.lean`), `TilingWF.demote` + `TilingWF.promote` (`Tiling.lean`), `promote_demote` (`Tile.lean`) | ✅ **both split and merge** preserve WF; a heterogeneous tiling stays well-formed under **both** demote and promote (each reusing M1); promote is demote's exact inverse |
 | 5 | Dirty/referenced aggregation (OR over vector) | `Kau.dirty` (`Kau.lean`); `Tile` coarsening (`Tile.lean`) | ✅ honest per-`M` OR (`Kau.lean`); and under heterogeneous tiling: promote OR-aggregates, demote conservatively propagates, both preserve the per-KAU dirty-OR — peeking/dropping a coarse bit is a provable error |
-| 6 | COW consistency (refcounts reflect sharing) | `Backing` (`Sharing.lean`, `Cow.lean`) | ✅ refcount discipline (Rung 2) + **COW-break consistency** (`Cow.lean`): the break preserves the discipline, conserves the writer's mapping, and keeps a still-shared object unreclaimable (`cow_no_free_while_shared` = telix #8); reclaiming a shared object is a provable error. Concrete sharing-group/PTE-vector structure deferred |
+| 6 | COW consistency (refcounts reflect sharing) | `Backing` (`Sharing.lean`, `Cow.lean`, `Fork.lean`, `PtShare.lean`) | ✅ refcount discipline (Rung 2) + **COW-break** (`Cow.lean`, telix #8) + **fork/COW-share** (`Fork.lean`, telix #1/#10) + **Rung 3 concrete sharing** (`PtShare.lean`): concrete `(aspace, vaddr)` sites, the COW-group mapper set, and **shared PT-node refcounts** — freeing a node a sibling still references (telix #2), an orphaned shared marker (telix #19), and the per-object boundary overhang (telix #20) are each provable errors |
 | 7 | TLB coherence (`TLB ⊆ mapping`) | `TlbCoherent` (`Tlb.lean`), `PTlbCoherent` (`Mprotect.lean`) | ✅ presence form preserved by `unmap`, and permission form (exact perm-agreement, which subsumes presence) by `mprotect`; a flush-less `unmap`/`mprotect` provably violates it |
 | 8 | Cache coherence (VIVT/VIPT) | — | out of initial scope (brief §3); no catalogued bug yet exercises it |
 
@@ -129,8 +129,14 @@ use 1. Full treatment: `clustering-rationale.md`.
   success guarantee** — a fully and uniformly populated KAU is well-formed and
   *promotable* to a `P`-superpage (invariant 3, no external fragmentation); a gapped or
   divergent-perm KAU is provably *not* promotable.
-  All four axiom-clean (`propext`, `Quot.sound`). *Still open (deferred, not matrix
-  gaps):* the concrete sharing-group structure (Rung 3) and the tiling↔per-`M`-vector
+  All four axiom-clean (`propext`, `Quot.sound`).
+  **(g) Rung 3 — concrete sharing, done** (`PtShare.lean`): sites become concrete
+  `(aspace, vaddr)`; the COW-group mapper set is `mappers`; and **shared PT nodes carry
+  their own refcount** (`PtNode`) — the structural layer Rung 2's abstract sites could
+  not reach. Freeing a node a sibling still references (telix #2), an orphaned shared
+  marker (telix #19), and the per-object **boundary overhang** that under-counts a node
+  shared across objects (telix #20) are each provable errors. *Still open (deferred, not
+  matrix gaps):* the full radix/PT-subtree structure and the tiling↔per-`M`-vector
   refinement.
 - **M3 — refinement S ⟸ A (ABI-preservation).** ✅ **Done at the tiling level**
   (`Refinement.lean` + `RefinementS.lean`). The ABI-visible view is `Tile.grants`; the

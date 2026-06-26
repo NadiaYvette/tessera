@@ -148,10 +148,14 @@ it. That is the crux my earlier note glossed.
   delta — a remove-more-than-added (the underflow) fails the proof — *without* yet
   committing to what an address space is. This is the cheapest model that sees the
   central bug.
-- **Rung 3 — full concrete sharing.** Sites become concrete `(aspace, vaddr)`; COW
-  groups relate objects to mapper sets; PT-node sharing and the boundary "overhang"
-  (telix #20) appear. **Catches everything**, including the structural sharing/COW
-  bugs (telix #1,#2,#8,#19,#20). This is where inv6 fully lives.
+- **Rung 3 — full concrete sharing.** ✅ **Done** (`PtShare.lean`). Sites become
+  concrete `(aspace, vaddr)`; the COW-group mapper set is `mappers`; and **shared PT
+  nodes carry their own refcount** (`PtNode`), the structural layer Rung 2 could not
+  reach. The boundary "overhang" (telix #20) is a provable error (`overhang_undercounts`),
+  as are freeing a sibling-referenced node (telix #2) and an orphaned shared marker
+  (telix #19). With #1/#8 (Fork/Cow) this discharges the structural sharing/COW bugs
+  (telix #1,#2,#8,#19,#20). This is where inv6 fully lives. (Remaining beyond Rung 3:
+  the full radix/PT-subtree data structure is Layer I.)
 
 **Recommendation.** Do **Rung 1 and Rung 2 now** (they are the inv2/inv5/G core and
 are largely independent), and defer **Rung 3** to the COW step, where "site" gets
