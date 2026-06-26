@@ -1,0 +1,10 @@
+name = "tessera"
+version = "0.1.0"
+defaultTargets = ["Tessera"]
+
+# Tessera — formal verification of a clustered virtual-memory manager.
+# Core-only: depends on nothing but the Lean 4 standard library.  See README.md
+# and ../doc/tessera-verification-kickoff.md.
+
+[[lean_lib]]
+name = "Tessera"

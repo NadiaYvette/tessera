@@ -1,0 +1,14 @@
+AArch64 BBM-TLBI
+(* Single-core break-before-make: invalidate PTE(x), DSB, TLBI VMALLE1IS, DSB, ISB,
+   then read x.  Expected: stale read FORBIDDEN ("Never") — the maintenance suffices. *)
+Variant=fatal
+{ x=1; [PTE(x)]=(oa:PA(x), valid:1);
+  0:X1=x; 0:X5=PTE(x); 0:X4=(oa:PA(x), valid:0); }
+ P0             ;
+ STR X4,[X5]    ;
+ DSB ISH        ;
+ TLBI VMALLE1IS ;
+ DSB ISH        ;
+ ISB            ;
+ LDR W0,[X1]    ;
+exists (0:X0=1)

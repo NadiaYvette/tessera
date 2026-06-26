@@ -1,0 +1,32 @@
+AArch64 Shootdown-MP
+(* Cross-core TLB shootdown, message-passing shape, checked against the Armv8-A VMSA
+   model (herd7 -variant vmsa).
+
+   P0 unmaps x: store an INVALID descriptor to PTE(x); DSB; TLBI VMALLE1IS (Inner
+   Shareable -> broadcasts to remote TLBs); DSB; then signal completion via flag y=1.
+   P1 (remote): read the flag y; DSB; ISB; then read x (a translation walk).
+
+   Property: can P1 observe the completion signal (X0=1) yet STILL read x's old value
+   (X2=1) through a stale TLB entry?  Expected FORBIDDEN ("Never") — the shootdown is
+   sound for this shape.  Compare shootdown-mp-noTLBI.litmus (the same without the TLBI),
+   which re-admits the stale read, proving the shootdown is load-bearing. *)
+Variant=fatal
+{
+  x=1;
+  y=0;
+  [PTE(x)]=(oa:PA(x), valid:1);
+  0:X1=x;
+  0:X3=y;
+  0:X5=PTE(x);
+  0:X4=(oa:PA(x), valid:0);
+  1:X1=x;
+  1:X3=y;
+}
+ P0             | P1           ;
+ STR X4,[X5]    | LDR W0,[X3]  ;
+ DSB ISH        | DSB ISH      ;
+ TLBI VMALLE1IS | ISB          ;
+ DSB ISH        | LDR W2,[X1]  ;
+ MOV W6,#1      | NOP          ;
+ STR W6,[X3]    | NOP          ;
+exists (1:X0=1 /\ 1:X2=1)

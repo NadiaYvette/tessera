@@ -1,0 +1,17 @@
+# Lean 4 / Lake build output
+.lake/
+*.olean
+*.ilean
+
+# Coq build output
+*.vo
+*.vos
+*.vok
+*.glob
+.*.aux
+*.cache
+
+# Editor / OS cruft
+*~
+\#*\#
+.DS_Store
