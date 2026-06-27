@@ -286,3 +286,20 @@ natural slip site**:
 So if the migration debug lands on the entry install/restore, `migration_{install,remove}Fold_wrong`
 is the named non-theorem and `migration_roundtrip_placed` is the obligation the fix must restore.
 Hand back which site the audit implicates and I instantiate it concretely with the fix obligation.
+
+### The complete content-motion map (every wrong-data lane, faithful ⟷ bug)
+
+All on the one observable `observed(v) = intended(v)` ⟺ *sub-page i stays sub-page i*:
+
+| lane | module | faithful | wrong-data non-theorem |
+|---|---|---|---|
+| placement (PTE → sub-frame) | `Placement` | `placed_grantsF_intended` | `cowFold_wrong_data` |
+| eviction / IO (out **and** in) | `Eviction` | `evict_roundtrip` | `evictFold_wrong_data` / `remateFold_wrong_data` |
+| migration / COW copy | `Migrate` | `copySub_faithful` | `copyFold_wrong_data` |
+| migration-entry round-trip | `MigrateEntry` | `migration_roundtrip_placed` | `migration_{install,remove}Fold_wrong` |
+| **swap round-trip (entry + slot, 4 sites)** | `SwapEntry` | `full_swap_observed_intended` | `swap{Write,Read}Fold_wrong_data` (+ the 2 PTE slips) |
+| **file mapping (vaddr → file offset, #15)** | `FileMap` | `file_observed_intended` / `file_shared_consistent` | `fileFold_wrong_data` |
+
+Six axiom-clean modules. Whatever the swap-out / migration / file debug turns up, the implicated
+site is one of these named slips, and the matching faithful-theorem is the obligation a fix must
+discharge. Hand back the audit site (or the swap-slot-dump result) and I instantiate it exactly.
