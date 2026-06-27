@@ -295,3 +295,44 @@ incarnation-tag is the concrete witness for a `SharingRace`/orphan-PTE Lean lemm
 
 Status: laptop BOOTS (swap fixes committed f17563985f5b). Residual is survivable + now class-pinned;
 next pgcl step is the incarnation-tag detector to catch the exact leaked-PTE site.
+
+
+---
+
+# ROUND 10 (2026-06-28): reconciling your named lemmas — relocate_vma_down / migration_roundtrip_placed / canonicalized_identity_ok
+
+R8/R9 demoted the placement lane in aggregate; here is each named concept reconciled precisely.
+
+1. **`relocate_vma_down` — validated as a GENERAL vsub≠psub source; but correct the migsub attribution.**
+   relocate_vma_down (exec stack) and mremap genuinely create vsub≠psub clusters — your premise
+   holds. BUT your §9 pinned `143migsub` (`vsub=0x2000 psub=0x1000 addr=0x4b2000`) as "PID1's
+   relocated-stack cluster" — that's off: **0x4b2000 is ~4.7 MB, a LOW user VA** (just above a
+   non-PIE binary's text at 0x400000), i.e. the process's **data/bss/brk** region, not a stack
+   (x86-64 stacks live near 0x7fff_ffff_f000). So the migsub confirms vsub≠psub clusters EXIST and
+   enter **reclaim** (it fired in `try_to_unmap_one`), but its source is heap/brk/mremap-style
+   misalignment, not relocate_vma_down. `Permute.migsub_observed_case` should be re-labeled a
+   generic vsub≠psub reclaim case, not a stack/migration case.
+
+2. **`migration_roundtrip_placed` — LATENT + code-suspect + empirically OPEN + NOT the residual.**
+   `remove_migration_pte` does rebuild from sub-0 (`set_ptes`, comment "vsub==psub"), so the code
+   does NOT obviously satisfy `migration_roundtrip_placed` for vsub≠psub — your obligation is
+   well-posed and the code is suspect against it. But: (a) migration is not the #143 firing lane
+   (real oracle kcompactd=0); (b) the empirical migrate check is INCONCLUSIVE — `pgcl_remat_test`
+   MIGRATE PASSed 0/256 yet we could not confirm a *true* vsub≠psub cluster was actually migrated
+   (mremap may normalize; pagemap diag unreliable). So keep `migration_roundtrip_placed` as a real
+   LATENT correctness lemma (and Option-1 carry-psub as its fix-in-waiting), but it is neither
+   confirmed-violated nor the #143 residual.
+
+3. **`canonicalized_identity_ok` — DEFERRED (decision not forced).**
+   With placement-π demoted from the residual, the Option-1 (carry psub → migration_roundtrip_placed)
+   vs Option-2 (normalize → canonicalized_identity_ok) choice isn't forced now. Your Option-1
+   reasoning still stands as preferred; `canonicalized_identity_ok` remains the sound per-arch
+   fallback proof. No pgcl action pending.
+
+Net: relocate_vma_down VALIDATED (general) + migsub re-labeled (heap, not stack);
+migration_roundtrip_placed LATENT/open/not-residual; canonicalized_identity_ok DEFERRED. The live
+#143 residual is unchanged from R9 — the ORPHAN-PTE (a present sub-PTE outliving its rmap+ref →
+freed at the deferred TLB put → reused → on the laptop it escalates to an LRU-lruvec-lock RCU stall
+= whole-machine freeze ~3 min in). Promote `refcount_race.v` / SharingRace.lean; the placement trio
+(Permute / framePi_faithful / migration_roundtrip_placed / canonicalized_identity_ok) is sound
+latent-safety to retain, not the live bug.
