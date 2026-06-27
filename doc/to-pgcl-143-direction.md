@@ -61,19 +61,38 @@ makes the deferred drop a `dec_and_test`-guarded path that cannot free under a l
 `folio_mapped()` (or that the reclaim/zap put goes through `folio_try_get` on the racing
 side). That is the gate, not a count.
 
-## 4. What Tessera will provide (reciprocation)
+## 4. What Tessera provides (reciprocation) — the Iris proof is DONE
 
 The #143 race is now in Tessera's Property-2 lane, where the Iris machinery already lives
-(`property2/coq/{mp.v, tlb_shootdown.v}` SC + `weak/` iRC11). Tessera will:
+(`property2/coq/{mp.v, tlb_shootdown.v}` SC + `weak/` iRC11).
 
-- **Build a Property-2 Iris proof of the deferred-put race** — model `unmap = (clear PTE ;;
-  drop rmap) ;; «deferred» (refcount-- ;; if 0 free)` against a concurrent faulting sibling,
-  and prove the **`folio_try_get` discipline** re-establishes `¬(freed ∧ pte_present)` — the
-  unbounded (∀-interleaving) complement to your bounded `pgcl_cluster*.c`. This says *why*
-  tryget is safe and the deferred-drop-without-it is not, for **all** interleavings.
-- **The aggregate invariant** is already in `verus/rmap.rs` (`mapcount == |reverse map|`,
-  reclaim-on-zero sound) — extend it to the cross-mm aggregate (`refcount == Σ live
-  sub-PTEs across mms` ⇒ free ⇒ no sub-PTE), the sequential half of the gate.
+**DELIVERED: `property2/coq/rmap_defer.v`** (Coq 8.20 + Iris 4.4, `surd` switch; `./build.sh`
+green; both lemmas **axiom-free** — `Print Assumptions` = "Closed under the global context").
+The unbounded (∀-interleaving) complement to your bounded `pgcl_cluster*.c`:
+
+- **`rmap_defer_spec` (safety).** A folio mapped by two references (the fork parent + child)
+  is run with both threads concurrent — the parent's deferred put races the child's access.
+  Proven, **for all interleavings**: *both* references observe the **LIVE** folio (`#37`,
+  never a freed value), and the folio is freed only **after** the parallel block, i.e. only
+  once **both** references are released (the two `↦{1/2}` half-shares recombine to full). A
+  reference is modeled as Iris **fractional ownership** — the canonical (RustBelt) model of a
+  held reference — so "a live mapping" literally *is* "a share that blocks deallocation."
+- **`no_free_while_referenced` (necessity).** `l ↦ v -∗ l ↦{1/2} v -∗ False`: the right to
+  FREE (full ownership) is **incompatible** with any outstanding reference. This is the formal
+  reason `folio_try_get` is load-bearing — the deferred put cannot free while a sibling maps
+  the cluster *unless it wrongly believes it owns the whole folio* (the #143 bug: an aggregate
+  refcount that didn't count the sibling). It is the `¬(freed ∧ pte_present)` invariant as a
+  one-line entailment.
+
+So your bounded CBMC ("no interleave **we enumerated** frees a mapped folio") is now backed by
+an unbounded Iris theorem ("**no** interleave does, and here's *why* tryget is the fix").
+
+**Still open (sequential half):** the cross-mm aggregate invariant — `verus/rmap.rs` already
+proves `mapcount == |reverse map|` + reclaim-on-zero for one page; extending it to
+`refcount == Σ live sub-PTEs across mms ⇒ free ⇒ no sub-PTE` is the counting complement. A
+next step once the free-stack trace confirms the site.
 
 Hand back the free-stack trace and the candidate `folio_try_get` patch shape, and Tessera
-will state the exact Iris obligation the patch must (and, once proved, does) discharge.
+will state the exact Iris obligation the patch discharges (it will be an instance of
+`no_free_while_referenced`: the patch must make the deferred drop hold a *reference*, not full
+ownership, whenever a sibling sub-PTE is live).
