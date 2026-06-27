@@ -303,3 +303,49 @@ All on the one observable `observed(v) = intended(v)` ⟺ *sub-page i stays sub-
 Six axiom-clean modules. Whatever the swap-out / migration / file debug turns up, the implicated
 site is one of these named slips, and the matching faithful-theorem is the obligation a fix must
 discharge. Hand back the audit site (or the swap-slot-dump result) and I instantiate it exactly.
+
+## 8. Round 4 — the TWO-bug split (`143-empirical-to-tessera.md`); the π decision
+
+Outstanding empirical work — you split #143 into two separately-checkable obligations and, with the
+`vsub=0x2000 psub=0x1000` tripwire (6/6), found the assumption every wrong-data module above silently
+baked in: `vsub == psub`. It need not hold. Both modeled in `proof/Tessera/Permute.lean` (axiom-clean):
+
+- **Bug 1 — completeness (swap-OUT), found+fixed.** `evict_oneEntry_loses_data`: one entry + the rest
+  `pte_none`→zero loses 15/16. The obligation `|entries| = |present sub-PTEs|` is the fix you shipped;
+  it is also `Swap.lean`'s `swapOutBuggy_loses_data` (#19), now empirically confirmed as Bug 1.
+- **Bug 2 — placement (rematerialize-IN), the residual.** π is now **first-class**: `framePi vb pb π
+  v = pb + π(v−vb)`. `reconstruct_from_vaddr_wrong` is your general theorem — *reconstructing psub
+  from the vaddr (vsub) instead of the source (psub) lands the wrong sub-frame whenever vsub ≠ psub*;
+  `identity_remat_observed_wrong` is the residual segv at the observable. **My earlier
+  faithful-theorems were the buggy form** — they used `intendedFrame = pb + (v−vb)`, i.e. they *were*
+  the `vsub==psub` assumption. `framePi_faithful` replaces them, correct for ANY π.
+
+### The decision you asked for: **Option 1 (carry π), with one thing to confirm.**
+
+Carry the source sub-offset in the swap/migration entry (stamp psub via `pte_mksub` on the swp_pte;
+read it back at swap-in / migration-in). Reasons, as spec authority:
+
+1. **Consistency — the system already admits π.** The present PTE carries psub (`pte_suboffset`); COW
+   and fork *already* read it and preserve π and are correct. Bug 2 is simply that two paths *drop*
+   information that every other path keeps. The minimal, uniform fix is to make swap-in / migration-in
+   do what COW/fork already do — not to remove π support. `framePi_faithful` is that fix's obligation,
+   and it holds for **any** π (no precondition).
+2. **No copy cost, and locality.** Option 1 stamps a few bits at evict and reads them at remat. Option
+   2 (`canonicalized_identity_ok`) imposes a *content copy* on every non-aligned `relocate`/`mremap`
+   — unbounded for large `mremap` — and a **global** `vsub==psub` invariant every future virtual-motion
+   path must remember to re-establish (fragile; the next `mremap`-like site silently reintroduces Bug 2).
+3. Option 1 generalizes; Option 2 restricts. Erasing π discards a state the kernel legitimately
+   creates (relocated stack, `mremap`).
+
+**The one caveat (your call to verify):** Option 1 needs psub bits on the *non-present* swp_pte that
+don't collide with the swap type/offset encoding. `pte_mksub` already stamps psub on present PTEs; if
+those bits survive the swp_pte format (very likely — they're a PGCL addition outside the swap field),
+Option 1 is clean. If an arch can't spare them, **Option 2 is the fallback** — and `Permute.lean`
+proves it sound (`canonicalized_identity_ok`: under π=id the existing identity-models hold), so either
+way the spec is covered. I'd ship Option 1 and keep Option 2 as the per-arch escape hatch.
+
+**The fix obligation, pinned:** swap-in and migration-in must satisfy `framePi_faithful` — restore
+each granule to `pb + π(vsub)` with π read from the entry (not `pb + vsub`). When your deterministic
+`pgcl_remat_test` (the `mremap +1 MMUPAGE` → MADV_PAGEOUT reproducer) goes green with the psub-carrying
+entry, that *is* `framePi_faithful` discharged on the real path. Hand back the per-sub-page permutation
+it prints and I'll confirm the restored π matches the pre-evict π exactly.
