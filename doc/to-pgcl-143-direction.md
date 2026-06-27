@@ -260,6 +260,21 @@ So all three content-motion mechanisms — **eviction/IO**, **migration**, **COW
 invariant: *content moves, but sub-page i stays sub-page i.* The audit sites split across the now-three
 lanes: `pte_pfn`/`__phys_to_pte_val`/`set_pte_range` → **placement** (`placed_grantsF_intended`);
 `do_swap_page`/filemap fault-in → **eviction** (`evict_roundtrip`); `migrate_*`/`do_wp_page` copy →
-**content copy** (`copySub_faithful`). Hand back which site the audit implicates and I instantiate the
-matching non-theorem and state the fix obligation. (If the COW copy is the site, note it is now
-modeled *as* migration — the same `copySub`.)
+**content copy** (`copySub_faithful`).
+
+**And the migration-entry round-trip itself (`proof/Tessera/MigrateEntry.lean`, axiom-clean) —
+aimed at the path you're debugging.** The PTE is *removed and reinstalled* around the copy:
+`try_to_migrate_one` (install a migration entry) → `migrate_folio` (copy) → `remove_migration_pte`
+(reinstall a present PTE at the new page). Modeled on the sub-PTE state, with the **restore the
+natural slip site**:
+
+| theorem | statement |
+|---|---|
+| `migration_roundtrip_placed` | install + remove restores the sub-PTE to the **intended new sub-frame** (the entry carries the sub-index; restore uses it) |
+| `migration_installFold_wrong` | a `try_to_migrate` that **drops the sub-index** restores to the wrong frame — wrong data |
+| `migration_removeFold_wrong` | a `remove_migration_pte` that **re-points without the sub-index** does too (the most natural slip) |
+| `full_migration_observed_intended` | a faithful entry round-trip **and** a faithful copy ⟹ `observed = intended` — the two halves compose |
+
+So if the migration debug lands on the entry install/restore, `migration_{install,remove}Fold_wrong`
+is the named non-theorem and `migration_roundtrip_placed` is the obligation the fix must restore.
+Hand back which site the audit implicates and I instantiate it concretely with the fix obligation.

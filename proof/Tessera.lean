@@ -30,3 +30,4 @@ import Tessera.Frames
 import Tessera.Placement
 import Tessera.Eviction
 import Tessera.Migrate
+import Tessera.MigrateEntry
