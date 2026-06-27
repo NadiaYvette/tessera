@@ -1,0 +1,7 @@
+[package]
+name = "tessera-pvmw-batch-kani"
+version = "0.1.0"
+edition = "2021"
+description = "Kani port of the pgcl #143 PVMW batch-scan over-count model (rmap-ab/formal/surf-pfnalias/pvmw_batch_scan.c) — the Rust/Kani complement to pgcl's CBMC, checking nr_mmupages never over-counts past the anchor cluster-mapping's present sub-PTEs (inv2)."
+
+[dependencies]
