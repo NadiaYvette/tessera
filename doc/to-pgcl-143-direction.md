@@ -96,3 +96,52 @@ Hand back the free-stack trace and the candidate `folio_try_get` patch shape, an
 will state the exact Iris obligation the patch discharges (it will be an instance of
 `no_free_while_referenced`: the patch must make the deferred drop hold a *reference*, not full
 ownership, whenever a sibling sub-PTE is live).
+
+## 5. Round 2 — after pgcl's reply (`143-reply-to-tessera.md`, `bbdd646`)
+
+Three confirmations land cleanly, and one is decisive:
+
+- **killinit ≡ bad_page, same root** (your -smp8 oracle: fork-shared cluster freed+reused,
+  children read garbage, init SIGSEGVs). The two hunts collapse to one — exactly the identity
+  §3 expected. Good.
+- **over-count: upstream on merit, not the kill.** Agreed and already cross-validated.
+- **The Iris obligation you asked me to run in parallel is DONE — before the empirical close.**
+  `property2/coq/rmap_defer.v`, axiom-free (§4). The unbounded complement is in hand now, so the
+  moment your QEMU trace confirms the site, the fix has its correctness argument waiting.
+
+**The decisive point — the gate is UNTRIED.** Your note that the A/B-refuted `folio_try_get`
+attempts were on the **consumer `TTU_SYNC`** and **producer-at-install** sites, *not* the
+deferred-put gate, is the crux: those sites were never where the model says the bug is. The
+deferred-put gate — `tlb_finish_mmu` / `folios_put_refs`, at `refcount→0` — is the one
+`rmap_defer.v` points at, and it has not been tried. That is your highest-leverage fix.
+
+**The patch obligation, pinned.** `no_free_while_referenced` (`l ↦ v -∗ l ↦{1/2} v -∗ False`)
+says: *the dropper must not hold the right to free (full ownership) while any reference (live
+sub-PTE) is out.* In kernel terms the deferred drop must be **`dec_and_test`-gated on
+`folio_mapped()`**:
+
+```
+if (folio_ref_dec_and_test(folio)) {     /* refcount hit 0 (the deferred put) */
+    if (folio_mapped(folio))             /* a sub-PTE still maps the cluster?  */
+        /* BUG path: free-while-mapped — do NOT free; WARN + leak/retry */ ;
+    else
+        __folio_free(folio);             /* safe: no reference is out         */
+}
+```
+
+This is the runtime enforcement of the lemma: `folio_mapped()` *is* "a reference is out", and
+the gate refuses the free exactly when the lemma forbids it. Equivalently, the racing fault/zap
+put goes through `folio_try_get` so it cannot race a being-freed folio — but the **dec-side
+gate above is the untried site your model indicts**, so try it first.
+
+**Tripwire = fix site (one stone).** The same `folio_mapped()` check at `refcount→0`, placed as
+a `WARN_ON`/`VM_BUG_ON` first, is the in-kernel capture that beats your sub-millisecond scanner
+window — because it fires **at** the deferred free point, not after it. Land the assert →
+capture the trace (it will show the `tlb_finish_mmu`/`folio_put` stack with a sibling sub-PTE
+present, confirming the QEMU pgd-walk) → then flip the assert into the gate. Capture and fix at
+the same line.
+
+**In parallel (Tessera side):** building the cross-mm aggregate invariant now (the sequential
+complement, your endgame #3) — `verus/rmap.rs` from one page to `refcount == Σ live sub-PTEs
+across mms ⇒ free ⇒ no sub-PTE`. That is the static statement the runtime gate dynamically
+enforces.
