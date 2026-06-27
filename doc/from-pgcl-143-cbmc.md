@@ -94,3 +94,46 @@ Option 2 makes the `vsub==psub` assumption that swap-in/migration-in/your round-
 models already encode actually TRUE — i.e. it would let the existing models stand. Is
 that the right refinement, or should the spec admit π as first-class? Your call decides
 the fix.
+
+
+---
+
+# ROUND 5 (2026-06-27): CORRECTION + migration round-trip strengthened
+
+## CORRECTION to Round 4 — the swap+file "PASS" was a NON-TEST. Do NOT downgrade.
+R4 said the reproducer's swap+file PASS clears SwapEntry/FileMap. **Retract that.** The
+diagnostic enhancement showed the reproducer never exercised the bug:
+- `/proc/self/pagemap` was UNAVAILABLE (`CONFIG_PROC_PAGE_MONITOR=n`) → the vsub≠psub
+  precondition was never verified (the "vsub!=psub=0" lines were the disabled probe).
+- `move_pages` returned **-EACCES** → NO migration occurred. (Root cause is itself a PGCL
+  signal: a cluster's mapcount is `nr_mmupages>1`, so `MPOL_MF_MOVE` is rejected; needs
+  `MPOL_MF_MOVE_ALL`.)
+So the PASSes do NOT clear swap, migrate, or file. **Keep SwapEntry/MigrateEntry/FileMap
+all live as suspects** until a pagemap-verified, actually-migrating rerun (in progress).
+
+## STRENGTHENED migration finding (code-level, solid): round-trip loses psub at BOTH ends
+Read of the full migrate path confirms the migration ENTRY structurally cannot carry
+sub-page placement:
+- **migrate-OUT** (`mm/rmap.c` try_to_migrate_one ~2942-2984):
+  `entry = make_*_migration_entry(page_to_pfn(subpage))` where `subpage` is the cluster
+  head → entry encodes the **cluster pfn only, no psub**; then the SAME `swp_pte` is
+  written to every sub-PTE (`for i: set_pte_at(pvmw.pte+i, swp_pte)`), comment: "all
+  encode the same destination subpage under PGCL since pte_pfn drops sub-page bits."
+- **migrate-IN** (`mm/migrate.c` remove_migration_pte:402,549):
+  `pte = mk_pte(folio_page(folio, idx))` (idx=0 for order-0) then
+  `set_ptes(pvmw.address, pvmw.pte, pte, nr_pages)` striding from sub-0, comment: "PTE i
+  maps virtual sub-page i to physical sub-page i" and "vsub == psub."
+
+=> For a `vsub≠psub` cluster, π is destroyed at migrate-out and assumed-identity at
+migrate-in. **`MigrateEntry.lean`'s round-trip should be PROVABLY unable to preserve
+content when the source mapping is `vsub≠psub`** — the entry has nowhere to store π.
+This is independent of the empirical rerun; it's a property of the entry encoding.
+
+## Fix-shape consequence (refines the R4 open question)
+Because the migration entry has no room for psub (it IS the swap-pte format, cluster pfn
+only), Fix Option 1 ("encode π in the entry") requires stealing spare swp-pte soft bits
+for a PAGE_MMUSHIFT-wide sub-offset on BOTH the swap and migration entry — feasible only
+if those bits don't collide with type/offset. Option 2 ("normalize vsub==psub at
+relocate/mremap") needs NO entry change and makes the existing identity-restore correct
+by construction. Your spec-authority call on which to bless still stands; the entry-has-
+no-room fact pushes toward Option 2 unless you want π first-class in the swp-pte spec.
