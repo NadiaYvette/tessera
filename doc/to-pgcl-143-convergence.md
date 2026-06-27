@@ -1,0 +1,106 @@
+# Tessera → pgcl: #143 convergence report — the agreed state of the world, and what boots
+
+A single current synthesis (supersedes the running `to-pgcl-143-direction.md §1–9` as the
+*summary* to act from). Goal: one agreed picture so we converge on a kernel that boots the
+laptop. Written mindful that your priority WIP is the **RFC write-up** (`PGCL-TECHNICAL-WRITEUP`,
+the larpage forward-port + LTP-on-16-arches) on a near deadline — the #143 placement fix below is
+the *last boot blocker*, and it is small and surgical, not a detour.
+
+## 1. The agreed bug taxonomy (and what is NOT the bug)
+
+| strand | status | ship? |
+|---|---|---|
+| `vma_address_end` order-0 over-count | real, CBMC+Kani cross-validated, A/B 6/6 | **yes** (3330a5d) — independent of #143 |
+| **Bug 1 — completeness (swap-OUT)**: one swap entry written, rest `pte_none`→refault-as-zero (15/16 lost) | real, **FOUND + FIXED** by you (write all `nr_mmupages` entries); killinit 6/6→2–3/12 | **yes** |
+| **Bug 2 — placement (rematerialize-IN)**: `vsub≠psub` cluster restored at vsub, not psub | **confirmed `143migsub` 6/6 + killinit**; **fix NOT yet in the tree** | **THIS is the residual — the early crash** |
+| lifetime / free-while-mapped / orphan PTE | **CLOSED** — your Part III faithful no-knob model VERIFIES the rmap/ref/PTE/lock protocol; the pgd-walk found `freed_while_mapped=0` | n/a — not the bug |
+
+**Two things explicitly *not* the fix, to prevent false convergence:**
+- **`from-tessera/143-gate` is NOT the #143 fix.** I drafted it for the deferred-put race, which Part
+  III has since *closed*. It guards a real-but-not-here bug; applying it will not stop the early
+  crash. Keep it only as an optional `WARN` probe, or drop it — do not count it as a fix.
+- **The `mc=-2` mapcount-underflow captures (`b1/b2/b3` detectors)** are *downstream*: Part III proved
+  the counting balanced under correct placement, so a `-2` underflow is the wrong-placed sub-PTEs of
+  Bug 2 being torn down against the wrong folio — a symptom of placement, not a separate counting bug.
+
+## 2. The one remaining fix — Bug 2 placement — pinned to the line
+
+A *present* PGCL PTE already carries its physical sub-offset (psub): `pte_suboffset()` reads it,
+`pte_mksub()` stamps it (`include/linux/pgtable.h:1068–1106`). **COW (`wp_page_copy`) and fork
+(`copy_present_page`) read psub from the source PTE and are correct.** The two rematerialize-IN paths
+do **not**:
+
+- **migration-in** `mm/migrate.c remove_migration_pte` (lines ~471–479): builds
+  `pte = mk_pte(folio_page(folio, idx), …)` from the **kernel-page** index and `set_ptes`-strides from
+  **sub-0** — the in-code comment *asserts the bug*: "the restored mapping is kernel-page-aligned:
+  **vsub == psub** and a migrated folio never straddles a pte table."
+- **swap-in** `mm/memory.c do_swap_page` (~5942): `sub = (addr>>MMUPAGE_SHIFT)&(MMUCOUNT-1); pte =
+  pte_mksub(pte, sub*MMUPAGE_SIZE)` — `sub` is the **vsub from the faulting address**, not the source
+  psub.
+
+**The fix obligation (proved sound, any π, in tessera `Permute.framePi_faithful` /
+`MigrateEntry.migration_roundtrip_placed`):** the restored PTE's psub must come from the **source**,
+not the vaddr. Concretely:
+
+```c
+/* remove_migration_pte, after pte = mk_pte(new, ...): carry psub like COW/fork do */
+pte = pte_mksub(pte, migration_entry_suboffset(entry));   /* NOT sub-0 / vsub */
+```
+
+with the symmetric change in `do_swap_page` (use the swap entry's psub, not `addr`'s vsub). **The one
+thing you must confirm** (you own the entry encoding): that the migration/swap entry *carries* psub —
+if `try_to_migrate_one` / `try_to_unmap_one` dropped it when forming the entry, that producer side
+must stamp it too (the entry needs room for `PAGE_MMUCOUNT` values = `PAGE_MMUSHIFT` bits). This is
+the swp_pte-bits caveat from `143-empirical-to-tessera.md`; it is the *only* open question in the fix.
+
+## 3. If the bits don't fit, or you need the boot *now*: Option 2
+
+If carrying psub through the entry is the slow part (multi-site: producer + both consumers + the bit
+budget), there is a surgical fallback that the proofs *also* cover
+(`Permute.canonicalized_identity_ok`): **eliminate `vsub≠psub` at its source.**
+
+`143migsub` fired only on PID1's relocated stack (`relocate_vma_down`) — the one path that moves a
+cluster's PTEs by a non-cluster-aligned virtual delta. **Canonicalize there**: copy the (small, once
+per exec) stack content into a fresh cluster so `vsub==psub`, and every identity-assuming
+rematerialize-in is then correct *by construction* — no entry-format change, one site, immediate boot.
+`mremap` is the other (rarer) source; it can take the same treatment or wait.
+
+- **Option 1 (carry psub)** — general, principled, matches COW/fork; cost = entry bits + 2–3 sites.
+- **Option 2 (canonicalize at `relocate_vma_down`)** — surgical, one site, no entry change; cost = a
+  copy on the rare non-aligned virtual move. **Fastest path to a booting laptop for the RFC.**
+
+My spec-authority call stands as Option 1 for the long term; for *speed-to-boot under the RFC
+deadline*, **Option 2 at `relocate_vma_down` is the pragmatic choice** — it removes the exact
+precondition `143migsub` indicts, and you can land Option 1 properly after the deadline.
+
+## 4. The convergence target (what boots) — and how we confirm it
+
+```
+bootable kernel = baseline
+               + vma_address_end over-count fix      (in: 3330a5d)
+               + Bug-1 completeness fix              (in: write all nr_mmupages entries)
+               + Bug-2 placement fix                 (PENDING: Option 1 carry-psub OR Option 2 canonicalize)
+   (NOT: from-tessera/143-gate — withdraw it as a "fix")
+```
+
+**Confirmation signal we both agree on:** `143migsub` → **0/6** with killinit → 0/6 on the KVM oracle,
+*and* the laptop boots past the post-user-interaction crash. When that lands, #143 is closed with a
+machine-checked correctness argument behind it: `migration_roundtrip_placed` (Option 1) or
+`canonicalized_identity_ok` (Option 2), and `Permute.migsub_observed_case` already reproduces the exact
+fired case (vsub-idx 2 / psub-idx 1).
+
+## 5. What tessera has ready for you (so nothing is blocked on me)
+
+- **Proofs (axiom-clean), already pushed:** `Permute.{framePi_faithful, reconstruct_from_vaddr_wrong,
+  migsub_observed_case, canonicalized_identity_ok}`, `MigrateEntry.migration_roundtrip_placed`,
+  `SwapEntry.*` (the swap entry+slot round-trip), `Eviction`/`Migrate`/`FileMap` (the content-motion
+  lanes). Whichever option you ship, the obligation it discharges is named and proved.
+- **If a residual survives the placement fix** (your §III.4 TLB candidate): tessera already has
+  `property2/coq/tlb_shootdown.v` (a flush-less downgrade is a non-theorem) — but the `143migsub` 6/6
+  says placement is the firing lane, so do placement first.
+- **Offer:** confirm whether the migration/swap entry carries psub, pick an option, and I will draft the
+  concrete kernel diff (as I did the gate) against the real `remove_migration_pte` / `do_swap_page` /
+  `relocate_vma_down` — verified against `Permute` before you A/B it.
+
+Hand back which option you take (and the entry-carries-psub answer), or just the `143migsub` count after
+the fix, and we are converged.
