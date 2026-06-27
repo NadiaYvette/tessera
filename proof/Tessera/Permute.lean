@@ -70,6 +70,17 @@ theorem canonicalized_identity_ok (vb pb : Nat) (v : Nat) :
     frameIdentity vb pb v = framePi vb pb id v := by
   simp [frameIdentity, framePi]
 
+/-- **The EXACT empirically-fired case** (pgcl `143migsub` tripwire, 6/6 runs + killinit:
+`vsub!=psub migrated anon=1 vsub=0x2000 psub=0x1000` — PID1's relocated stack). In MMUPAGE units the
+cluster is mapped at virtual sub-offset 2 with physical sub-offset 1, i.e. `π(2) = 1`. The
+identity-reconstructing rematerialize-in places vsub 2 at physical sub-frame `pb + 2` instead of the
+correct `pb + 1` — the wrong sub-page, hence the wrong stack content and the segv. A named instance of
+`reconstruct_from_vaddr_wrong`, pinning the model to the empirical firing. -/
+theorem migsub_observed_case (pb : Nat) :
+    frameIdentity 0 pb 2 ≠ framePi 0 pb (fun i => if i = 2 then 1 else i) 2 := by
+  apply reconstruct_from_vaddr_wrong
+  decide
+
 /-- **Bug 1 — completeness (swap-OUT).** swap-out must emit an entry for EVERY mapped sub-PTE. The
 PGCL Option-A quirk wrote ONE entry and left the rest `pte_none` → they refault as ZERO. Modeled: a
 swap-out covering only sub-index set `S` makes sub-pages outside `S` rematerialize as 0. -/

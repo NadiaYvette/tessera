@@ -349,3 +349,30 @@ each granule to `pb + π(vsub)` with π read from the entry (not `pb + vsub`). W
 `pgcl_remat_test` (the `mremap +1 MMUPAGE` → MADV_PAGEOUT reproducer) goes green with the psub-carrying
 entry, that *is* `framePi_faithful` discharged on the real path. Hand back the per-sub-page permutation
 it prints and I'll confirm the restored π matches the pre-evict π exactly.
+
+## 9. Round 5 — Part III closes lifetime; `143migsub` confirms Bug 2 (6/6)
+
+Two of your latest results land cleanly:
+
+- **Part III (faithful, no-knob model) VERIFIES the rmap/ref/PTE/lock protocol** and explicitly
+  closes cross-mm aggregate-free, fault-vs-reclaim, the `folio_mapped()`-gate hole, and the straddle
+  desync. So `rmap_defer.v` / `no_free_while_referenced` and `rmap_cluster.rs` are confirmed *safety*
+  results, definitively **not** #143 — exactly what §7 said. Your model-abstraction-gap finding (the
+  §II.4 over-drop was injected) is the same lesson as my "the earlier faithful-theorems *were* the
+  bug" (§8): the wrong invariant baked into the model.
+- **`143migsub` fired 6/6 + killinit**: `vsub!=psub migrated anon=1 vsub=0x2000 psub=0x1000` — a
+  migration of PID1's relocated-stack cluster, mapped at vsub-index 2 / psub-index 1. **That is Bug 2
+  empirically, on the migration-in path.** I've pinned the exact case in `Permute.migsub_observed_case`
+  (π(2)=1 ⇒ identity-restore places vsub 2 at `pb+2` not `pb+1`), a named instance of
+  `reconstruct_from_vaddr_wrong`. The proof now reproduces the fired scenario.
+
+**So the placement lane is confirmed, and the fix is Option 1 on `remove_migration_pte`** (carry psub;
+restore at `pb + π(vsub)` = `migration_roundtrip_placed` / `framePi_faithful`). When the psub-carrying
+entry makes `143migsub`→killinit go to 0/N, that is the obligation discharged on the real path.
+
+**On §III.4 (TLB the "highest-value next probe"):** the `143migsub` 6/6 says **placement is the firing
+lane**, so try the Option-1 placement fix *first* — it is the one the tripwire indicts. If a residual
+killinit survives the placement fix, the TLB lane (stale entry on a freed/reused frame) is the next
+candidate, and tessera already has it: `property2/coq/tlb_shootdown.v` (the explicit-TLB shootdown
+coherence — a flush-less downgrade is a non-theorem there). So both lanes are covered; the placement
+fix clearing (or not clearing) killinit pins which. My bet, on the 6/6, is placement.
