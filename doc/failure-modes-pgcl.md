@@ -22,6 +22,14 @@ coherence the brief calls the heart of the model.
 
 ## A) Catalog
 
+> **#143 update (CBMC, 2026-06).** The pgcl-side CBMC hunt has *refined* item #1: the
+> over-drop is **not** a per-section "remove > add" (every in-tree remove/install path is
+> proven balanced). The residual bug is one of (a) **`nr_mmupages` batch over-count**
+> (inv2), (b) **cross-mm aggregate-free** (Property 2 + Backing), or (c) out-of-protocol.
+> Tessera has reciprocated: `rust/pvmw-batch-kani/` (Kani) proves the batch scan never
+> over-counts under the faithful `vm_end` clamp, and `verus/rmap.rs` proves the rmap
+> mapcount discipline. Full integration: [`from-pgcl-143-cbmc.md`](from-pgcl-143-cbmc.md).
+
 | # | Title | Symptom | Root cause | Subsystem / commit | Category | Tessera caught-by |
 |---|---|---|---|---|---|---|
 | 1 | **#143 file-folio rmap under/over-remove → page-cache corruption** | mapcount underflow `refcount:-10 mapcount:-15`; freed-while-mapped folio reused; dangling user PTE | rmap remove side decrements more than add side when a KAU's sub-PTEs are gapped/migrated; folio freed while still mapped, then reused | mm/rmap, zap/COW batch (`9567ec305d3b`, `5e2620b0e2f6`) | refcount + partial-population + UAF | **inv2** (PTE-vector integrity), **inv6** (COW), Layer A; breaks M3 refinement |
