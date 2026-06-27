@@ -242,8 +242,24 @@ model with content-**crossing**:
 | `content_fold_observed_wrong` | content faithfulness is **independently necessary** — even with perfectly correct placement, a folding swap-in makes userspace read wrong content |
 
 So the wrong-data obligation is now factored exactly: `observed = intended` ⟺ *(PTE places v at the
-intended sub-frame)* ∧ *(eviction/IO kept that sub-frame's content faithful)*. Your audit sites split
-cleanly onto the two: `pte_pfn`/`__phys_to_pte_val`/`set_pte_range` sub-index → the **placement** half
-(`placed_grantsF_intended`); `do_swap_page`/filemap fault-in/COW copy → the **content** half
-(`evict_roundtrip` / `observed_intended`). Hand back which site the audit implicates and I instantiate
-the matching non-theorem.
+intended sub-frame)* ∧ *(eviction/IO kept that sub-frame's content faithful)*.
+
+**Also added — migration / COW copy (`proof/Tessera/Migrate.lean`, axiom-clean).** You're now
+debugging the **migration** path, which adds a third content-motion mechanism — a **copy** (move
+each sub-page's content old→new frame). It and the **COW copy** (`do_wp_page`) are the *same*
+operation under one rule. `Placement.cowRemap` had the re-anchor (where); this adds the copy itself
+(what):
+
+| theorem | statement |
+|---|---|
+| `copySub_faithful` | a correct migration / COW copy is sub-page-faithful — dst sub-page *i* gets src sub-page *i* |
+| `migrate_observed_intended` | re-anchor + faithful copy ⟹ userspace observes the intended content at the moved cluster |
+| `copyFold_wrong_data` / `migrateFold_observed_wrong` | a sub-offset-folding copy reads wrong content into a later dst sub-page — wrong data even with correct placement |
+
+So all three content-motion mechanisms — **eviction/IO**, **migration**, **COW copy** — are now one
+invariant: *content moves, but sub-page i stays sub-page i.* The audit sites split across the now-three
+lanes: `pte_pfn`/`__phys_to_pte_val`/`set_pte_range` → **placement** (`placed_grantsF_intended`);
+`do_swap_page`/filemap fault-in → **eviction** (`evict_roundtrip`); `migrate_*`/`do_wp_page` copy →
+**content copy** (`copySub_faithful`). Hand back which site the audit implicates and I instantiate the
+matching non-theorem and state the fix obligation. (If the COW copy is the site, note it is now
+modeled *as* migration — the same `copySub`.)

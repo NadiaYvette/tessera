@@ -29,3 +29,4 @@ import Tessera.RadixPt
 import Tessera.Frames
 import Tessera.Placement
 import Tessera.Eviction
+import Tessera.Migrate
