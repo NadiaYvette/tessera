@@ -336,3 +336,56 @@ freed at the deferred TLB put → reused → on the laptop it escalates to an LR
 = whole-machine freeze ~3 min in). Promote `refcount_race.v` / SharingRace.lean; the placement trio
 (Permute / framePi_faithful / migration_roundtrip_placed / canonicalized_identity_ok) is sound
 latent-safety to retain, not the live bug.
+
+
+---
+
+# ROUND 11 (2026-06-28): the residual is PINNED — mmu_gather DEFERRED-RMAP (delay_rmap) cross-PTL window
+
+R9's "orphan-PTE in the cross-PTL window" is no longer a hypothesis: a real-laptop tripwire fired
+with a verbatim stack. This is the concrete realization of your CBMC resurrect-after-free lane.
+
+## Capture (real laptop, over-remove tripwire in __folio_remove_rmap)
+`PGCL143-RMTRIP: order-0 over-remove pfn=0x53ae8 mapcount=-1 refcount=0` — dump_page shows the
+cluster is ALREADY `refcount:0 mapcount:0` (fully unmapped + FREED) when this rmap removal runs:
+```
+folio_remove_rmap_ptes      <- removes one rmap too many on the FREED cluster (mapcount 0 -> -1)
+tlb_flush_rmap_batch
+tlb_flush_rmaps             <- mm/mmu_gather.c, the tlb->delayed_rmap deferred-rmap replay
+zap_pte_range -> __zap_vma_range -> zap_vma_range_batched -> madvise_vma_behavior -> madvise
+```
+Comm `caprine` = Electron (many FORKED procs sharing anon clusters).
+
+## Mechanism (the cross-PTL window made concrete)
+`zap_present_folio_ptes` (mm/memory.c ~1850): under the PTL it clears the cluster's nr sub-PTEs,
+sets `delay_rmap=true`, records the cluster in the mmu_gather batch (intended to PIN nr refs), and
+**drops the PTL** — deferring `folio_remove_rmap_ptes(nr)` to `tlb_flush_rmaps` AFTER the lock is
+gone. In that lockless window a SHARED/forked cluster is fully unmapped + FREED (refcount 0) by
+another holder; this CPU's deferred removal then over-removes on the freed cluster -> mapcount -1
+-> freelist/LRU corruption -> the LRU-lruvec-lock RCU-stall whole-machine freeze.
+
+This IS R9's "a present sub-PTE outlives its rmap+ref removal" + your CBMC resurrect-after-free,
+localized: the deferred rmap is the removal that outlives the free; delay_rmap's PTL-drop is the
+window. The earlier -11/-11 is this firing repeatedly; "every static path balances" because the
+defect is purely this lock-drop interleaving — outside Part III by construction.
+
+## Formal obligation (concrete handle for SharingRace.lean / refcount_race.v)
+Model: [clear PTE under PTL] -> [record (folio,nr) in batch, intended to hold nr refs] -> [DROP PTL]
+-> (window) -> [remove nr rmaps] -> [drop nr refs -> maybe free]. Required invariant: **across the
+window the cluster's refcount must stay > 0 — a STABLE EXISTENCE ref held by the gather batch — so it
+cannot be freed before its own deferred rmap removal.** Empirically VIOLATED for PGCL shared clusters
+(the cluster hits refcount 0 in the window) -> the batch's nr refs do not actually pin the shared
+cluster (per-sub-PTE-across-mms accounting / double-add). This is precisely your "stable existence ref
++ folio_try_get, not plain increment" result — promote refcount_race.v to the deferred-rmap-window
+obligation.
+
+## pgcl candidate fix (A/B in progress)
+Force `delay_rmap=false` for PGCL clusters in zap_present_folio_ptes -> remove the rmap immediately
+under the PTL -> the window cannot exist (pre-delay_rmap behavior, latency-only cost). A/B on the
+smp8 oracle for PGCL143-RMTRIP 0/8 + no killinit/bad_page/stall; if green, a delayfix laptop RPM.
+Whether to KEEP delay_rmap with a real stable-existence-ref (try_get) fix, or DROP it for clusters,
+is the design call your obligation informs.
+
+Net: live #143 = the deferred-rmap cross-PTL window (NOT migration/placement/swap/static-count). The
+placement trio stays latent-safety (R10). Laptop boots to desktop then freezes on this; candidate fix
+should clear it.
