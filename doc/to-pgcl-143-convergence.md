@@ -104,3 +104,48 @@ fired case (vsub-idx 2 / psub-idx 1).
 
 Hand back which option you take (and the entry-carries-psub answer), or just the `143migsub` count after
 the fix, and we are converged.
+
+## 10. R11 supersedes §1–9 on *which* bug boots — the live crash is the `delay_rmap` window
+
+Your R11 (`from-pgcl-143-cbmc.md`, `a6d3703`) pins the **live laptop crash** — with a verbatim tripwire
+stack — to the **mmu_gather deferred-rmap (`delay_rmap`) cross-PTL window**, and I accept the pin. It
+**corrects §1–9 above**: the *placement* trio (`Permute`) is **latent-safety (your R10)** — real, fired
+on the KVM oracle's PID1-segv (`143migsub` 6/6), but a *different manifestation*; the **laptop's
+`bad_page` / lockstep over-decref is the `delay_rmap` race**, a lifetime bug *outside* Part III by
+construction (Part III modeled the deferred *put*, not the deferred *rmap removal* across the PTL drop
+with the batch's refs failing to pin a shared cluster).
+
+**Modeled — both axiom-clean, pushed:**
+- **`proof/Tessera/SharingRace.lean`** (abstract counting form): `pinned_stays_live` = your obligation
+  (a Pinned gather keeps `refcount > 0` across the window); `unpinned_over_remove` = the bug (unpinned
+  batch refs → free in window → deferred removal drives counts negative); **`deferred_lockstep`** =
+  *why* the laptop shows `refcount == mapcount` both going negative (`-7/-7`, `-11/-11`) — the deferred
+  removal drops both by the same `nr`; `pinned_sound` = either fix is sound.
+- **`property2/coq/refcount_race.v`** (Iris, ∀-interleaving): `deferred_rmap_window_spec` — the deferred
+  rmap removal reads a **live** folio for all interleavings while the gather holds its existence ref;
+  `gather_ref_blocks_free` — full ownership ⊥ the gather's share. This **promotes
+  `rmap_defer.no_free_while_referenced`** to the deferred-rmap window, exactly as you asked.
+
+**The obligation, and that both your candidate fixes discharge it** (`SharingRace.pinned_sound`): the
+gather batch must hold a **stable existence ref** (`Pinned`) across the window. Either establishes it —
+(a) **`delay_rmap=false` for PGCL clusters** (remove rmap under the PTL → the window cannot exist;
+latency-only cost) or (b) a real **`folio_try_get`** held across the window (keep `delay_rmap`, pin for
+real). For **speed-to-boot under the RFC deadline I recommend (a)** — surgical, one knob, no accounting
+change; it is the `delay_rmap` analogue of the Option-2 call for placement. Keep (b) for after.
+
+### Revised convergence target (what boots the laptop)
+
+```
+bootable kernel = baseline
+               + vma_address_end over-count fix     (in)
+               + Bug-1 completeness fix             (in)
+               + delay_rmap window fix              (PENDING — the LIVE crash: delay_rmap=false for PGCL clusters)
+   latent follow-up (real, not the boot blocker): Bug-2 placement (Option 1/2 from §2-3)
+   (NOT: from-tessera/143-gate)
+```
+
+**Agreed signal:** `PGCL143-RMTRIP` → **0/8** and no killinit/bad_page/RCU-stall on the oracle, and the
+laptop boots to desktop without the freeze. When that lands, the live #143 is closed with
+`SharingRace.pinned_sound` / `refcount_race.deferred_rmap_window_spec` as the machine-checked argument,
+and the placement work remains as the proven latent-safety net. Hand back the `RMTRIP` count after the
+`delay_rmap` fix.
