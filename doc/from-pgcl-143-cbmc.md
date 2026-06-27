@@ -180,3 +180,28 @@ The manifestation is the reclaim -> swap-in -> fork(COW) chain landing wrong con
 the child. Property: a cluster that round-trips through reclaim+swap-in must return
 byte-identical content to every vsub, even under concurrent sibling faults + deferred
 flush.
+
+
+---
+
+# ROUND 7 (2026-06-27): residual CONFIRMED = eager folio_free_swap (premature slot free / count race)
+
+Bisect on the KVM oracle nails R6's swap/reclaim aim:
+- Gating OFF the eager `folio_free_swap` in `do_swap_page` (mm/memory.c:5711, under PGCL):
+  **killinit 6/6 → 1/6; segfault-at-3d8 (the glibc reclaim_stacks corruption) 167 → 7 over 6
+  runs (24× drop).**
+- Mechanism: `do_swap_page` calls `should_try_to_free_swap → folio_free_swap` to eagerly
+  release the swap slot after mapping. Under PGCL one slot is SHARED by all
+  PAGE_MMUCOUNT sub-PTEs of the cluster; `folio_free_swap` guards on the swap count, so a
+  premature free means the count is **racily 0** while sibling sub-PTEs still hold swap
+  entries → slot freed+reused → corrupted swapped-in cluster → reclaim_stacks segv.
+- This is exactly the **refcount-under-concurrency** edge R6 asked you to focus
+  (Eviction.lean / SwapEntry.lean) AND the CBMC **resurrect-after-free / `folio_try_get`**
+  result (your SharingRace.lean / refcount_race.v lane). The proper kernel fix is to make
+  the slot-free count-correct under concurrent sibling swap-in (not the blunt disable we
+  used to confirm). Formal obligation: **a shared cluster swap slot is freed only after
+  ALL sub-PTE references are gone — folio_free_swap must observe the true (race-free)
+  count.** Bug1 (completeness, batch entries) + Bug2 (this) together: oracle 6/6→1/6.
+
+Combined fix is in a laptop testboot RPM now; the laptop boot is the next empirical
+datapoint.
