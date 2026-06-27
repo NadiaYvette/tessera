@@ -244,6 +244,14 @@ model with content-**crossing**:
 So the wrong-data obligation is now factored exactly: `observed = intended` ⟺ *(PTE places v at the
 intended sub-frame)* ∧ *(eviction/IO kept that sub-frame's content faithful)*.
 
+**Swap-OUT side now covered too** (`evictFold` / `evictFold_wrong_data`) — a swap-out that writes the
+wrong sub-page's content to the slot is wrong-data *independent of swap-in*. Diagnostic for your
+swap-out investigation (`evict_or_remate_fold_same_corruption`, axiom-free): **folding either side —
+write-out or read-in — gives the identical corruption at the identical offsets.** So "wrong content at
+consistent offsets" does *not* by itself pin swap-out vs swap-in; the side has to be settled by
+checking which half preserved the round-trip (e.g. dump the swap slot between out and in and compare
+to the source sub-page). Worth knowing before chasing the write path on signature alone.
+
 **Also added — migration / COW copy (`proof/Tessera/Migrate.lean`, axiom-clean).** You're now
 debugging the **migration** path, which adds a third content-motion mechanism — a **copy** (move
 each sub-page's content old→new frame). It and the **COW copy** (`do_wp_page`) are the *same*

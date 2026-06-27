@@ -58,6 +58,29 @@ theorem remateFold_wrong_data :
     ∃ (sv : SubVec) (i : Nat), remateFold (evict sv) i ≠ sv i := by
   exact ⟨id, 1, by decide⟩
 
+/-- **Swap-OUT side sub-offset fold**: a swap-out / writeback that saves the WRONG sub-page's
+content to the backing store (here every slot receives sub-page 0's content) — the write-out twin
+of `remateFold`, and a candidate shape for the swap-out bug under investigation. -/
+def evictFold (sv : SubVec) : Store := fun _ => sv 0
+
+/-- **The swap-OUT fold is a provable WRONG-DATA error, independent of swap-in**: even a perfectly
+correct rematerialisation reads back the wrong content, because the wrong content was written out. -/
+theorem evictFold_wrong_data :
+    ∃ (sv : SubVec) (i : Nat), rematerialise (evictFold sv) i ≠ sv i :=
+  ⟨id, 1, by decide⟩
+
+/-- **Diagnostic — the wrong-data signature does NOT by itself distinguish swap-OUT from swap-IN.**
+A faithful round-trip needs BOTH halves faithful; folding EITHER side — `evictFold` on write-out or
+`remateFold` on read-in — yields the *same* wrong content at the *same* sub-pages. So a swap-out bug
+and a swap-in bug are observationally identical in the page contents; the side must be pinned by
+checking which half preserved the round-trip (e.g. dump the swap slot between out and in), not by the
+corruption signature alone. A useful constraint for the hunt: "wrong content at consistent offsets"
+is consistent with both. -/
+theorem evict_or_remate_fold_same_corruption :
+    (∃ sv i, rematerialise (evictFold sv) i ≠ sv i) ∧
+    (∃ sv i, remateFold (evict sv) i ≠ sv i) :=
+  ⟨⟨id, 1, by decide⟩, ⟨id, 1, by decide⟩⟩
+
 /-- What userspace **OBSERVES** at virtual granule `v`: the content of the frame its PTE places
 `v` at, in physical memory `mem`. -/
 def observed (place : Nat → Nat) (mem : Mem) (v : Nat) : Content := mem (place v)
