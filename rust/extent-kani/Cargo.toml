@@ -1,0 +1,7 @@
+[package]
+name = "tessera-extent-kani"
+version = "0.1.0"
+edition = "2021"
+description = "Kani (bounded model-checking) validation of the extent-map insert against the non-overlap invariant — the literal-Rust counterpart of Tessera's Lean ExtentMap.insert_ordered."
+
+[dependencies]

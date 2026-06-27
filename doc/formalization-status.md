@@ -157,8 +157,9 @@ use 1. Full treatment: `clustering-rationale.md`.
   `PromotableF` surfaces the real **physical-contiguity** precondition for promotion.
   *Remaining to extend further (optional):* relate the mapping to the `Basic.lean`
   extent set (largely subsumed by `Tile.toExtent`).
-- **M4 — Layer-I refinement (the real implementation).** 🔶 **Four rungs done**
-  (`ExtentMap`, `BTree`, `Pte`, `RadixPt`), all axiom-clean.
+- **M4 — Layer-I refinement (the real implementation).** 🔶 **Four Lean rungs**
+  (`ExtentMap`, `BTree`, `Pte`, `RadixPt`, all axiom-clean) **+ literal executable Rust**
+  (`rust/extent-kani/`, Kani-verified).
   (`ExtentMap.lean`): the **ordered extent map** — the semantic model of telix's
   `mm/extent.rs` B+-tree (an ordered, non-overlapping map keyed by base). Proved: its
   ordering invariant **refines** Layer-A `WF` (`WFI_imp_WF`, axiom-free); `lookup` is
@@ -175,8 +176,17 @@ use 1. Full treatment: `clustering-rationale.md`.
   provably corrupts the translation, `encodeBuggy_corrupts`); **`RadixPt.lean`** — the
   refcounted PT *subtree* (a shared subtree carries its mappings; freeing it while a
   sibling references it is a provable UAF, `free_shared_subtree_uaf` = telix #2; the
-  discipline composes up the tree). *Remaining:* the multi-level B+-tree balancing
-  (insert-with-split, performance-only) and validating the **literal Rust** (Aeneas).
+  discipline composes up the tree).
+  **Literal Rust reached** (`rust/extent-kani/`): telix's real `extent.rs` is a
+  raw-pointer B+-tree (17 `unsafe`, `*mut u8` nodes) — outside Aeneas's safe-Rust model,
+  so the right tool is **Kani** (bounded model-checking via CBMC). A faithful heap-free
+  Rust `insert3` (the bounded instance of `ExtentMap.insert`) is **Kani-verified** to
+  preserve the ordering invariant for any disjoint insert, overflow-free (157 checks,
+  `VERIFICATION: SUCCESSFUL`) — the literal-Rust counterpart of `insert_ordered`, the
+  first time the development touches executable Rust, not a model. *Remaining:* the
+  multi-level B+-tree balancing (insert-with-split, performance-only); wiring the Kani
+  harness against telix's *deployed* module (needs kernel-dep stubs); a *full* (not
+  bounded) proof of the unsafe code would use Verus.
 
 ## Formalization decisions (and why)
 
