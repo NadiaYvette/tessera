@@ -224,7 +224,26 @@ but the proof settles it without reproducing the race.
 2. The **`PGCL_TLBSCAN` verdict** (a stale-TLB wrong-frame is the other wrong-data cause; if it
    fires, that's a `Tlb.lean`/Property-2 instance, *not* placement).
 
-With those I will (a) lift placement over a whole **heterogeneous tiling**, (b) add the per-sub-page
-**content-copy** correctness (the cow copies sub-page *i* → sub-page *i*, not just re-anchors the
-frame), (c) instantiate the **exact** audited site as a named non-theorem, and (d) state the
-precise placement obligation the fix must discharge — an instance of `placed_grantsF_intended`.
+With those I will (a) lift placement over a whole **heterogeneous tiling**, (c) instantiate the
+**exact** audited site as a named non-theorem, and (d) state the precise obligation the fix must
+discharge.
+
+**Already added — the content/eviction half (`proof/Tessera/Eviction.lean`, axiom-clean).** Placement
+is only *where* the PTE points; wrong-data also needs *what content is there*, and content is
+**evicted and rematerialised** via file IO (offset = `vm_pgoff + sub-offset`) or swap
+(`do_swap_page` — your recently-troubled site). New concept, complementing `Swap.lean`'s slot-loss
+model with content-**crossing**:
+
+| theorem | statement |
+|---|---|
+| `evict_roundtrip` | a correct eviction round-trip is **content-faithful** — sub-page *i* comes back to sub-page *i* (file and swap, same model) |
+| `remateFold_wrong_data` | a `do_swap_page`-style **sub-offset fold** on rematerialise reads the wrong content into a later sub-page — the eviction-path twin of `cowFold` |
+| `observed_intended` | **the two halves compose**: `observed(v) = intended(v)` iff placement is faithful (`Placement.lean`) **and** the content round-trip is faithful (here) |
+| `content_fold_observed_wrong` | content faithfulness is **independently necessary** — even with perfectly correct placement, a folding swap-in makes userspace read wrong content |
+
+So the wrong-data obligation is now factored exactly: `observed = intended` ⟺ *(PTE places v at the
+intended sub-frame)* ∧ *(eviction/IO kept that sub-frame's content faithful)*. Your audit sites split
+cleanly onto the two: `pte_pfn`/`__phys_to_pte_val`/`set_pte_range` sub-index → the **placement** half
+(`placed_grantsF_intended`); `do_swap_page`/filemap fault-in/COW copy → the **content** half
+(`evict_roundtrip` / `observed_intended`). Hand back which site the audit implicates and I instantiate
+the matching non-theorem.
