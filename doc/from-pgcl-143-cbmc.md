@@ -256,3 +256,42 @@ This is EXACTLY the CBMC resurrect-after-free result — the **`folio_try_get` l
 
 Bottom line: completeness + eager-free ⇒ the laptop BOOTS. The last mile is the shared-cluster
 refcount race (the try-get lane), not migration-placement.
+
+
+---
+
+# ROUND 9 (2026-06-28): residual = ORPHAN-PTE (not count, not placement) — agent NEGATIVE confirms the lane
+
+A focused pgcl agent attacked the residual exhaustively. Two empirical refutations + a sharper pin:
+
+- **Placement-π REFUTED empirically.** `pgcl_remat_test` (mremap +1 MMUPAGE → vsub!=psub, then
+  MADV_PAGEOUT / move_pages / file) = **SWAP/MIGRATE/FILE all PASS 0/256.** The sub-page offset IS
+  preserved across evict+remat on the real path. ⇒ `Permute.lean`/`framePi_faithful` are a sound
+  LATENT safety result, definitively **not** the #143 residual. (Confirms R8.)
+- **Count-imbalance REFUTED.** Every order-0 cluster ref/mapcount path balances (fork-dup, fault,
+  swap-in, zap, reclaim/migrate unmap, migration-restore, COW, PVMW straddle) — matches your CBMC
+  Part III "protocol correct." A tripwire in `__folio_remove_rmap` firing on order-0 `_mapcount<0`
+  fired **0/8** while corruption was 3/8 ⇒ the over-removes land on already-REUSED folios (positive
+  mapcount), NOT at remove-time. The laptop's `-11/-11` is the orphan's LATER teardown on the reused
+  folio, not an in-place under-count.
+
+## The residual, pinned to a class: ORPHAN-PTE (freed-while-mapped via a leaked present PTE)
+A present sub-PTE **outlives the removal of its rmap+ref** → the cluster's refcount legitimately
+reaches 0 → freed at the **deferred TLB put** (`exit_mmap → tlb_finish_mmu →
+free_pages_and_swap_cache`, NOT reclaim's `__remove_mapping` freeze) → pfn reused → the orphan PTE
+reads/writes the new owner's data → segv. It lives in the **cross-PTL window** your Part III is
+explicitly outside of: fork parent/child separate PTLs; the `page_vma_mapped_walk` straddle PTL-drop
+(`page_vma_mapped.c:377-385`); the lockless deferred put.
+
+## Formal obligation for this lane (the new frontier)
+**Every sub-PTE ref-drop must be paired with clearing that sub-PTE's PTE — no present PTE may survive
+the drop of its own rmap+ref — and this must hold across the PVMW straddle PTL-drop and the deferred
+batch put.** I.e. extend the protocol model PAST the Part-III boundary: model the unmap walk's
+per-sub-PTE (clear-PTE, drop-rmap, drop-ref) as a unit that cannot be interrupted such that the
+ref/rmap drop commits while the PTE-clear does not. The orphan has NO rmap entry, so a
+rmap-walk-at-free witness can't see it; the catchable invariant is the PTE↔folio-incarnation match
+(stamp sub-PTE at install with the folio alloc-generation; teardown asserts the stamp). That
+incarnation-tag is the concrete witness for a `SharingRace`/orphan-PTE Lean lemma.
+
+Status: laptop BOOTS (swap fixes committed f17563985f5b). Residual is survivable + now class-pinned;
+next pgcl step is the incarnation-tag detector to catch the exact leaked-PTE site.
