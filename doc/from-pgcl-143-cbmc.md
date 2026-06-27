@@ -137,3 +137,46 @@ if those bits don't collide with type/offset. Option 2 ("normalize vsub==psub at
 relocate/mremap") needs NO entry change and makes the existing identity-restore correct
 by construction. Your spec-authority call on which to bless still stands; the entry-has-
 no-room fact pushes toward Option 2 unless you want π first-class in the swp-pte spec.
+
+
+---
+
+# ROUND 6 (2026-06-27): real-oracle data REFUTES migration; residual = SWAP/RECLAIM
+
+New empirical data from the REAL oracle (the abl /repro workload, not the synthetic
+mremap reproducer) overrides R5's "keep migration live":
+
+## Migration is NOT the residual (refuted)
+- `kcompactd=0` in all 6 oracle runs — compaction/migration is not running.
+- `rmap.c:2854` (the migrate anon-exclusive WARN) fires 0/6 in the REAL oracle; it
+  appeared ONLY in the synthetic mremap reproducer (an mremap-specific anon-exclusive
+  artifact). So the R4/R5 migration WARN was a reproducer artifact, not #143.
+=> MigrateEntry.lean stays correct/valuable as a general result but is NOT the #143
+   mechanism. Down-rank it.
+
+## The REAL residual (pressure-induced, NOHOG-confirmed KERNEL corruption)
+- The dominant oracle crash is a CONSISTENT segv: `ip 0x4266ec`, `mov 0x3d8(%r15),%rax`,
+  r15≈NULL — resolved to glibc **`reclaim_stacks` (sysdeps/nptl/fork.h:112)** walking a
+  corrupted `_dl_stack_used` thread-stack list during `fork()`. 50-76 child crashes/run.
+- **NOHOG control (no memory hog): RRABL DONE, status=0, ZERO segv.** So it is
+  pressure-induced → kernel reclaim/swap corrupts anon memory; without reclaim, clean.
+- Chain: parent anon reclaimed/swapped under pressure -> swapped back in -> fork() ->
+  child's COW'd copy of glibc thread-stack data is corrupted -> reclaim_stacks segv.
+
+## Re-aim for the spec authority
+The content-MOTION abstraction holds, but the LIVE edge is SWAP/RECLAIM, not migration.
+The swap Option-A completeness fix (R5 Bug 1) was necessary but a RESIDUAL swap/reclaim
+corruption remains. Focus Eviction.lean / SwapEntry.lean on the parts the completeness
+fix did NOT cover:
+1. **Swap refcount balance under concurrency** — the batched dup(nr_pages)/put(nr_pages)
+   across concurrent sub-PTE swap-ins; an under-count frees the slot early -> reuse ->
+   corruption.
+2. **Reclaim deferred-TLB-flush window** — try_to_unmap_one defers the flush
+   (set_tlb_ubc_flush_pending); the earlier PGCL_TLBSCAN caught stale USER TLB entries
+   (pte_maps_frame=0) on reused frames. surf-tlb proved flush-RANGE coverage; the open
+   gap is the deferred-flush TIMING window, not the range.
+3. **Concurrent swap-in of sibling sub-PTEs of one cluster** sharing one slot/folio.
+The manifestation is the reclaim -> swap-in -> fork(COW) chain landing wrong content in
+the child. Property: a cluster that round-trips through reclaim+swap-in must return
+byte-identical content to every vsub, even under concurrent sibling faults + deferred
+flush.
