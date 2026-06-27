@@ -1,7 +1,7 @@
 # Tessera — what is proved (capstone)
 
 A self-contained statement of the result. The development is **Lean 4 (v4.16.0,
-core only), ~118 theorems across 19 modules, every result checked to rest only on
+core only), ~130 theorems across 22 modules, every result checked to rest only on
 Lean's standard sound axioms** (`propext`, `Quot.sound`, and `Classical.choice` where
 a noncomputable spec object is defined) — never `sorry`. The **operation matrix is
 complete**: every operation in `proof-obligations.md` Part 2 (fault, map, unmap,
@@ -93,6 +93,8 @@ Each is a failure that actually occurred in telix or pgcl, here proved to be a
 | `orphan_marker_breaks_wf` | an orphaned shared-PT marker with no owning group (telix #19) |
 | `overhang_undercounts` | per-object refcount under-counts a PT node shared across object boundaries (telix #20) |
 | `insert_overlap_breaks` | inserting an overlapping extent into the B+-tree (ordered map) corrupts the ordering invariant (telix #14 / pgcl #14) |
+| `encodeBuggy_corrupts` | a PTE layout whose frame field overlaps a flag bit corrupts the decoded translation (PTE field-aliasing) |
+| `free_shared_subtree_uaf` | freeing a refcounted PT subtree still shared by a sibling aspace — use-after-free (telix #2) |
 
 The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the invariants.
 
@@ -124,7 +126,9 @@ The catalogs `failure-modes-{telix,pgcl}.md` map the full bug history to the inv
 `Swap` (swap-out) · `Teardown` (exit/teardown) · `Fault` (fault/populate, promote-on-fill) ·
 `Tile` (promote/demote coarsening) · `Tiling` (heterogeneous tiling WF) ·
 `Refinement` (superpaging invisible) · `RefinementS` (Layer-S mapping) ·
-`Frames` (physical frames) · `ExtentMap` (Layer-I: ordered extent map = telix B+-tree, refined to Layer A).
+`Frames` (physical frames) · `ExtentMap` (Layer-I: ordered extent map = telix B+-tree) ·
+`BTree` (Layer-I: tree-node structure) · `Pte` (Layer-I: PTE bit-encoding) ·
+`RadixPt` (Layer-I: refcounted PT subtree).
 
 ## Why it is grounded
 

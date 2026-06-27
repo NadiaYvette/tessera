@@ -23,4 +23,7 @@ import Tessera.Fault
 import Tessera.Refinement
 import Tessera.RefinementS
 import Tessera.ExtentMap
+import Tessera.BTree
+import Tessera.Pte
+import Tessera.RadixPt
 import Tessera.Frames

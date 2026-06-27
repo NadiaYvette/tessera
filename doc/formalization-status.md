@@ -157,7 +157,8 @@ use 1. Full treatment: `clustering-rationale.md`.
   `PromotableF` surfaces the real **physical-contiguity** precondition for promotion.
   *Remaining to extend further (optional):* relate the mapping to the `Basic.lean`
   extent set (largely subsumed by `Tile.toExtent`).
-- **M4 — Layer-I refinement (the real implementation).** 🔶 **First rung done**
+- **M4 — Layer-I refinement (the real implementation).** 🔶 **Four rungs done**
+  (`ExtentMap`, `BTree`, `Pte`, `RadixPt`), all axiom-clean.
   (`ExtentMap.lean`): the **ordered extent map** — the semantic model of telix's
   `mm/extent.rs` B+-tree (an ordered, non-overlapping map keyed by base). Proved: its
   ordering invariant **refines** Layer-A `WF` (`WFI_imp_WF`, axiom-free); `lookup` is
@@ -165,10 +166,17 @@ use 1. Full treatment: `clustering-rationale.md`.
   (`insert_mem`) and **preserves** the ordering invariant when the new extent is disjoint
   (`insert_ordered`), while an overlapping insert provably breaks it
   (`insert_overlap_breaks` = telix #14 / pgcl #14). This connects the verified algorithm
-  to telix's actual data structure. *Remaining:* the balanced tree-node/fanout structure
-  (a performance-only refinement of this ordered map), the PTE bit-encoding leaf, and the
-  refcounted sharing-group structure — and, further out, validating the literal Rust
-  (e.g. via Aeneas).
+  to telix's actual data structure.
+  **Further rungs done:** **`BTree.lean`** — the tree-node structure (an ordered search
+  tree whose in-order traversal *is* the `ExtentMap` ordered map: `bst_ordered` +
+  `lookup_sound`, giving tree ⟶ ordered map ⟶ Layer A); **`Pte.lean`** — the PTE
+  bit-encoding leaf (`encode`/`decode` round-trips on valid/perm/frame, so the descriptor
+  word realizes the Layer-A `(valid, perm, frame)` leaf; a field-overlapping layout
+  provably corrupts the translation, `encodeBuggy_corrupts`); **`RadixPt.lean`** — the
+  refcounted PT *subtree* (a shared subtree carries its mappings; freeing it while a
+  sibling references it is a provable UAF, `free_shared_subtree_uaf` = telix #2; the
+  discipline composes up the tree). *Remaining:* the multi-level B+-tree balancing
+  (insert-with-split, performance-only) and validating the **literal Rust** (Aeneas).
 
 ## Formalization decisions (and why)
 
