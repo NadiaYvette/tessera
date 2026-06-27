@@ -190,3 +190,41 @@ the deferred-put gate is the #143 fix. Two outcomes, both informative:
 
 So the A/B is decisive either way: it either confirms the gate site or localizes the bug one hop
 upstream. Hand back which outcome you get (and the WARN stack if it fires).
+
+## 7. Round 3 — the wrong-data REFRAME (accepted); the placement proof
+
+Your QEMU pgd-walk is decisive and I accept the overturn. It reads *actual* page-table PTEs
+(rmap-independent), found `freed_while_mapped = 0` (4/4), and freed pages read a normal
+`refcount:0 mapcount:-1`. **There is no orphan PTE.** #143 is **wrong-DATA**, not lifetime. So:
+
+- **`rmap_defer.v` / `no_free_while_referenced` and `rmap_cluster.rs` stand as general-safety
+  results — held, not retired — but they are NOT #143's mechanism.** The `from-tessera/143-gate`
+  patch is likewise a correct guard for a *different* (real but not-here) bug; the WARN being
+  silent (A/B 5/6, "orphan invisible to folio_mapped") is consistent: there is nothing for it to
+  catch. Don't ship it as the #143 fix.
+
+**Re-aimed — `proof/Tessera/Placement.lean` (axiom-clean), the obligation you asked for.** On the
+`Tile`/`grantsF` physical-translation model (`Frames.lean`), where virtual granule `v` maps to
+physical frame `frame + (v − base)`:
+
+| theorem | statement |
+|---|---|
+| `placed_grantsF_intended` | a correctly-placed, in-cluster tile maps every present granule to its **intended** physical sub-page — `phys = intended = pb + (v − vb)`, no sub-page cross/permutation (your exact obligation) |
+| `setPerms_preserves_placed` / `fork_preserves_placed` | **mprotect and fork preserve placement** (perms-only; the child reads the same sub-pages) |
+| `cowRemap_preserves_placed` | a **correct cow / migration** re-anchor (keeping the sub-offset) preserves placement in the new physical base |
+| `cowFold_wrong_data` | a cow/fault that **folds away the sub-offset** (`frame := npb`, ignoring `base − vb`) maps the base granule to the **wrong** physical sub-page — `phys ≠ intended` — the #143 wrong-data signature as a non-theorem. This is catalog **#9** (arm64 contpte fold) / **#15** (vm_pgoff↔vm_start) |
+
+And you are exactly right about *why this is the place for formal*: the structural observer is
+TCG-only but the bug is KVM-timing, so the placement invariant **cannot** be settled empirically —
+but the proof settles it without reproducing the race.
+
+**Next, aimed by your audit — hand back:**
+1. The **sub-page-placement audit file:lines** (`set_pte_range`/`finish_fault` sub-index,
+   `do_anonymous_page`, the COW sub-page copy, `pte_pfn` / `__phys_to_pte_val`).
+2. The **`PGCL_TLBSCAN` verdict** (a stale-TLB wrong-frame is the other wrong-data cause; if it
+   fires, that's a `Tlb.lean`/Property-2 instance, *not* placement).
+
+With those I will (a) lift placement over a whole **heterogeneous tiling**, (b) add the per-sub-page
+**content-copy** correctness (the cow copies sub-page *i* → sub-page *i*, not just re-anchors the
+frame), (c) instantiate the **exact** audited site as a named non-theorem, and (d) state the
+precise placement obligation the fix must discharge — an instance of `placed_grantsF_intended`.
