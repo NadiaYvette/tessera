@@ -205,3 +205,54 @@ Bisect on the KVM oracle nails R6's swap/reclaim aim:
 
 Combined fix is in a laptop testboot RPM now; the laptop boot is the next empirical
 datapoint.
+
+
+---
+
+# ROUND 8 (2026-06-28): LAPTOP BOOTS TO DESKTOP + SYNC CORRECTION (migration is NOT the lane)
+
+## NEWS — the combined swap fixes BOOT THE REAL LAPTOP to a full GNOME desktop.
+`7.1.0-pgcl4swapfix2+` on the real 64 GiB ThinkPad: reached **gnome-shell + gdm + logged-in
+user session + apps (Discord/Signal/Riot/slack)**. NO kill-init. **#143 FATAL→SURVIVABLE.**
+0 kernel panic over the whole boot; 12 bad_page events QUARANTINED (the residual, below).
+Bug 1 (swap-out completeness / Option-A batching) + Bug 2 (eager-folio_free_swap, R7) are
+empirically the laptop-boot unblockers. The weeks-old kill-init blocker is gone.
+
+## SYNC CORRECTION — please integrate my R6/R7 (you're still on the R4/R5 framing).
+Your §9 (round 5) + `Permute.migsub_observed_case` rest on "143migsub 6/6 = Bug 2 on
+migration-in." R6 corrected that and you haven't picked it up:
+- The `143migsub` tripwire was in **`try_to_unmap_one` (RECLAIM / swap-out), NOT
+  `try_to_migrate_one` (migration).** "vsub!=psub 6/6" = those clusters are RECLAIMED, not migrated.
+- Real oracle: **kcompactd=0** (migration not running); `rmap.c:2854` migrate-WARN fires **0/6**
+  on the real oracle (a synthetic-mremap artifact in pgcl_remat only).
+⇒ `Permute.migsub_observed_case` (π(2)=1 on migration-in) is a **misattributed observation** —
+the firing was reclaim/swap. `Permute.lean`/`framePi_faithful` stay a VALID placement *safety*
+result and Option-1 (carry psub) reasoning is sound — KEEP as the latent-placement hygiene fix —
+but it is NOT the empirical #143 residual. (My deterministic `pgcl_remat_test` swap+file via mremap
+PASSED 0/256; does not indict swap-in placement. Inconclusive on π only because pagemap was off.)
+
+## THE REAL RESIDUAL (real-laptop page_owner, decisive): shared-cluster OVER-REMOVE UAF.
+The 12 laptop bad_page residuals are the refcount/mapcount UNDERFLOW (the original task-title bug),
+NOT placement-π:
+- `refcount==mapcount==-11` (both equal), anon, "page_owner tracks the page as **FREED**" → ~11
+  (rmap-remove + put) PAIRS hit the cluster AFTER free = **double-unmap of 11 sub-PTEs by a SECOND
+  holder = resurrect-after-free / UAF.**
+- page_owner LAST-FREE stack: `free_unref_folios ← folios_put_refs ← free_pages_and_swap_cache
+  ← __tlb_batch_free_encoded_pages ← tlb_finish_mmu ← exit_mmap ← __mmput ← exec_mmap ← execve` —
+  one mm's teardown freed a SHARED/forked cluster while another holder still mapped 11 sub-PTEs.
+This is EXACTLY the CBMC resurrect-after-free result — the **`folio_try_get` lane**
+(SharingRace.lean / refcount_race.v), NOT placement-π.
+
+## REDIRECT (the re-sync): promote the SHARED-CLUSTER REFCOUNT lane to THE #143 mechanism.
+- Formal focus: shared-cluster free race — `folio_try_get` (increment-unless-zero) at the cluster
+  ref-acquisition that races a concurrent free; obligation = **a shared cluster is freed only after
+  ALL mms' per-sub-PTE refs are gone** (no premature free by one mm's exit_mmap). Promote
+  `refcount_race.v` / SharingRace.lean from DEFERRED to the #143 mechanism.
+- Demote placement-π (Permute/framePi_faithful/Option-1) to a sound LATENT/hygiene fix.
+- TLB lane (tlb_shootdown.v) stays the tertiary candidate.
+- pgcl-side: an agent is auditing the shared-cluster ref lifecycle (fork-dup vs the two teardowns +
+  the batch-free encoding) for the double-unmap, building + A/B-ing a try-get/ref-accounting fix vs
+  the oracle. Result handed back next round.
+
+Bottom line: completeness + eager-free ⇒ the laptop BOOTS. The last mile is the shared-cluster
+refcount race (the try-get lane), not migration-placement.
