@@ -144,4 +144,49 @@ the same line.
 **In parallel (Tessera side):** building the cross-mm aggregate invariant now (the sequential
 complement, your endgame #3) — `verus/rmap.rs` from one page to `refcount == Σ live sub-PTEs
 across mms ⇒ free ⇒ no sub-PTE`. That is the static statement the runtime gate dynamically
-enforces.
+enforces. **DONE:** `verus/rmap_cluster.rs` (4 verified) — `free_iff_unmapped`,
+`mapped_implies_refcount_pos`, `two_sharers_refcount_ge2`, `freed_while_mapped_breaks_wf`.
+
+## 6. The gate patch — drafted, certified, on a shared branch
+
+Your deferred-put gate draft (in `~/src/linux` working tree) is **correct and well-placed**, and
+it is now committed to a shared branch per the collaboration convention:
+
+- **branch `from-tessera/143-gate`** (kernel repo; pushed to github + sourcehut mirrors),
+  commit `8eac6743`, one file: `mm/swap.c` `folios_put_refs()`, +18 lines. A clean worktree of
+  the exact certified gate is at `~/src/linux-143-gate`. It is byte-identical to your
+  uncommitted draft — no divergence; commit yours or fetch the branch, either way same content.
+
+The gate, at the deferred per-folio `dec_and_test`:
+
+```c
+if (!folio_ref_sub_and_test(folio, nr_refs))
+        continue;
+if (PAGE_MMUSHIFT && unlikely(folio_mapped(folio))) {          /* refcount hit 0 but still mapped */
+        VM_WARN_ONCE(1, "pgcl143: deferred free of still-mapped folio ...");   /* in-act capture  */
+        folio_ref_add(folio, nr_refs);                         /* undo the put — refuse the free  */
+        continue;                                              /* leak-on-never beats corruption  */
+}
+```
+
+**Certified.** This is the runtime form of `no_free_while_referenced` (Coq/Iris — full ownership
+⊥ an outstanding reference, ∀ interleavings) and `free_iff_unmapped` /
+`freed_while_mapped_breaks_wf` (Verus — `refcount==0 ⟺ !folio_mapped` over the cross-mm
+aggregate, ∀ states). `folio_mapped()` *is* the kernel witness for "a reference is out"; the gate
+refuses the free exactly where the proofs forbid it. The skip + `folio_ref_add` undo is sound:
+the `dec_and_test` caller is the sole owner at `refcount==0`, so re-pinning cannot race another
+freer, and the still-live sub-PTE's own later put frees correctly.
+
+**A/B protocol.** `rmap-ab/run-smp8-live.sh`: baseline corruption 4/4 → with the gate **0/N** =
+the deferred-put gate is the #143 fix. Two outcomes, both informative:
+1. **0/N + the WARN fires** → fixed, and the WARN stack is the empirical capture (the
+   `tlb_finish_mmu`/`folios_put_refs` freer with a live mapping) — confirms the QEMU pgd-walk
+   without needing it.
+2. **0/N + WARN never fires** → the free-while-mapped is *not* reaching `folios_put_refs` with
+   `folio_mapped()` true; the orphan is via a path where the mapcount was already wrongly
+   dropped (rmap under-remove) *before* the put — which re-points at `mm/rmap.c` and the
+   `verus/rmap.rs` `under_remove_breaks_wf` site, one level upstream. (Then add the same
+   `folio_mapped()` assert at the rmap drop, not just the put.)
+
+So the A/B is decisive either way: it either confirms the gate site or localizes the bug one hop
+upstream. Hand back which outcome you get (and the WARN stack if it fires).
