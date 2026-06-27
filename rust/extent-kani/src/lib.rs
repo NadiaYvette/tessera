@@ -20,6 +20,11 @@
 //! Run: `cargo kani`.  Verifying telix's *deployed* `ExtentTree` in place additionally
 //! needs its kernel deps (the node allocator, `PhysAddr`, `#![no_std]`) stubbed so the
 //! module builds under a harness — the remaining step toward the literal module.
+//!
+//! `coalesce` carries telix's *actual* `can_coalesce`/`ExtentFlags` logic verbatim under
+//! Kani — the first deployed-kernel functions verified directly.
+
+pub mod coalesce;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Extent {
