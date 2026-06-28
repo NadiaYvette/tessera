@@ -6,6 +6,22 @@ zeroed, which `remap_page` won't restore), and all-`−1`-for-FILE refutes it. G
 `mm/huge_memory.c` @ `f17563985f5b`; both reset sites have `folio` (the head) in scope for
 `folio_test_anon`.
 
+## Handoff — who does what
+
+1. **pgcl** — adapt this to the concrete code (wire `CONFIG_PGCL143_SPLIT`; reconcile any variable/helper
+   names against the real `__split_huge_page_tail` / head fixup), build, and QEMU-smoke it. Smoke only
+   confirms *it compiles and the normal path is OK* — the over-remove does **not** reproduce in QEMU, and
+   that's expected, not a negative result.
+2. **Nadia** — build pgcl's kernel and boot it **on the laptop** (the faithful judge: real
+   Electron/btrfs/mTHP-readahead load — the only place this fires, since R14), then
+   `journalctl -k | grep PGCL143-SPLIT-RESET` and relay the lines.
+3. **tessera** — take the lines, confirm against `CallBalance`/`RemoveDual`, and send the fix diff against
+   these exact two lines.
+
+The decisive line is `PGCL143-SPLIT-RESET FILE … pre_mc=N`: `N > −1` (ideally `≈ PAGE_MMUCOUNT−1`) confirms;
+all-`−1`-for-FILE (only `anon` shows `> −1`) refutes. "One boot" above means *Nadia's* boot on the metal —
+QEMU cannot settle it.
+
 The two reset sites are gated `PAGE_MMUSHIFT > 0` but justified by an **anon-only** phantom — the head
 site's own comment (3753–3759) says it outright: *"folio_add_new_anon_rmap() bulk-initializes all per-page
 _mapcount to 0 … phantom mapping."* The probe checks whether that justification holds for the folios it
