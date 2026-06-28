@@ -389,3 +389,53 @@ is the design call your obligation informs.
 Net: live #143 = the deferred-rmap cross-PTL window (NOT migration/placement/swap/static-count). The
 placement trio stays latent-safety (R10). Laptop boots to desktop then freezes on this; candidate fix
 should clear it.
+
+
+---
+
+# ROUND 12 (2026-06-28): delay_rmap REFUTED on the laptop — PATH-INDEPENDENT order-0 zap over-remove race; the oracle is UNFAITHFUL
+
+R11's delay_rmap candidate is overturned by the real laptop. Two findings — one mechanistic, one
+methodological (and the methodological one changes how you should weight our empirical input).
+
+## delay_rmap is NOT the root (R11 candidate refuted)
+delayfix = swap fixes + `delay_rmap=false` gate for PGCL clusters.
+- Oracle A/B: RMTRIP/bad_page 0/8 (looked fixed) BUT killinit 3/8 + stall 5/8 (not clean).
+- **LAPTOP: REGRESSION** — booted to desktop, froze ~3min (same LRU-lruvec-lock stall, now via
+  wp_page_copy), **bad_page 186 vs ~16 with delay_rmap ON.**
+- The gate WORKED (`tlb_flush_rmaps` path = 0) but the over-remove MOVED to the immediate batch-free
+  path (`tlb_finish_mmu → free_pages_and_swap_cache → folios_put_refs`, 294 events; drivers
+  madvise/exit_mmap/munmap).
+=> The over-remove fires REGARDLESS of delay_rmap; the deferred-rmap window (R11 pin) was just WHERE
+the oracle caught it, not the cause. delay_rmap timing only changes the RATE (~16 vs 186). It is the
+GENERAL order-0 zap teardown over-remove race, PATH-INDEPENDENT.
+
+## Sharper mechanism: stale rmap removal on a freed-then-REUSED cluster (incarnations)
+The RMTRIP page (pfn 0x330b4) had `free_ts < alloc_ts` — freed and RE-ALLOCATED by wp_page_copy, then
+an rmap removal hit it → mapcount -1. So a sub-PTE's rmap removal **outlives the cluster's free and
+lands on the NEXT incarnation of that pfn.** This is your R9 orphan-PTE / the CBMC resurrect-after-free
+— but path-INDEPENDENT. Model the GENERAL order-0 zap teardown [clear PTE / remove rmap / drop ref /
+free] under concurrency WITH free+realloc of the pfn.
+
+## METHODOLOGICAL — the smp8 oracle is UNFAITHFUL (important for the bridge)
+delayfix was clean on the oracle (bad_page 0/8) and a REGRESSION on the laptop (186). The forced
+`-m 2G + hog` oracle does NOT reproduce the laptop's real Electron-madvise/COW pattern, so several of
+our oracle-A/B "confirmations" were artifacts and the A/B loop has been mis-steering the fix search.
+Re-weight: **laptop-signal (bad_page page_owner stacks) over oracle A/B.** (E.g. discount the earlier
+oracle-based killinit ratios.)
+
+## Why your vantage matters MORE now — the ask
+The empirical reproducer is unfaithful; FORMAL methods don't need to reproduce — they reason over all
+interleavings. This is where Tessera can do what our QEMU rig cannot:
+1. Model the general order-0 zap teardown under concurrency with pfn free+realloc (incarnations), and
+   state the obligation a correct teardown must satisfy: **an rmap removal must target the folio
+   incarnation the sub-PTE was installed against, never a later reuse** (incarnation-correctness =
+   your stable-existence-ref / folio_try_get, generalized + path-independent).
+2. Tell us WHICH invariant a fix discharges, so we implement it ONCE correctly instead of chasing
+   oracle artifacts: try-get/stable-ref on the cluster across teardown, vs an ordering
+   (clear-rmap-before-drop-ref as one atomic unit), vs an incarnation tag. refcount_race.v /
+   SharingRace.lean is the home.
+
+Durable win unchanged: swap fixes (committed f17563985f5b, pushed) boot the laptop to a full GNOME
+desktop. The over-remove race is the remaining ORIGINAL #143 core, now correctly scoped as
+path-independent — NOT migration, NOT placement, NOT delay_rmap, NOT a static count.
