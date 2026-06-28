@@ -112,3 +112,52 @@ strictest grade. This is why row #6's ref-pin was *already correct* while row #2
 bug: the kernel **froze** migration but only `_get`-ed (not `try_get`-ed) the zapped cluster. The
 framework places both under one obligation and shows precisely which grade each site uses — and which
 site was missing it.
+
+---
+
+## Applying the template — row #8 (swap writeback ref-pin), in brief
+
+The third row, and the one that stress-tests the framework, because its window is the hardest:
+*no lock spans it.* Swap/eviction writeback (`mm/page_io.c`) again has two halves; the content
+round-trip is in `Eviction.lean`, so only the ref-pin needed wiring
+(`proof/Tessera/WritebackPin.lean`, axiom-clean).
+
+**1. INSTANCE — the four roles:**
+
+| framework role | writeback's reality |
+|---|---|
+| resource `R` | the folio being written back |
+| guard (`Pinned`) | the swap-cache reference + `PG_writeback`, holding `refs ≥ inflight` |
+| incarnation | the folio's allocation; an in-flight DMA must land in the incarnation it was submitted against |
+| window-closer | **`end_swap_bio_write` → `folio_end_writeback`**, on an IO-completion **IRQ** at an uncontrolled time |
+
+**2. AUDIT.** The code path is `bio_add_folio` → `folio_start_writeback` → **`folio_unlock`** →
+`submit_bio`: the lock is dropped *before* the async IO is even submitted. So between window-open and
+window-close (an IRQ, arbitrarily later) the only thing keeping the folio from being freed+reused is
+its reference plus the `PG_writeback` marker the reclaimer honours (`vmscan.c`: `folio_test_writeback`
+→ `folio_wait_writeback`). Gap to hunt: any path that drops the swap-cache ref while `PG_writeback` is
+still set — that is `free_under_io_uaf` (an in-flight DMA into a freed folio).
+
+**3. CHECK.** `WritebackPin.lean`: `wb_pinned_live` (the hold keeps it live across the IO),
+`free_under_io_uaf` (the bug shape), `wb_inc_correct` (no reincarnation under in-flight DMA), and
+`end_writeback_sound` (the deferred free, after `folio_end_writeback`, never over-drops). The runtime
+guard already exists — the reclaimer's `folio_test_writeback` wait.
+
+**The payoff — order-independence is load-bearing.** Because the window closes on an external IRQ,
+safety cannot depend on *when* anything runs. `wb_drop_keeps_live` is the ∀-interleaving theorem
+(`Deferred.drop_keeps_live`) applied here: any concurrent reclaim up to the slack keeps the folio live
+*however* it interleaves with the completion. The other rows could lean on a lock or a `const` flag to
+order things; this one has neither, and the proof shows the `Pinned` obligation alone suffices —
+the strongest evidence that the guard, not the window's shape, is what carries the safety.
+
+### The grade ladder, across the three wired rows
+
+| row | site | guard grade | status |
+|---|---|---|---|
+| #2 | zap teardown | `try_get` (`refs > 0`) | the live bug — this grade was **missing** |
+| #6 | migration | `freeze` (`refs == expected`) | already correct in-tree |
+| #8 | swap writeback | ref held across async IO, order-independent | already correct in-tree |
+
+One obligation (`Pinned` / `pinned_inc_correct`), three grades, read off the real code. The framework's
+value is no longer just "describe each site" — it puts them on a common ladder and names which rung each
+real site stands on, and which one had fallen off.
