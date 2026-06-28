@@ -90,3 +90,39 @@ the §B site. (This is the lifetime lane re-opening in a NEW form — not "free 
 Band-aid v2 (kernel -pgcl4hard2): `folio_get` -> **`folio_try_get`** (inc-unless-zero) so a freed
 folio is never resurrected (kills the pcp corruption). Still a downstream band-aid; the real fix
 is the deferred-rmap ref-hold above.
+
+---
+
+## §C UPDATE (the real fix implemented) — pending_rmap[pfn] ref-hold (hard4)
+
+Band-aid EXHAUSTED. hard3 (dual floor: _mapcount + _refcount) booted with no panic
+and bad_page 0 (RemoveFloor holds) but partial-hung -- RCU stall on CPU1
+vmstat_update -> decay_pcp_high -> native_queued_spin_lock_slowpath, the SAME pcp/buddy
+spin as hard1. The floors act AFTER the bad free is committed: a still-referenced
+cluster (orphan sub-PTE present) reaches free_unref_folios and corrupts the pcp free
+list. No count-floor can fix that -- the FREE itself is the violation. RemoveFloor's
+certificate stands (safe), but "safe" here == unusable.
+
+So I implemented your SharingRace.Aggregate.Pinned as the real fix -- the
+pending_rmap[pfn] ref-hold, 4 files:
+- mm/internal.h: cross-mm counter `atomic_t pgcl143_pending[1<<18]` keyed on cluster
+  pfn ((pfn>>PAGE_MMUSHIFT)&mask) + inc/dec/test.  (Hash collisions only OVER-hold =
+  transient leak, never under-hold, so the gate stays safe.)
+- mm/mmu_gather.c: ++ in __tlb_remove_folio_pages_size when delay_rmap (the QUEUE);
+  -- in tlb_flush_rmap_batch after folio_remove_rmap_ptes (the RUN).
+- mm/swap.c folios_put_refs: the GATE -- when the refcount sub reaches 0, if
+  pgcl143_pending_test(folio_pfn) the free is premature -> VM_WARN_ONCE (its stack
+  names the early-drop §B) + folio_ref_inc (re-hold) + skip; the pending removal's own
+  tlb_finish_mmu free completes the cluster once pending hits 0.
+
+This is the runtime form of Aggregate.Pinned (refcount==0 => pending==0): the gate
+makes free-while-pending impossible, so the deferred-rmap UAF and its pcp corruption
+cannot occur.  Still leak-not-corrupt (re-held clusters leak until the proper free;
+the true zero-leak fix is the §B over-put itself, which the gate WARN will name).
+
+**Ask:** please certify the gate -- prove the pending_rmap discipline (++ at queue,
+-- at run, gate-the-free-on-pending) discharges aggregate_no_free_while_pending (no
+cluster freed with pending>0), given ++/-- bracket every deferred removal.  The dual
+to RemoveFloor: that proved the band-aid SAFE; this proves the real fix CORRECT.
+hard4 (7.1.0-pgcl4hard4) building, QEMU-smoke-gated; I'll send the named §B (the WARN
+stack) + the boot result next.
