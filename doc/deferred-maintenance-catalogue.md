@@ -69,6 +69,16 @@ ref outliving all the teardown's deferred ops**, not an ordering tweak on one pa
 > (`folio_mapped_blind_to_orphan`); and **the two facets are plausibly one root** — a single `nr`
 > under-count at the vsub≠psub batched install under-adds *both* rmap and ref (R11's lockstep), so §B
 > closes both at the source. See `doc/to-pgcl-143-R14C-gate-certified.md`.
+>
+> **R15–R17 — the root is the REMOVE side, not the install.** The discriminator boot refuted install
+> `nr < k` (every install statically balanced) and named a path-agnostic **cluster-level rmap
+> double-DISCHARGE**: a `−1` not backed by a present→absent transition, invisible to the `pte_pfn`-aliased
+> single `_mapcount`. `RemoveDual.lean` proves install-under-add and remove-double-discharge are
+> *indistinguishable* by `dual_lockstep` (so the boot was needed), and that the bug is **per-sub-PTE
+> accounting on a per-cluster aliased counter** (`perSub_breaks_faithful`) whose root fix is **per-cluster
+> first-in/last-out** accounting (`perClus_preserves_faithful`, idempotent to the double-discharge). The
+> `~2×`/`quar≈15` is a band-aid feedback artifact masking a one-extra-remove *seed*; the seed-catcher is a
+> per-cluster presence shadow. See `doc/to-pgcl-143-R17-mechanism.md`.
 
 Family (B) is `Tlb.lean` / `property2/coq/tlb_shootdown.v` (a flush-less downgrade is a non-theorem).
 
