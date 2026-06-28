@@ -38,6 +38,14 @@ Family (A) is mechanized **once, generally**, in `proof/Tessera/Deferred.lean`
 | `run_on_freed_over_decrements` | a deferred op on a freed resource drives the count **negative** (`mapcount -1`) |
 | `run_lockstep` | two counts discharged by the same `owed` go negative **in lockstep** — the diagnostic signature |
 
+**The freed-then-reused (ABA) refinement** — `proof/Tessera/Incarnation.lean` (pgcl #143 R12). When the
+deferred op can land *after* the resource is freed AND re-allocated to a new owner, "stay live" must
+sharpen to **incarnation-correctness**: the op must target the incarnation it was scheduled against,
+never a later reuse. `pinned_inc_correct` shows the `Pinned` obligation already implies it (a stable ref
+blocks the reincarnation, on *any* path) — so the fix is path-independent: hold **one real `try_get`'d
+ref outliving all the teardown's deferred ops**, not an ordering tweak on one path (`reincarnate_breaks`
+/ `stale_remove_underflows` are the bug; (a) try-get is recommended over (b) ordering / (c) inc-tag).
+
 Family (B) is `Tlb.lean` / `property2/coq/tlb_shootdown.v` (a flush-less downgrade is a non-theorem).
 
 ## The recipe — adding a site is a one-liner
@@ -58,7 +66,7 @@ runtime check guards it; **OPEN** = next target.
 | # | site | family | deferred op `D` | guard to check | status / artifact |
 |---|---|---|---|---|---|
 | 1 | `mmu_gather` deferred put (`tlb_finish_mmu` → `folios_put_refs`) | A | drop the folio's batched refs | gather holds a ref per queued put | **PROVED** `rmap_defer.v` (`no_free_while_referenced`) |
-| 2 | `mmu_gather` **`delay_rmap`** (`tlb_flush_rmaps`) — *#143 R11* | A | `folio_remove_rmap_ptes(nr)` | gather holds nr stable refs across the PTL drop | **PROVED** `SharingRace.lean`, `refcount_race.v`; **TRIPWIRE** `PGCL143-RMTRIP`; fix `delay_rmap=false` for clusters (A/B) |
+| 2 | order-0 **zap teardown over-remove** (`zap_pte_range` → rmap removal *and/or* `folios_put_refs`) — *#143 R11/R12* | A + incarnation | any deferred teardown op on the cluster | the teardown holds **one real `try_get`'d ref** outliving *all* its deferred ops, so the pfn cannot be freed+reused under any (`Incarnation.pinned_inc_correct`) | **PROVED** `SharingRace.lean`, `refcount_race.v`, `Incarnation.lean`; **TRIPWIRE** `PGCL143-RMTRIP`. *R12: `delay_rmap` is the catch-site not the cause — path-independent; fix (a) try-get, not `delay_rmap=false` (refuted on laptop)* |
 | 3 | TLB shootdown batch (`TTU_BATCH_FLUSH`) | B | flush stale TLB entries | flush completes before the freed frame is reused | **PROVED** `Tlb.lean`, `tlb_shootdown.v` |
 | 4 | RCU-deferred free (`call_rcu` on a shared node) | A | free the node | a reader's grace period pins the node | **OPEN** (instance of `Deferred.Window`; readers = `refs`) |
 | 5 | deferred split / `khugepaged` collapse | A | drop page-table / rmap refs after retract | the collapse holds refs on the folios it retracts | **OPEN** |

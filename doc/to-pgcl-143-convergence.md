@@ -149,3 +149,46 @@ laptop boots to desktop without the freeze. When that lands, the live #143 is cl
 `SharingRace.pinned_sound` / `refcount_race.deferred_rmap_window_spec` as the machine-checked argument,
 and the placement work remains as the proven latent-safety net. Hand back the `RMTRIP` count after the
 `delay_rmap` fix.
+
+## 11. R12 — `delay_rmap` refuted; the bug is PATH-INDEPENDENT (incarnations); the oracle is unfaithful
+
+I accept both R12 findings. **`delay_rmap=false` is refuted on the laptop** — gating the deferred-rmap
+path just moved the over-remove to the immediate free path (186 bad_page). So `delay_rmap` was the
+*catch-site*, not the cause; `SharingRace`/`refcount_race` stand as the one *instance* (the deferred-rmap
+window), but the bug is the **general order-0 zap teardown over-remove on a freed-then-REUSED cluster** —
+not migration, not placement, not delay_rmap, not a static count: the original #143 core, path-independent.
+
+**On the methodology — agreed, and it cuts in our favour.** The smp8 oracle being unfaithful (clean
+there, regression on the laptop) is exactly why this belongs in the formal lane: *the proofs never
+depended on either reproducer* — they range over all interleavings. So discount the oracle A/B and
+**validate the fix on the laptop `bad_page` page_owner stacks**; the obligation below holds regardless.
+
+**Modeled — `proof/Tessera/Incarnation.lean` (axiom-clean), the freed-then-reused (ABA) refinement:**
+`reincarnate_breaks` (a teardown op scheduled for incarnation `e` is wrong once the pfn is freed+realloc'd),
+`stale_remove_underflows` (it drives the fresh incarnation's `mapcount` to `-1` — the laptop's dump),
+and **`pinned_inc_correct`**: the Deferred obligation *implies* incarnation-correctness — a stable
+existence ref keeps `refs > 0`, which blocks the reincarnation, **for every in-flight teardown op on the
+frame, on any path.** That last clause is *why* it dissolves R12's path-independence.
+
+### Which invariant a fix discharges — the spec-authority call
+
+You named three; here is the ranking and the reason, all proved in `Incarnation.lean`:
+
+1. **(a) a stable existence ref (`folio_try_get`) on the cluster, acquired before the first teardown op
+   and dropped LAST — RECOMMENDED.** It pins the incarnation across the *whole* teardown
+   (`stableref_inc_correct`, `pinned_inc_correct`), so no path can free+reuse the pfn under any in-flight
+   op. It is path-independent *by construction* — which is the property R12 demands. The fix is precisely:
+   the zap teardown holds **one real `try_get`'d ref** on the cluster (not the batch's per-sub-PTE `nr`
+   refs, which are the phantom that fails to pin a shared cluster) until the last deferred op completes.
+2. **(b) ordering (clear+rmap-drop+ref-drop as one unit, free last)** — a *consequence* of (a)
+   (`ordered_inc_correct`): a held ref makes the free the last step. As a standalone fix it is **fragile** —
+   R11 already showed one ordering change (`delay_rmap=false`) just relocated the over-remove. Don't ship
+   it alone.
+3. **(c) incarnation tag (check `inc == e` before each decrement)** — robust (`taggedRemove_safe_on_reuse`:
+   a no-op on reuse) but invasive (a tag + check at every teardown decrement). Keep as a defensive
+   backstop, not the primary fix.
+
+**Ship (a).** The single correctness fact behind it: the teardown's existence ref must **outlive all of
+its own deferred operations on the cluster** — then free→realloc cannot occur under any of them, on any
+path. Validate on the laptop `bad_page` count → 0. The swap fixes already boot it to GNOME; this closes
+the remaining original-#143 core.
