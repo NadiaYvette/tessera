@@ -48,10 +48,45 @@ for — with one new wrinkle R14 surfaced that I'd like to fold in: the **cross-
 
 What I still need from you, when the deferred rmap-walk probe lands: **the early-drop site** — the
 `file:line` where a cluster's last aggregate ref is dropped while a sub-PTE is still present *and* a
-deferred removal is queued (the `ref+rmap drop` ordering that lets the aggregate hit 0 first). That names
-the root the way the band-aid certificate currently brackets it. The `VM_WARN(_mapcount + 1 != present)`
-add-edge tripwire is still the right dynamic dual once the rmap-walk lock-recursion is handled — it
-asserts the static floor; a companion `WARN if freed while pending-removal > 0` asserts the dynamic root.
+deferred removal is queued (the `ref+rmap drop` ordering that lets the aggregate hit 0 first). The
+tripwire in §4 is the instrument that names it.
+
+## 4. The tripwire that names the early-drop — `WARN if freed while a deferred removal is pending`
+
+This is the runtime dual of `SharingRace.aggregate_no_free_while_pending`, and it is *faithful by
+construction*: it asserts the obligation itself (not a symptom), and it fires at the early-drop **creator**
+rather than the later over-remove — so its stack *is* the `file:line` §3 asks for.
+
+**State — a cross-mm pending-removal counter, keyed on the shared cluster pfn** (the runtime form of
+`Aggregate.owed = Σ_mm pending`):
+- `++pending_rmap[pfn]` when `zap_present_folio_ptes` queues a deferred removal (records the cluster in an
+  mmu_gather batch with `delay_rmap = true`);
+- `--pending_rmap[pfn]` when `tlb_flush_rmaps → folio_remove_rmap_ptes` runs it;
+- keyed on the **shared** pfn, not per-mm, so mm-A's pending blocks mm-B's free — the cross-mm aggregate;
+- cheap home: a debug counter in the cluster head `struct page` under `CONFIG`, or a shadow array parallel
+  to the probe shadow you already maintain.
+
+**Assertion — at the free**, where the aggregate refcount reaches 0 and the cluster goes back to the
+allocator (`free_pages_and_swap_cache` / `__tlb_batch_free_encoded_pages`, and the buddy free):
+```c
+VM_WARN_ON_ONCE(pending_rmap[pfn] > 0);   /* + dump_page(page) + dump_stack() */
+```
+This is exactly `Pinned`'s contrapositive — `refcount == 0 (freed) ⇒ pending == 0` — so the WARN's stack
+names the path that drops the cluster's last aggregate ref while a deferred removal is still queued. Root,
+not symptom.
+
+**Companion (symptom side) — at the deferred removal**, the runtime dual of `aggregate_uaf`:
+```c
+VM_WARN_ON_ONCE(folio_ref_count(folio) == 0);   /* in tlb_flush_rmaps, before folio_remove_rmap_ptes */
+```
+This fires on the `refcount:0` you already dumped. The **pair brackets the window**: the free-path WARN
+fires first (the creator), the removal-path WARN second (the use); the two stacks delimit exactly the
+lock-less interval the ref-hold must span.
+
+Net wiring: `VM_WARN(_mapcount + 1 != present)` at the rmap add/remove edges asserts the **static floor**
+(`CallBalance`); the free-path `WARN if pending_rmap[pfn] > 0` asserts the **dynamic root**
+(`SharingRace.Aggregate.Pinned`). Both faithful by construction, and between them they catch a regression
+of either facet before a laptop does.
 
 Catalogue row #2 is updated to the two-facet picture; the R13 reclassification note now records the
 detour-and-return honestly.
