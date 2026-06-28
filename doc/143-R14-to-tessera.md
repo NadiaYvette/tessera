@@ -60,3 +60,33 @@ corrupt) even with the under-add unfixed. That certifies the laptop-boot band-ai
 fix is pending. (Matches telix-verus/rmap.rs's _mapcount+1==present; your VM_WARN(_mapcount+1 !=
 present) tripwire is the dynamic dual -- I'll add it at the add edge once the rmap-walk
 lock-recursion is handled via the deferred walk.)
+
+---
+
+## §B UPDATE (after booting band-aid v1 on the laptop) — the over-remove is a DEFERRED-RMAP UAF
+
+Booting -pgcl4hard (cmpxchg-floor `_mapcount` + `folio_get`) sharpened §B. Result: **no global
+LRU freeze + bad_page 0** (the floor killed the underflow corruption), but `folio_get` caused a
+NEW allocator stall — RCU stall on a CPU in `vmstat_update -> decay_pcp_high -> _raw_spin_lock`
+(the PCP/buddy lock). Cause: **the over-removed folios are ALREADY FREED — they dump
+`refcount:0 mapping:0`** at the deferred over-remove (`tlb_flush_rmaps`, caprine). `folio_get`
+resurrected a being-freed page and corrupted the pcp/buddy free list.
+
+So §B is not (only) a static under-add — it is a **deferred-rmap use-after-free**: the deferred
+rmap removal runs AFTER the cluster's aggregate refcount hit 0. The deferred-rmap tlb batch did
+NOT keep the cluster alive (no held ref), so a **cross-mm aggregate free** (a shared/forked
+cluster freed by one mm's last-ref-drop) frees it while another mm's deferred batch still has a
+pending removal -> the removal over-removes on the freed folio. (Immediate-path over-removes,
+slack/`zap_present_ptes`, may instead be on still-alive folios.)
+
+**Refined invariant for the formal lane** (in addition to `_mapcount + 1 == Σ present sub-PTEs`):
+the deferred-rmap discipline must hold — **a folio with a PENDING deferred rmap removal (in any
+mm's tlb batch) must not be freed**: the batch must hold a ref per pending sub-PTE removal, and
+the aggregate refcount must not reach 0 while any deferred removal is outstanding. The early
+ref+rmap drop that lets the aggregate hit 0 (sub-PTE still present + deferred removal pending) is
+the §B site. (This is the lifetime lane re-opening in a NEW form — not "free while mapped"
+[folio_mapped false here], but "free while a deferred rmap removal is pending".)
+
+Band-aid v2 (kernel -pgcl4hard2): `folio_get` -> **`folio_try_get`** (inc-unless-zero) so a freed
+folio is never resurrected (kills the pcp corruption). Still a downstream band-aid; the real fix
+is the deferred-rmap ref-hold above.
