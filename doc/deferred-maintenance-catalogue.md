@@ -57,6 +57,18 @@ ref outliving all the teardown's deferred ops**, not an ordering tweak on one pa
 > floor*, the call-balance invariant (`CallBalance`), which the laptop-boot band-aid enforces defensively
 > (`RemoveFloor.lean`, certified leak-not-corrupt). The lifetime lane is the root; the count invariant is
 > the downstream floor. The hazard class and obligation remain sound for rows 1, 3–8 as before.
+>
+> **R14 §C/§D — both facets unify, the gate is certified.** pgcl implemented `Aggregate.Pinned` as a
+> runtime `pending_rmap[pfn]` ref-hold gate; `PendingGate.lean` certifies it discharges
+> `aggregate_no_free_while_pending` (hashed counter conservative — over-hold = leak, never under-hold). The
+> boot fixed the deferred facet but exposed an **immediate** facet (over-remove on a *live* folio → orphan
+> → free-while-mapped → reuse → fs-verity ×3 + `list_del`). Both unify as **"no free while an orphan is
+> present"** (`unified_gate_covers_both`); the hard5 quarantine covers facet B (`quarantine_never_freed`).
+> Two deeper results: **R11's `folio_mapped` gate was right in spirit but blind in fact** — an orphan
+> drives `_mapcount < -1`, so `folio_mapped` reads false exactly when a sub-PTE is still present
+> (`folio_mapped_blind_to_orphan`); and **the two facets are plausibly one root** — a single `nr`
+> under-count at the vsub≠psub batched install under-adds *both* rmap and ref (R11's lockstep), so §B
+> closes both at the source. See `doc/to-pgcl-143-R14C-gate-certified.md`.
 
 Family (B) is `Tlb.lean` / `property2/coq/tlb_shootdown.v` (a flush-less downgrade is a non-theorem).
 
