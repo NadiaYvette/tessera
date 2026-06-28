@@ -46,13 +46,17 @@ blocks the reincarnation, on *any* path) — so the fix is path-independent: hol
 ref outliving all the teardown's deferred ops**, not an ordering tweak on one path (`reincarnate_breaks`
 / `stale_remove_underflows` are the bug; (a) try-get is recommended over (b) ordering / (c) inc-tag).
 
-> **R13 update (the motivating case left this class).** pgcl's faithful-laptop forensic A/B (R13)
-> showed #143's over-remove is *upstream of and independent of the free* (an over-removed folio need not
-> be freed). It is **not** a lifetime race but a deterministic **rmap add/remove count imbalance** — see
-> `proof/Tessera/CallBalance.lean` and row #2. The incarnation refinement above was thus *refuted as the
-> #143 mechanism*; its lasting value was ruling the lifetime lane out. The hazard class and the obligation
-> remain sound for the genuine deferred-maintenance sites (rows 1, 3–8); row #2 is reclassified to
-> count-balance.
+> **R13→R14 update (the diagnosis converged through a detour, and came home).** R13's faithful-laptop A/B
+> read the over-remove as *independent of the free* and redirected to a pure static count imbalance
+> (`CallBalance.lean`). R14 then booted the band-aid and found the deferred over-removed folios dump
+> `refcount:0` — they **are** freed: the dominant over-remove is a **deferred-rmap use-after-free** (a
+> deferred rmap removal runs after a cross-mm aggregate free of a shared cluster). So the bug has **two
+> facets**: a *dynamic root* — "no free while a deferred rmap removal is pending", which is exactly
+> `Deferred.Pinned` on the deferred-rmap window (`SharingRace`/`Incarnation` are **re-vindicated**, not
+> refuted — R13's "independent of free" held only for the immediate/live-folio path) — and a *static
+> floor*, the call-balance invariant (`CallBalance`), which the laptop-boot band-aid enforces defensively
+> (`RemoveFloor.lean`, certified leak-not-corrupt). The lifetime lane is the root; the count invariant is
+> the downstream floor. The hazard class and obligation remain sound for rows 1, 3–8 as before.
 
 Family (B) is `Tlb.lean` / `property2/coq/tlb_shootdown.v` (a flush-less downgrade is a non-theorem).
 
@@ -74,7 +78,7 @@ runtime check guards it; **OPEN** = next target.
 | # | site | family | deferred op `D` | guard to check | status / artifact |
 |---|---|---|---|---|---|
 | 1 | `mmu_gather` deferred put (`tlb_finish_mmu` → `folios_put_refs`) | A | drop the folio's batched refs | gather holds a ref per queued put | **PROVED** `rmap_defer.v` (`no_free_while_referenced`) |
-| 2 | order-0 **zap over-remove** (`zap_pte_range` → `folio_remove_rmap_ptes`) — *#143 R11→**R13*** | ~~A + incarnation~~ → **count-balance** (reclassified) | install issues fewer rmap-adds than present sub-PTEs | the rmap **add/remove call-balance** `_mapcount + 1 == Σ present sub-PTEs`, preserved across install / fork / COW / mremap / zap (`CallBalance.install_balanced_iff`) | **REDIRECTED (R13)** — `CallBalance.lean` (axiom-clean); suspect = `vsub ≠ psub` batching (`Permute`). *Faithful-laptop A/B: the over-remove is UPSTREAM of & INDEPENDENT of the free → R11 gate dead, R12 incarnation/try-get superseded. `SharingRace`/`Incarnation` retain value: they ruled the lifetime lane OUT* |
+| 2 | order-0 **zap over-remove** (`zap_pte_range` → `folio_remove_rmap_ptes`) — *#143 R11→**R14*** | **A (deferred-rmap) + count-balance** | a deferred rmap removal is pending while the cluster's aggregate refcount hits 0 | **two facets**: *(dynamic root)* **no free while a deferred rmap removal is pending** — the tlb batch holds a ref per pending sub-PTE removal so the aggregate refcount can't reach 0 first (`Deferred.Pinned` / `SharingRace` / `Incarnation`); *(static floor)* `_mapcount + 1 == Σ present` (`CallBalance`) | **R14**: deferred over-removed folios dump `refcount:0` ⇒ a deferred-rmap **UAF** (cross-mm aggregate free). Band-aid CERTIFIED `RemoveFloor.lean` (floor + `folio_try_get` = leak-not-corrupt); root = the deferred-batch ref-hold. *R13's "independent of free" held only for the immediate/live-folio path; the lifetime lane is re-opened, refined* |
 | 3 | TLB shootdown batch (`TTU_BATCH_FLUSH`) | B | flush stale TLB entries | flush completes before the freed frame is reused | **PROVED** `Tlb.lean`, `tlb_shootdown.v` |
 | 4 | RCU-deferred free (`call_rcu` on a shared node) | A | free the node | the grace period gates the free on `readers → 0` (`rcu_reader_safe`) | **WIRED** — `RcuFree.lean` (`rcu_reader_safe`, `free_before_gp_uaf`, `rcu_inc_correct`). *page-table free vs lockless `gup_fast`; `readers = refs`, no counter* |
 | 5 | deferred split / `khugepaged` collapse | A | drop page-table / rmap refs after retract | the under-pmd-lock re-check finds `refcount == expected` (`collapse_committed_pinned`) | **WIRED** — `CollapsePin.lean` (`collapse_committed_pinned`, `collapse_aborts`, `scan_trust_uaf`, `safety_independent_of_scan`). *exact-count guard like #6; safety rests on the commit re-check, not the scan* |

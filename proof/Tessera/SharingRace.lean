@@ -76,4 +76,48 @@ theorem pinned_sound (g : GatherState)
     0 ≤ (deferredRemove g).refcount ∧ 0 ≤ (deferredRemove g).mapcount := by
   simp only [Pinned] at hpin; simp only [deferredRemove]; omega
 
+/-! ## R14 — the CROSS-MM aggregate refinement.
+
+R14's faithful-laptop forensic A/B found the deferred over-removed folios dump `refcount:0`: the cluster
+is shared/forked across mms, and one mm's last-aggregate-ref-drop FREES it while ANOTHER mm's tlb batch
+still owes a deferred removal. So the obligation lifts from one gather to the cross-mm aggregate: the
+aggregate refcount must cover the pending deferred removals owed across ALL mms. -/
+
+/-- The shared cluster across mms: its aggregate refcount, and the per-mm pending deferred removals
+(one entry per mm with a tlb batch outstanding). -/
+structure Aggregate where
+  refcount : Int
+  pendings : List Nat
+deriving Repr
+
+/-- Total deferred removals owed across all mms. -/
+def Aggregate.owed (a : Aggregate) : Nat := a.pendings.foldr (· + ·) 0
+
+/-- **The cross-mm obligation**: the aggregate refcount covers every pending removal across all mms —
+each mm's batch holds a ref per pending sub-PTE removal. -/
+def Aggregate.Pinned (a : Aggregate) : Prop := (a.owed : Int) ≤ a.refcount
+
+/-- **No free while ANY deferred removal is pending** (the R14 root). While some mm still owes a deferred
+removal (`owed > 0`) and the aggregate is `Pinned`, the aggregate refcount is positive — no cross-mm
+last-ref-drop can free the cluster before every mm's deferred removal has run. -/
+theorem aggregate_no_free_while_pending (a : Aggregate) (hpin : a.Pinned) (hpend : 0 < a.owed) :
+    0 < a.refcount := by
+  simp only [Aggregate.Pinned] at hpin; omega
+
+/-- **THE R14 BUG — a cross-mm aggregate free under a pending removal is exactly an unpinned state.** If
+the aggregate is freed (`refcount = 0`) while removals are still owed across mms, the obligation was
+necessarily violated: the batches did not hold a ref per pending removal. The deferred removal then runs
+on a freed cluster — the use-after-free R14 caught (`refcount:0` at `tlb_flush_rmaps`). -/
+theorem aggregate_uaf (a : Aggregate) (hfreed : a.refcount = 0) (hpend : 0 < a.owed) : ¬ a.Pinned := by
+  simp only [Aggregate.Pinned]; omega
+
+/-- The cluster after every mm's deferred removal runs (each drops its pending refs). -/
+def Aggregate.runAll (a : Aggregate) : Aggregate := { refcount := a.refcount - a.owed, pendings := [] }
+
+/-- **The fix is sound across mms**: a `Pinned` aggregate, after every mm's deferred removal runs, has
+`refcount ≥ 0` — no over-remove on any mm's path. The deferred-batch ref-hold (one real `folio_try_get`
+per pending removal, across the cross-PTL window) discharges the cross-mm obligation. -/
+theorem aggregate_pinned_sound (a : Aggregate) (hpin : a.Pinned) : 0 ≤ (a.runAll).refcount := by
+  simp only [Aggregate.Pinned] at hpin; simp only [Aggregate.runAll]; omega
+
 end Tessera
