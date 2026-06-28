@@ -39,3 +39,5 @@ import Tessera.Deferred
 import Tessera.Incarnation
 import Tessera.MigrationPin
 import Tessera.WritebackPin
+import Tessera.RcuFree
+import Tessera.CollapsePin

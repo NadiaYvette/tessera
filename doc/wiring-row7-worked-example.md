@@ -161,3 +161,69 @@ the strongest evidence that the guard, not the window's shape, is what carries t
 One obligation (`Pinned` / `pinned_inc_correct`), three grades, read off the real code. The framework's
 value is no longer just "describe each site" — it puts them on a common ladder and names which rung each
 real site stands on, and which one had fallen off.
+
+---
+
+## Applying the template — rows #4 and #5 (the concurrency-mechanism rows)
+
+The last two rows are less about pages-as-data and more about two kernel *concurrency mechanisms*. Both
+wired in `proof/Tessera/RcuFree.lean` and `proof/Tessera/CollapsePin.lean` (axiom-clean).
+
+### Row #4 — RCU-deferred free
+
+**The mechanism, from the ground up.** RCU (Read-Copy-Update) lets readers traverse a shared structure
+*with no lock and no refcount*. A reader brackets its access in `rcu_read_lock()`/`rcu_read_unlock()`
+(on most configs, almost free — it just marks a critical section) and dereferences a pointer directly.
+The canonical mm case (`mm/mmu_gather.c`): `gup_fast` walks the page tables locklessly under
+`rcu_read_lock`, holding raw pointers into page-table pages. So how do you ever *free* a page-table
+page without a reader dereferencing freed memory? You don't free it immediately. You (1) unlink it so no
+*new* reader can reach it, then (2) `call_rcu(&batch->rcu, …)` — defer the free to a **grace period**, a
+period after which every reader that began before the unlink has provably exited (passed a quiescent
+state on every CPU). The callback frees only then.
+
+**The four roles.** Resource = the page-table page. Guard = the grace period. Incarnation = the page's
+allocation. The twist that makes RCU interesting: **there is no refcount** — the "references" are the
+in-flight readers themselves, and the grace period is the mechanism that waits for that implicit count
+to reach zero. The catalogue maps it `readers = refs`.
+
+**The proofs.** `rcu_reader_safe` — the gate `freed → readers = 0` means *while any reader is in flight,
+the node is not freed* (the RCU guarantee). `free_before_gp_uaf` — freeing while `readers > 0` (a
+missing grace period: plain `kfree` instead of `call_rcu`) breaks the gate, the classic RCU
+use-after-free. `rcu_pinned_live` then shows this is the *same* `Deferred` obligation (inherited from
+`pinned_live` via the `readers = refs` embedding) — RCU is a `Pinned` guard whose counter is implicit
+and whose draining is detected by the grace period rather than a decrement.
+
+### Row #5 — khugepaged collapse
+
+**The mechanism, from the ground up.** Transparent Huge Pages let the kernel back 2 MB of memory with
+one huge page instead of 512 base pages (fewer TLB entries, faster). **khugepaged** is a background
+daemon that *collapses* 512 suitable base pages into one huge page: allocate a fresh huge page, copy the
+512 pages' contents in, retract the base PTEs under the pmd lock, free the base pages. Structurally it
+is migration (copy → repoint → free old), many-to-one, driven by a scanner. The danger is identical: if
+some other actor is faulting on or has GUP-pinned a base page, freeing/repointing it corrupts their
+view. So before isolating each base page, khugepaged checks (`mm/khugepaged.c`)
+`folio_expected_ref_count(folio) != folio_ref_count(folio)` → `SCAN_PAGE_COUNT` abort — the **exact-count
+guard**, identical to migration's `folio_ref_freeze`.
+
+**The twist.** The collapse is driven by a *lock-free scanner*, so the guard splits in two: a
+speculative scan, then a re-check **under the pmd lock** that serialises the irreversible retract+free.
+`CollapsePin.lean` makes the formal point that **safety rests on the commit re-check, not the scan**:
+`safety_independent_of_scan` proves the commit verdict doesn't depend on what the scanner saw, and
+`scan_trust_uaf` is the bug — a page clean at scan time but pinned by commit time (`expected <
+refsAtCommit`) makes the scan say "go" while the under-lock truth says "abort"; trusting the scan is the
+use-after-free. `collapse_committed_pinned` / `collapse_aborts` are migration's `frozen_pinned` /
+`stray_ref_aborts`, here keyed on the under-lock refcount.
+
+### The completed ladder — all eight rows
+
+| grade | guard | sites |
+|---|---|---|
+| `refs > 0` | `try_get` | #2 zap teardown — *the grade that was missing = the live bug* |
+| `refs == expected` | `folio_ref_freeze` / under-pmd-lock re-check | #6 migration, #5 collapse |
+| ordered hold | ref held across an async window, order-independent | #8 writeback (IO IRQ), #4 RCU (grace period) |
+| exclusive | one owner per resource | #7 allocator |
+
+Eight real deferral sites, one obligation, four grades — and the single bug among them (#2) is exactly
+the one site standing on a rung below the others. That is the whole argument the framework was built to
+make: the safety lives in the *guard's grade*, not in any site's particular shape, and the live laptop
+crash was a site that had slipped one rung down a ladder five other sites were already standing on.

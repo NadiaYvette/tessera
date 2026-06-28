@@ -68,8 +68,8 @@ runtime check guards it; **OPEN** = next target.
 | 1 | `mmu_gather` deferred put (`tlb_finish_mmu` → `folios_put_refs`) | A | drop the folio's batched refs | gather holds a ref per queued put | **PROVED** `rmap_defer.v` (`no_free_while_referenced`) |
 | 2 | order-0 **zap teardown over-remove** (`zap_pte_range` → rmap removal *and/or* `folios_put_refs`) — *#143 R11/R12* | A + incarnation | any deferred teardown op on the cluster | the teardown holds **one real `try_get`'d ref** outliving *all* its deferred ops, so the pfn cannot be freed+reused under any (`Incarnation.pinned_inc_correct`) | **PROVED** `SharingRace.lean`, `refcount_race.v`, `Incarnation.lean`; **TRIPWIRE** `PGCL143-RMTRIP`. *R12: `delay_rmap` is the catch-site not the cause — path-independent; fix (a) try-get, not `delay_rmap=false` (refuted on laptop)* |
 | 3 | TLB shootdown batch (`TTU_BATCH_FLUSH`) | B | flush stale TLB entries | flush completes before the freed frame is reused | **PROVED** `Tlb.lean`, `tlb_shootdown.v` |
-| 4 | RCU-deferred free (`call_rcu` on a shared node) | A | free the node | a reader's grace period pins the node | **OPEN** (instance of `Deferred.Window`; readers = `refs`) |
-| 5 | deferred split / `khugepaged` collapse | A | drop page-table / rmap refs after retract | the collapse holds refs on the folios it retracts | **OPEN** |
+| 4 | RCU-deferred free (`call_rcu` on a shared node) | A | free the node | the grace period gates the free on `readers → 0` (`rcu_reader_safe`) | **WIRED** — `RcuFree.lean` (`rcu_reader_safe`, `free_before_gp_uaf`, `rcu_inc_correct`). *page-table free vs lockless `gup_fast`; `readers = refs`, no counter* |
+| 5 | deferred split / `khugepaged` collapse | A | drop page-table / rmap refs after retract | the under-pmd-lock re-check finds `refcount == expected` (`collapse_committed_pinned`) | **WIRED** — `CollapsePin.lean` (`collapse_committed_pinned`, `collapse_aborts`, `scan_trust_uaf`, `safety_independent_of_scan`). *exact-count guard like #6; safety rests on the commit re-check, not the scan* |
 | 6 | migration finishing (`remove_migration_ptes` after copy) | A + placement | restore PTEs / drop isolation ref | the freeze holds the folio at *exactly* `expected_count` across the copy (`frozen_pinned`); *and* placement (psub) | **WIRED** — placement `Permute`/`MigrateEntry`; ref-pin `MigrationPin.lean` (`frozen_pinned`, `frozen_inc_correct`, `stray_ref_aborts`, `freeze_implies_tryget`). *`folio_ref_freeze(expected)` = the exact-count form of #143's try-get; already correct in-tree* |
 | 7 | per-CPU allocator deferred reuse (LLFree chunk reservation) | A | reuse a reserved chunk's pages | the reservation pins the chunk exclusively (`reservation_exclusive`) | **WIRED** — static `phys_reservation.rs` (`double_alloc_fires`, `free_then_alloc_silent`, `reservation_exclusive`); **TRIPWIRE** `DI_SHADOW` *= the incarnation probe*; *empirically silent ⇒ obligation discharged*. Worked example: `doc/wiring-row7-worked-example.md` |
 | 8 | swap/eviction deferred writeback (`pageout` → IO completion) | A | free the folio after writeback | the swap-cache ref + `PG_writeback` pin the folio until the IO IRQ (`wb_pinned_live`) | **WIRED** — content `Eviction.lean`; ref-pin `WritebackPin.lean` (`wb_pinned_live`, `wb_drop_keeps_live`, `free_under_io_uaf`, `wb_inc_correct`). *no lock spans the IO → safety **is** the ∀-interleaving theorem* |
@@ -93,12 +93,23 @@ The framework is a *specification*; to make a site *fail when broken*, wire the 
     instrument**: `probe → 0/N` is a fix that discharges `pinned_inc_correct`; a fix that only moves
     the over-remove still fires it — the signal the smp8 oracle could not give.
 
-The OPEN rows (4, 5) are the forward work: each is a one-line `Window` instance; the substance is
-auditing the real code for `Pinned` and adding the static or runtime check. Doing them is how a
-future bug of this form gets named *before* a laptop names it. **Rows #7, #6, and #8 are wired
-end-to-end as the worked examples — `doc/wiring-row7-worked-example.md` — the template for the rest**
-(name the four roles; state the obligation + read the runtime/in-tree result via
-`pinned_silences_probe` / `frozen_pinned` / `wb_pinned_live`; write the in-tree check + identify/add the
-runtime probe). Rows #6 and #8 also show the **grade ladder**: the same `Pinned` guard appears as a
-`try_get` (`> 0`, row #2, the one that was missing), an exact-count `freeze` (`==`, row #6), and a
-ref-held-across-async-IO whose only guarantee is order-independence (row #8).
+**All eight rows are now WIRED** — each is a `Window` instance whose real code has been audited for
+`Pinned` and tied to a static and/or runtime check, so a future regression of this form *fails* rather
+than merely reproducing. The end-to-end worked examples are in `doc/wiring-row7-worked-example.md` (the
+template: name the four roles; state the obligation + read the runtime/in-tree result via
+`pinned_silences_probe` / `frozen_pinned` / `wb_pinned_live` / `rcu_reader_safe`; write the in-tree
+check + identify/add the runtime probe).
+
+The payoff of doing the whole set is the **grade ladder** — one obligation (`Pinned` /
+`pinned_inc_correct`), read off eight different real sites at the grade each uses:
+
+| grade | guard | sites |
+|---|---|---|
+| `refs > 0` | `try_get` | #2 zap teardown — *the grade that was missing = the live bug* |
+| `refs == expected` | `folio_ref_freeze` / under-lock re-check | #6 migration, #5 collapse |
+| ordered hold | ref held across an async window, order-independent | #8 writeback (IO IRQ), #4 RCU (grace period) |
+| exclusive | one owner per resource | #7 allocator |
+
+The framework no longer just *describes* each site; it places them on a common ladder and names which
+rung each real site stands on — which is how #143's fix became legible as "bring the zap path up to a
+rung migration, collapse, writeback, RCU, and the allocator already stand on."
