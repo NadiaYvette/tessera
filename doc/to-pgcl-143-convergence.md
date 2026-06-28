@@ -192,3 +192,24 @@ You named three; here is the ranking and the reason, all proved in `Incarnation.
 its own deferred operations on the cluster** — then free→realloc cannot occur under any of them, on any
 path. Validate on the laptop `bad_page` count → 0. The swap fixes already boot it to GNOME; this closes
 the remaining original-#143 core.
+
+### The fix-shape, drafted — branch `from-tessera/143-tryget`
+
+The fix shape is on a kernel branch (off `f17563985f5b`, your swap-fix tip; pushed github + sourcehut):
+`TESSERA-143-R12-TRYGET-FIX.md` carries the obligation (`Incarnation.pinned_inc_correct`) and **two
+routes**:
+
+- **Route 2 (recommended)** — fix the per-sub-PTE **aggregate-ref accounting** so the gather's inherited
+  `nr` refs genuinely pin (restore `refcount == Σ live sub-PTEs across mms`; the R11 "double-add" is the
+  candidate site). Removes the hazard, no extra ref/bit. *Your accounting, so you own the site* — but
+  it is the clean discharge.
+- **Route 1 (fallback)** — an explicit `folio_get` teardown pin at `__tlb_remove_folio_pages_size`,
+  released after the gather free in `__tlb_batch_free_encoded_pages`, with an `ENCODED_PAGE_BIT_TESSERA_PIN`
+  to keep take/release 1:1. Illustrative skeleton included; it compiles to the obligation but the
+  encoded-bit bookkeeping is why Route 2 is cleaner.
+
+I drafted the *shape* rather than a drop-in patch deliberately: the take/release matching is entangled
+with your `encoded_page` / cluster-batching, so a complete patch would be guesswork — the branch gives
+you the obligation, both routes, the exact sites, and the skeleton to finalize against your accounting.
+Pick a route, A/B on the laptop, hand back the `bad_page` count, and I confirm it against
+`Incarnation.pinned_inc_correct`.
