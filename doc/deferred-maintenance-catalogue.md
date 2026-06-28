@@ -71,7 +71,7 @@ runtime check guards it; **OPEN** = next target.
 | 4 | RCU-deferred free (`call_rcu` on a shared node) | A | free the node | a reader's grace period pins the node | **OPEN** (instance of `Deferred.Window`; readers = `refs`) |
 | 5 | deferred split / `khugepaged` collapse | A | drop page-table / rmap refs after retract | the collapse holds refs on the folios it retracts | **OPEN** |
 | 6 | migration finishing (`remove_migration_ptes` after copy) | A + placement | restore PTEs / drop isolation ref | isolation ref pins across the copy; *and* placement (psub) | placement **PROVED** latent (`Permute`/`MigrateEntry`); ref-pin **OPEN** |
-| 7 | per-CPU allocator deferred reuse (LLFree chunk reservation) | A | reuse a reserved chunk's pages | the reservation pins the chunk exclusively | sequential **PROVED** `phys_chunk.rs`; per-CPU race **OPEN** |
+| 7 | per-CPU allocator deferred reuse (LLFree chunk reservation) | A | reuse a reserved chunk's pages | the reservation pins the chunk exclusively (`reservation_exclusive`) | **WIRED** — static `phys_reservation.rs` (`double_alloc_fires`, `free_then_alloc_silent`, `reservation_exclusive`); **TRIPWIRE** `DI_SHADOW` *= the incarnation probe*; *empirically silent ⇒ obligation discharged*. Worked example: `doc/wiring-row7-worked-example.md` |
 | 8 | swap/eviction deferred writeback (`pageout` → IO completion) | A | free the folio after writeback | the writeback holds a ref until IO completes | content round-trip **PROVED** `Eviction.lean`; ref-pin **OPEN** |
 
 ## Making it catch regressions (not just describe them)
@@ -93,6 +93,9 @@ The framework is a *specification*; to make a site *fail when broken*, wire the 
     instrument**: `probe → 0/N` is a fix that discharges `pinned_inc_correct`; a fix that only moves
     the over-remove still fires it — the signal the smp8 oracle could not give.
 
-The OPEN rows (4–8) are the forward work: each is a one-line `Window` instance; the substance is
-auditing the real code for `Pinned` and adding the static or runtime check. Doing rows 4–8 is how a
-future bug of this form gets named *before* a laptop names it.
+The OPEN rows (4–6, 8) are the forward work: each is a one-line `Window` instance; the substance is
+auditing the real code for `Pinned` and adding the static or runtime check. Doing them is how a
+future bug of this form gets named *before* a laptop names it. **Row #7 is wired end-to-end as the
+worked example — `doc/wiring-row7-worked-example.md` — the template for the rest** (name the four roles;
+state the obligation + read the runtime result via `pinned_silences_probe`; write the in-tree Verus twin
++ identify/add the runtime probe).
