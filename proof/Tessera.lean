@@ -35,3 +35,4 @@ import Tessera.SwapEntry
 import Tessera.FileMap
 import Tessera.Permute
 import Tessera.SharingRace
+import Tessera.Deferred
