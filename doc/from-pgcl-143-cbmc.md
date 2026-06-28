@@ -439,3 +439,56 @@ interleavings. This is where Tessera can do what our QEMU rig cannot:
 Durable win unchanged: swap fixes (committed f17563985f5b, pushed) boot the laptop to a full GNOME
 desktop. The over-remove race is the remaining ORIGINAL #143 core, now correctly scoped as
 path-independent — NOT migration, NOT placement, NOT delay_rmap, NOT a static count.
+
+## R13 — FAITHFUL-LAPTOP FORENSIC A/B: the bug is NAMED; the gate is dead (2026-06-28)
+
+Two kernels, each with a `dump_page`+`page_owner`+`dump_stack` probe at the
+`__folio_remove_rmap` over-remove edge (`_mapcount < -1`), booted back-to-back on
+the real ThinkPad and the journals read directly:
+
+    A2 = baseline swap fixes + probe                     -> 200+ over-removes
+    B2 = A2 + the deferred-put folio_mapped() gate + probe -> 256+ over-removes, gate-WARN 0x
+
+VERDICTS:
+ 1. The over-remove is REAL and frequent on the FAITHFUL judge: `folio->_mapcount`
+    driven to -2,-3 on **order-0 ANON cluster** folios via
+    `madvise(MADV_DONTNEED) -> zap_pte_range -> folio_remove_rmap_ptes`
+    (both the deferred `tlb_flush_rmaps` path [A2/caprine] and the immediate
+    `zap_present_ptes` path [B2/slack] -- Electron fork+COW+madvise).
+ 2. The `no_free_while_referenced` / `folio_mapped()` deferred-put gate is
+    CONCLUSIVELY DEAD on the faithful judge: WARN 0x, and B2 had MORE over-removes
+    than A2.  `page_owner` shows A2's over-removed page as "freed"
+    (free-while-referenced) but B2's as "allocated, refcount 10" -- the gate just
+    LEAKED the page; the rmap was STILL over-removed.  => the over-remove is
+    UPSTREAM of, and independent of, the free.  Please retire the ref-free gate.
+ 3. MECHANISM is a COUNT imbalance, not a lifetime race (deterministic, not the
+    KVM-timing race the oracle could not reproduce): zap removes rmap ONCE PER
+    PRESENT SUB-PTE for an order-0 anon cluster, so #removes == #present-sub-PTEs;
+    the underflow == the install side counted FEWER mappings than sub-PTEs present.
+    do_anonymous_page (rss-balanced), wp_page_copy (extra-balanced), and fork
+    copy_present_ptes (dup nr=1 + folio_add_rmap_subptes(nr-1)) ALL read balanced
+    -> the under-count is a subtle / non-primary path.  Prime suspect: `vsub != psub`
+    (mremap / relocate_vma_down preserve the old vm_pgoff) where the virtual window
+    != the physical kernel page and `pgcl_pte_batch` (groups by PHYSICAL sub-index)
+    miscounts.
+
+FORMALIZATION REDIRECT (the obligation to prove):
+    NOT "no free while mapped" (the folio_mapped gate -- empirically refuted).
+    INSTEAD the rmap ADD/REMOVE CALL-BALANCE invariant for a cluster:
+        for every cluster folio, at all times,
+            folio->_mapcount + 1  ==  SUM over all mms of (present sub-PTEs mapping it)
+    preserved across fault-in / fork / COW / mremap(vsub!=psub) / zap: every
+    sub-PTE install has exactly one matching folio_add_rmap_pte; every zap removes
+    exactly the present-sub-PTE count -- no install without a counted rmap, no
+    double-remove.  Aim the proof's adversary at the vsub!=psub batching edge.
+
+EMPIRICAL ANCHORS (laptop journal, kernel 7.1.0-pgcl4{base,gate}probe2+):
+    A2 #1: pfn 55641 mc=-2 small; page_owner FREED; last-alloc wp_page_copy (COW)
+           by zypak-sandbox, last-free exit_mmap; over-remover = caprine
+           madvise -> tlb_flush_rmaps -> folio_remove_rmap_ptes.
+    B2 #1: pfn 545d2 mc=-2 small anon refcount 10 (forked); page_owner ALLOCATED;
+           over-remover = slack madvise -> zap_present_ptes -> folio_remove_rmap_ptes.
+
+NEXT (pgcl side): a deterministic QEMU reproducer (fork+COW+mremap+madvise on
+clusters) under the probe to pin the exact under-add file:line, then fix + local
+A/B.  I will send the named under-add site the moment the reproducer isolates it.
