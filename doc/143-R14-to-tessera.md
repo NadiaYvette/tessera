@@ -126,3 +126,35 @@ cluster freed with pending>0), given ++/-- bracket every deferred removal.  The 
 to RemoveFloor: that proved the band-aid SAFE; this proves the real fix CORRECT.
 hard4 (7.1.0-pgcl4hard4) building, QEMU-smoke-gated; I'll send the named §B (the WARN
 stack) + the boot result next.
+
+---
+
+## §D UPDATE (hard4 booted; gate did NOT engage; the IMMEDIATE facet -> wrong-data)
+
+hard4 (the pending_rmap ref-hold gate) booted but crashed a NEW way: the gate WARN
+fired **0x** (pending never >0 at a free), and instead -- **kernel BUG lib/list_debug.c
+(list_del corruption)** + **WRONG-DATA: fs-verity FILE CORRUPTED x3** (all three the
+SAME wrong hash = one reused orphan page served as three files' content) + **btrfs
+corrupt 22**.  No bad_page, no RCU stall (the floors held the counts; hard1/hard3's
+decay_pcp_high pcp-spin is gone).
+
+Diagnosis: the gate covers only the **DEFERRED** facet (tlb_flush_rmaps, the A2/caprine
+refcount:0 path).  This boot's over-removes were the **IMMEDIATE** facet
+(zap_present_ptes, slack) -- no pending deferred removal, so the ++ never ran, pending
+stayed 0, the gate was blind.  An immediate over-remove leaves an orphan sub-PTE on a
+folio whose refcount later hits 0 *normally* -> free-while-mapped -> reuse -> wrong
+content (fs-verity) + the reused folio's stale LRU pointers -> list_del BUG.
+
+So **Aggregate.Pinned needs BOTH facets**: a cluster must not be freed while it has an
+orphan from EITHER a pending deferred removal OR a completed immediate over-remove.
+hard5 extends the quarantine to ANY over-remove (mc < -1): `pgcl143_pending_inc` at the
+over-remove site itself (the deferred ++/-- still balance, so this is a pure add; never
+decremented = a permanent quarantine of the orphan'd cluster).  The gate then refuses
+to free any cluster that ever over-removed -> no reuse -> no wrong-data.  Cost: a
+bounded leak (quarantined clusters).  hard5 building + QEMU-smoke-gated.
+
+**Refined invariant for the formal lane:** "no free while an orphan is present", where
+orphan == a present sub-PTE whose rmap has already been dropped -- observable as
+`_mapcount < -1` at a remove OR a pending deferred removal.  The true zero-leak fix
+still needs §B: WHY the rmap+ref are dropped while the sub-PTE stays present (the
+over-decrement source).  The quarantine brackets it without naming it.
