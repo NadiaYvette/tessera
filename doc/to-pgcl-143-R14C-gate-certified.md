@@ -83,3 +83,24 @@ The R-series wasn't flailing — it was peeling: R11 saw the immediate symptom (
 its count source, R12/R14 saw the deferred facet, R14-§D saw that fixing one exposes the other. Five boots,
 one orphan, two facets, plausibly one root. Send the `nr`-deficit `file:line` from the add-edge WARN and I
 think we close it.
+
+## 6. UPDATE — the single-root hypothesis is now a THEOREM (`proof/Tessera/SingleRoot.lean`, axiom-clean)
+
+The "one `nr`, two facets" claim is no longer an argument — it's proved. A dual-ledger model (`rmap` =
+`_mapcount + 1`, and `ref` = the pinned refcount) where one batch length `nr` drives BOTH adds, while the
+true present count is `k`:
+
+- `dual_lockstep` — install-then-zap drives BOTH ledgers below their healthy (`nr = k`) values by the SAME
+  deficit `d = k − nr`. R11's `refcount:−7 mapcount:−7` is this theorem.
+- `single_root_both_facets` — ONE hypothesis (`nr < k`) yields BOTH facets at once: `rmap` underflows
+  (`< 0` ⇒ orphan, facet B) AND `ref` is over-dropped by the same `d` (facet A). `facetA_early_free` pins
+  the refcount to exactly 0 when `d` equals the cluster's background refs — the deferred-UAF surface.
+- `fix_collapses_both` — `nr = k` (count present by vsub, add once each) zeroes the deficit on BOTH
+  ledgers: no orphan, no early free. One install-site fix, both facets — the gate and quarantine become
+  unnecessary, not just safe.
+
+The `rmap` ledger reproduces `CallBalance` exactly; the `ref` ledger moving in lockstep is the new content,
+and it's what ties facet A and facet B to the single `nr`. So the formal lane now says: find the one
+`nr`-under-count site and both crash-classes close together. That's the whole bet, and it's now a proof
+modulo the empirical `nr < k` at that site — which the add-edge `VM_WARN(_mapcount + 1 != present)` will
+hand you directly.
