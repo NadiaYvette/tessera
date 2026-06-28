@@ -59,4 +59,28 @@ band-aid chain (leak-not-corrupt, not a fix).
   under PGCL so the scan sees live PTEs. Config = the booted `-pgcl4tier1+` config, `LOCALVERSION=-pgcl4clamp1`.
 - **Expect:** `PGCL143-CLAMP … present_here>0` (confirms orphan + its magnitude); **boots** (clamp); each
   cluster over-discharges ONCE then is correct (no `quar` amplification); the `WARN` stack names the
-  remove path. _Build in flight; boot pending Nadia._
+  remove path.
+- **Boot evidence (laptop, `-pgcl4clamp2`… wait, `-pgcl4clamp1`, boot -1):** **ORPHAN confirmed** —
+  `PGCL143-CLAMP present_here = 3,4,6,10,13` (mc+1 was 0–2 ⇒ under-counts of 3–12 on genuinely-mapped
+  clusters), origin `zap_present_ptes` (mm/memory.c:2069), comm = element-desktop/openclaw/llvmpipe, all
+  anon. **BUT** the clamp caught only **5** while `PGCL143-ORPHAN` reached **~9000** — my clamp sat on the
+  minor `nr>1` batch path; the ~9000 flow through the `nr==1` single-zap (`zap_present_folio_ptes`) where
+  the rmap floor pins `mc=-1`. **Kernel stayed ALIVE** (Nadia: clock kept updating, pointer responsive) —
+  real progress over tier1's full freeze. Failure was **progressive**: a floored `mc=-1` while sub-PTEs
+  present ⇒ `folio_mapped()` false ⇒ **freed-while-mapped ⇒ Bad page**; ~9000 poisoned pages accrue, tasks
+  run until they draw one, GUI-management wedges last (Element/Discord/Spotify/Caprine stuck; Signal/Telegram
+  ok). (sysrq L/W/T did not flush to the journal — only in pstore; the visual execution-history is the
+  timeline of record here.)
+- **Conclusion:** the clamp mechanism is sound but mis-sited. The corruption is **free-while-mapped driven by
+  the floored mc** at the dominant `nr==1` path. Cover that path with the same clamp ⇒ mc correct ⇒
+  `folio_mapped()` honest ⇒ no free-while-mapped ⇒ cascade stops.
+
+## Step 3 — `-pgcl4clamp2`: clamp the DOMINANT path (staged, boot pending)
+
+- **Diff (`mm/memory.c` `zap_present_folio_ptes` ~1917):** upgraded the second present_here block (the
+  `nr==1` path, log-only `if (mc < -1)` — never fired, floored) to the same clamp as the batch site:
+  `if (!large && mc+1 < ph) { WARN_ON_ONCE; PGCL143-CLAMP …; atomic_set(_mapcount, ph-1); }`. Now both
+  zap paths clamp.
+- **Expect:** many `PGCL143-CLAMP` (the ~9000, caught + clamped, `present_here>0`); `Bad page` cascade
+  STOPS (no floored-mc free-while-mapped); heavy apps progress; **boots to desktop**. If it still cascades,
+  the ref ledger (`dual_lockstep`) is the next layer. _Staged; boot pending Nadia._
