@@ -104,5 +104,35 @@ every op of incarnation `e` runs before any reincarnation, so it is trivially in
 consequence of (a): a held ref makes the free (gated on `refs ≤ 0`) the last step. -/
 theorem ordered_inc_correct (p : Pfn) (e : Nat) (he : p.inc = e) : IncCorrect p e := he
 
+/-! ## The incarnation PROBE — a FAITHFUL A/B instrument (runtime wiring of catalogue row #2)
+
+The fix-(c) check `inc == e`, used as a *detector* rather than a fix. Unlike a symptom catcher
+(`PGCL143-RMTRIP` fires only once mapcount already went negative — reactive, and *silenced* by a fix
+that merely moves the catch-site, e.g. `delay_rmap=false`), the incarnation probe fires AT THE CREATOR:
+the instant a deferred op targets a reincarnated frame, path-independently. So it is the faithful A/B
+signal the smp8 oracle was not — and it is exactly the runtime form of `pinned_inc_correct`. -/
+
+/-- The probe at a deferred op scheduled for incarnation `e`: does the current frame mismatch? -/
+def probeFires (p : Pfn) (e : Nat) : Bool := decide (p.inc ≠ e)
+
+/-- **The probe is exact**: it fires iff the op is incarnation-INCORRECT — no false positives, no
+false negatives. -/
+theorem probe_faithful (p : Pfn) (e : Nat) : probeFires p e = true ↔ ¬ IncCorrect p e := by
+  simp only [probeFires, IncCorrect, decide_eq_true_eq, ne_eq]
+
+/-- **A reincarnation FIRES the probe** — the bug is caught at its creator, not its symptom. -/
+theorem reincarnate_fires_probe (p : Pfn) (e : Nat) (he : p.inc = e) (nr nm : Int) :
+    probeFires (p.reincarnate nr nm) e = true := by
+  simp only [probeFires, Pfn.reincarnate, decide_eq_true_eq, ne_eq]; omega
+
+/-- **A correctly-fixed (stable-ref-pinned) teardown SILENCES the probe** and keeps it silent (the
+frame cannot reincarnate). So `probe → 0/N` is *exactly* the A/B signal that a candidate fix discharges
+the obligation — and a fix that only relocates the over-remove (R12's `delay_rmap=false`) still fires
+it, which is why this probe does not lie the way the oracle did. -/
+theorem pinned_silences_probe (p : Pfn) (e : Nat) (he : p.inc = e) (hlive : 0 < p.refs) :
+    probeFires p e = false ∧ ¬ CanReincarnate p := by
+  refine ⟨?_, stableref_pins p hlive⟩
+  simp [probeFires, he]
+
 end Deferred
 end Tessera

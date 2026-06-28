@@ -81,9 +81,17 @@ The framework is a *specification*; to make a site *fail when broken*, wire the 
 - **In-tree (static)** — a Verus module that models the real deferral path and verifies `Pinned`, the
   way `telix-verus:verus/rmap.rs` guards `mapcount == |rmap|` in CI. A regression that drops the ref
   fails the build.
-- **Runtime (dynamic)** — a tripwire that asserts the resource is live at the deferred op (pgcl's
-  `PGCL143-RMTRIP` *is* `pinned_live` at runtime: it fired the moment a deferred removal hit a freed
-  cluster). Cheap, and it caught R11 before the formal models existed.
+- **Runtime (dynamic)** — a tripwire that asserts the obligation at the deferred op. Two grades:
+  - *symptom* — assert the resource is live (`pinned_live`): pgcl's `PGCL143-RMTRIP` fired when a
+    deferred removal hit a freed cluster. Cheap, caught R11 — *but reactive*, and a fix that merely
+    relocates the catch-site (`delay_rmap=false`) silences it while the bug persists (R12).
+  - *creator (faithful)* — the **incarnation probe**: tag each deferred op with the incarnation it was
+    scheduled against and check `inc == e` when it runs (`Incarnation.probeFires`). It fires *at the
+    op that targets a reincarnated frame*, path-independently — proved exact (`probe_faithful`) and
+    proved to go silent **iff** a candidate fix establishes the stable-ref obligation
+    (`pinned_silences_probe`). This is both the **runtime wiring of row #2** and a **faithful A/B
+    instrument**: `probe → 0/N` is a fix that discharges `pinned_inc_correct`; a fix that only moves
+    the over-remove still fires it — the signal the smp8 oracle could not give.
 
 The OPEN rows (4–8) are the forward work: each is a one-line `Window` instance; the substance is
 auditing the real code for `Pinned` and adding the static or runtime check. Doing rows 4–8 is how a
