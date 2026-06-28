@@ -70,7 +70,7 @@ runtime check guards it; **OPEN** = next target.
 | 3 | TLB shootdown batch (`TTU_BATCH_FLUSH`) | B | flush stale TLB entries | flush completes before the freed frame is reused | **PROVED** `Tlb.lean`, `tlb_shootdown.v` |
 | 4 | RCU-deferred free (`call_rcu` on a shared node) | A | free the node | a reader's grace period pins the node | **OPEN** (instance of `Deferred.Window`; readers = `refs`) |
 | 5 | deferred split / `khugepaged` collapse | A | drop page-table / rmap refs after retract | the collapse holds refs on the folios it retracts | **OPEN** |
-| 6 | migration finishing (`remove_migration_ptes` after copy) | A + placement | restore PTEs / drop isolation ref | isolation ref pins across the copy; *and* placement (psub) | placement **PROVED** latent (`Permute`/`MigrateEntry`); ref-pin **OPEN** |
+| 6 | migration finishing (`remove_migration_ptes` after copy) | A + placement | restore PTEs / drop isolation ref | the freeze holds the folio at *exactly* `expected_count` across the copy (`frozen_pinned`); *and* placement (psub) | **WIRED** — placement `Permute`/`MigrateEntry`; ref-pin `MigrationPin.lean` (`frozen_pinned`, `frozen_inc_correct`, `stray_ref_aborts`, `freeze_implies_tryget`). *`folio_ref_freeze(expected)` = the exact-count form of #143's try-get; already correct in-tree* |
 | 7 | per-CPU allocator deferred reuse (LLFree chunk reservation) | A | reuse a reserved chunk's pages | the reservation pins the chunk exclusively (`reservation_exclusive`) | **WIRED** — static `phys_reservation.rs` (`double_alloc_fires`, `free_then_alloc_silent`, `reservation_exclusive`); **TRIPWIRE** `DI_SHADOW` *= the incarnation probe*; *empirically silent ⇒ obligation discharged*. Worked example: `doc/wiring-row7-worked-example.md` |
 | 8 | swap/eviction deferred writeback (`pageout` → IO completion) | A | free the folio after writeback | the writeback holds a ref until IO completes | content round-trip **PROVED** `Eviction.lean`; ref-pin **OPEN** |
 
@@ -93,9 +93,9 @@ The framework is a *specification*; to make a site *fail when broken*, wire the 
     instrument**: `probe → 0/N` is a fix that discharges `pinned_inc_correct`; a fix that only moves
     the over-remove still fires it — the signal the smp8 oracle could not give.
 
-The OPEN rows (4–6, 8) are the forward work: each is a one-line `Window` instance; the substance is
+The OPEN rows (4, 5, 8) are the forward work: each is a one-line `Window` instance; the substance is
 auditing the real code for `Pinned` and adding the static or runtime check. Doing them is how a
-future bug of this form gets named *before* a laptop names it. **Row #7 is wired end-to-end as the
-worked example — `doc/wiring-row7-worked-example.md` — the template for the rest** (name the four roles;
-state the obligation + read the runtime result via `pinned_silences_probe`; write the in-tree Verus twin
-+ identify/add the runtime probe).
+future bug of this form gets named *before* a laptop names it. **Rows #7 and #6 are wired end-to-end as
+the worked examples — `doc/wiring-row7-worked-example.md` — the template for the rest** (name the four
+roles; state the obligation + read the runtime/in-tree result via `pinned_silences_probe` /
+`frozen_pinned`; write the in-tree check + identify/add the runtime probe).

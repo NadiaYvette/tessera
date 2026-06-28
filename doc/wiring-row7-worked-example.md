@@ -75,6 +75,40 @@ stand guard. The recurring moves:
    probe** (often a `fetch_or`/refcount assert already present, as here).
 
 For the remaining rows the probe usually is *not* already in the tree — #4 (RCU grace pins the node),
-#5 (collapse holds folio refs), #6 (migration isolation ref), #8 (writeback ref until IO completes) —
-so step 3 adds it. But the instance + audit are the same one-table, one-obligation move, and
-`Deferred.Window` / `Incarnation` hand you the soundness for free.
+#5 (collapse holds folio refs), #8 (writeback ref until IO completes) — so step 3 adds it. But the
+instance + audit are the same one-table, one-obligation move, and `Deferred.Window` / `Incarnation`
+hand you the soundness for free.
+
+---
+
+## Applying the template — row #6 (migration ref-pin), in brief
+
+The second row, to show the moves transfer. Migration finishing (`mm/migrate.c`) carries two
+obligations; the *placement* half (each sub-PTE restored to the right psub) was already proved latent
+in `Permute`/`MigrateEntry`, so only the *ref-pin* half needed wiring (`proof/Tessera/MigrationPin.lean`,
+axiom-clean).
+
+**1. INSTANCE — the four roles:**
+
+| framework role | migration's reality |
+|---|---|
+| resource `R` | the source folio being migrated |
+| guard (`Pinned`) | the migrator's refs, held at *exactly* `expected_count = mapped + 1` (the `+1` = its isolation ref) |
+| incarnation | the source folio's allocation; it must not be freed+reused before `remove_migration_ptes` |
+| the probe / guard-enforcer | **`folio_ref_freeze(expected_count)`** — atomically asserts `refcount == expected`, else `-EAGAIN` |
+
+**2. AUDIT.** Obligation: the migrator may swap the mapping only while it holds every reference itself
+(none stray). `folio_ref_freeze` enforces it atomically: equal → freeze and proceed; unequal → back
+off. The gap to hunt would be a mapping swap *not* behind the freeze — there is none. Result: the
+obligation is discharged *in-tree, already* (`frozen_pinned`, `frozen_live`, `stray_ref_aborts`).
+
+**3. CHECK.** Static: `MigrationPin.lean` proves the freeze discharges `Pinned` (`frozen_pinned`) and
+incarnation-correctness (`frozen_inc_correct`), and that a stray ref aborts (`stray_ref_aborts`).
+Runtime: the freeze *is* the enforcer — a mismatch is already an `-EAGAIN`, no probe to add.
+
+**The payoff.** `freeze_implies_tryget` proves a successful freeze implies `refs > 0` — so migration's
+guard is the **exact-count (`==`) form of #143's try-get (`> 0`)**, the same `Pinned` family in its
+strictest grade. This is why row #6's ref-pin was *already correct* while row #2's was the live laptop
+bug: the kernel **froze** migration but only `_get`-ed (not `try_get`-ed) the zapped cluster. The
+framework places both under one obligation and shows precisely which grade each site uses — and which
+site was missing it.
