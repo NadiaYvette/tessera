@@ -120,3 +120,36 @@ band-aid chain (leak-not-corrupt, not a fix).
   handler's `dump_page` (rmap.c:2072, first 3 over-removes) will now print each over-removed cluster's
   **alloc/free/last-map incarnation history** → the pattern behind the spurious over-remove → the root op.
   Boot pending Nadia (re-test login + capture the histories).
+
+### Step 5 result (clamp3 boot, page_owner) + Step 6 (large-folio unit sweep)
+
+- **clamp3 page_owner (boot -2):** 58 CLAMP / 202 ORPHAN / 1 PIN-FAIL, **no OOM** (swap held). Dominant
+  signal **present_here=14 FILE ×53** — near-full, file-backed, readahead+fault-around-populated order-0
+  clusters with `_mapcount`≈0 (under by ~14). Bad pages freed via the zap mmu-gather batch
+  (`free_pages_and_swap_cache → __tlb_batch_free_encoded_pages`, from `exec_mmap`/`madvise`) while still
+  flagged → `list_add double add: new==next` (pcp freelist double-add) → `decay_pcp_high`/`vmstat_update`
+  spins poisoned pcp lock (`R11: fefefefefefefeff`) → RCU stall → wedge on app-launch. **Corruption is
+  TRANSIENT page-cache, not on-disk:** fs-verity CORRUPTED only on clamp3 (×3, identical real_hash across 3
+  inodes = one phys page aliased into 3 file maps), **fs-verity=0 on both stock boots**, btrfs `corrupt 22`
+  identical across all boots (stale lifetime counter), root fsck clean. Stock boot -1 GUI failure = transient
+  after-effect of clamp3's forced reset (gnome-shell started, no coredump); **stock boot 0 healthy**
+  (gnome-shell live, session on seat0/tty2). The pgcl bug crashes the box, does not eat the disk.
+- **Step 6 — large-folio mapcount UNIT sweep (4-agent source audit, no boot):**
+  - **Footgun confirmed:** `_large_mapcount` is written in TWO units — **kernel-page** at init/dup
+    (`folio_set_large_mapcount(folio, nr_pages)`, `__folio_dup_file_rmap`'s `page++` loop) vs **MMUPAGE** by
+    `folio_add_rmap_subptes` (`folio_add_large_mapcount(folio, sub-PTE count)`). Same field, two meanings.
+  - **Confirmed bug:** large **FILE** fork dups via `folio_dup_file_rmap_ptes` (kernel-page) while large FILE
+    zap removes via `folio_remove_rmap_subptes` (MMUPAGE) → add/remove unit mismatch → underflow.
+  - **Split-reset REFUTED (rigorous):** `PGCL143-SPLIT-RESET=0` in clamp3; probe verified COMPILED (2 strings
+    in clamp3 `huge_memory.o`); 0 THP splits (`thp_split_*=0`). The seductive in-tree SPLIT-RESET comment was
+    a hypothesis; data kills it. (Confirms the earlier worklog "SPLIT-RESET=0, ruled out".)
+  - **Migration/reclaim CLEAN:** PVMW batches per kernel page; `try_to_unmap_one`/`remove_migration_pte`
+    remove and re-add the same count in the same unit.
+  - **GAP:** the dominant over-remove is **order-0 FILE** (`large=0`); order-0 add/fork/zap are per-sub-PTE
+    balanced (verified line-by-line), split out, migration clean. So the confirmed bugs are large-folio; the
+    order-0 origin is **not yet localized by reading**.
+- **Plan (approved):** (1) **seed-localizer** — assert `mc+1 >= present_here` at EVERY rmap mutator
+  (file fault-around add, fork dup, remove sites, large paths), `WARN_ON_ONCE` first divergence + stack;
+  first WARN = exact order-0 origin op. Extends the existing `pgcl143_add_edge_warn` (anon-fork only today).
+  (2) **MMUPAGE unification** of large-folio mapcount (fixes the large fork/zap bug + removes the footgun;
+  `_nr_pages_mapped`/`_entire_mapcount` stay kernel-page, only `_large_mapcount`+`page->_mapcount` convert).
