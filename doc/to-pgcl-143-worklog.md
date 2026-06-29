@@ -153,3 +153,32 @@ band-aid chain (leak-not-corrupt, not a fix).
   first WARN = exact order-0 origin op. Extends the existing `pgcl143_add_edge_warn` (anon-fork only today).
   (2) **MMUPAGE unification** of large-folio mapcount (fixes the large fork/zap bug + removes the footgun;
   `_nr_pages_mapped`/`_entire_mapcount` stay kernel-page, only `_large_mapcount`+`page->_mapcount` convert).
+
+### Step 6 result (seed boot, 0 INV) + audits + Step 7 (cross-mm shadow v2) + deferred-work
+
+- **seed boot (-pgcl4seed): 219 CLAMP / 211 ORPHAN / 1 PIN-FAIL / 0 PGCL143-INV.** Instrument verified
+  linked (`nm` U pgcl143_inv_warn in memory/filemap/migrate.o) + present_at validated vs the live clamp
+  scanner ⇒ the zero-INV is REAL: the order-0 FILE over-remove originates OUTSIDE fault / fork /
+  fault-around / reclaim / migrate-restore (all balanced). Login succeeded but only Signal drew a window,
+  pointer froze (same pcp-corruption wedge: `__list_add_valid` + `zap_present_ptes`).
+- **4-agent model-incompleteness sweep (doc: `to-pgcl-143-model-gaps.md`):**
+  - khugepaged collapse **GATED DEAD** (`#if PAGE_MMUSHIFT return SCAN_FAIL`) ⇒ not the bug; THP=never A/B moot.
+  - THP split **refuted** (`SPLIT-RESET=0`); audit's split-reset re-proposal rests on the in-tree comment — declined.
+  - split-PTL **coherent** (per-sub-table lock array `pte_pack_index`; armed only on mips, x86 inert / 16× page-table mem).
+  - broad sweep: `madvise`/`mlock` `folio_mapcount` vs `folio_nr_pages` (missing ×PAGE_MMUCOUNT) ⇒
+    MADV_PAGEOUT/COLD/FREE + mlock silently no-op on fully-mapped folios; `pagewalk.c:816` PAGE/MMUPAGE
+    unit-mix (DAX dirty-tracking).
+  - ⇒ origin = **emergent CROSS-MM** on shared FILE folios (Electron/V8/glibc `.so` text mapped in many mms):
+    the single-mm clamp **under-restores** shared folios (perpetuates the deficit), + the deferred-free
+    cross-mm UAF (the 1 PIN-FAIL).
+- **Step 7 — cross-mm SHADOW localizer (`-pgcl4shadow`, built):** pfn-indexed atomic shadow = accounting-true
+  GLOBAL mapcount (every rmap add/remove leaf bumps `shadow[cpfn]`; lock-free, no rmap walk ⇒ no PTL/i_mmap
+  inversion). At the over-remove compare shadow to stored `_mapcount`: **shadow < 0 = REAL global over-remove**
+  (rmap removes truly exceeded adds — find the op via `PGCL143-SHADOW-NEG` stack); **shadow ≥ 0 while
+  mc ≤ -1 = PHANTOM** (`_mapcount` corrupted below the accounting by the single-mm clamp / stale realloc —
+  i.e. we've been chasing a clamp artifact). 5 FILE-order-0 leaf hooks + `PGCL143-SHADOW-AT-ORPHAN` read.
+- **Deferred-work re-enablement (review directive):** `delay_rmap` forced off only for the `present_here`
+  live-PTE scan (instrumentation, NOT correctness). The `pgcl143_pending_inc/dec` ref-hold
+  (mmu_gather.c:197/82) ALREADY makes deferred rmap UAF-safe. Re-enable = drop the `!PAGE_MMUSHIFT` guard +
+  drop the debug clamp/scan + verify the pending balance + encoded sub-PTE `nr`; the residual immediate-path
+  cross-mm UAF is the same `SharingRace.Aggregate` fix (hold a ref before the cross-mm free).
