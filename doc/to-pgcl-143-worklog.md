@@ -81,6 +81,42 @@ band-aid chain (leak-not-corrupt, not a fix).
   `nr==1` path, log-only `if (mc < -1)` — never fired, floored) to the same clamp as the batch site:
   `if (!large && mc+1 < ph) { WARN_ON_ONCE; PGCL143-CLAMP …; atomic_set(_mapcount, ph-1); }`. Now both
   zap paths clamp.
-- **Expect:** many `PGCL143-CLAMP` (the ~9000, caught + clamped, `present_here>0`); `Bad page` cascade
-  STOPS (no floored-mc free-while-mapped); heavy apps progress; **boots to desktop**. If it still cascades,
-  the ref ledger (`dual_lockstep`) is the next layer. _Staged; boot pending Nadia._
+- **Boot evidence (laptop, `-pgcl4clamp2`, boot -2):** clamp engaged + broke feedback — **CLAMP 5→114
+  (now 85 FILE + 29 anon), ORPHAN ~9000→125**, `present_here` mostly **14** (near-full clusters),
+  comm=signal-desktop (83). **BUT Bad page persists (45)** and only Signal spawned, then unresponsive
+  (gnome-shell hit a bad page). Bad-page states prove **BOTH ledgers corrupt**: `refcount:0 mapcount:1`
+  (ref over-dropped → freed *while mapped*) and `refcount:1 mapcount:0` (ref leaked). pstore (clamp2
+  end-sysrq): **RCU stall**, stalled CPU in `__list_add_valid_or_report` + `bad_page` under
+  `rmqueue_pcplist` ⇒ **page-allocator freelist corruption** from the over-removed pages being freed in a
+  bad state.
+- **Conclusion (dual_lockstep, empirically confirmed):** mc-clamp is insufficient AND inflating mc without
+  the ref *creates* `refcount:0 mapcount:1`. The hard5 quarantine only gates `folios_put_refs`, NOT the
+  buddy/pcp free that corrupts. The boot fix must stop the over-removed page reaching the allocator on ANY
+  path.
+
+## Step 4 — `-pgcl4clamp3`: refcount PIN at the chokepoint (building)
+
+- **Hypothesis:** the buddy only frees at refcount 0, so a real refcount pin on every over-removed folio
+  covers ALL free paths → no over-removed page enters the allocator freelist → no `__list_add` corruption
+  → no RCU stall → boots. Leak-not-corrupt (pin + quarantine; mc-clamp keeps the count ~125 ⇒ bounded leak).
+- **Proof tie:** `Incarnation.stableref_pins` / `folio_try_get` (inc-unless-zero, never resurrects a freed
+  folio — the R14 v1→v2 fix); `PendingGate`/`RemoveDual` (a held ref is leak-not-corrupt).
+- **Diff (`mm/rmap.c` `pgcl143_report_orphan` ~2049, the chokepoint all over-removes pass):** after
+  `pgcl143_quar_inc`, `if (!folio_try_get(folio)) pr_warn_once("PGCL143-PIN-FAIL …")`. Keeps the zap
+  mc-clamps (feedback break). _Staged; boot pending Nadia._
+
+### Step 4 result + Step 5 (root-hunt via page_owner)
+
+- **clamp3 boot (-pgcl4clamp3, laptop):** the chokepoint pin WORKED — **Bad page 45 → 3, no OOM, RCU stall
+  2** (clamp2 had many). 8 CLAMP / 89 ORPHAN / **1 PIN-FAIL** (pfn 2f9d4 "already freed at over-remove").
+  The residual: that 1 PIN-FAIL is a **cross-mm deferred UAF** (folio freed by another mm *before* the
+  over-remove ran → pin too late), and it is the first of the 3 Bad pages (in pmlogger) → the 2 RCU stalls
+  → login wedged/failed. (Login failure ambiguous per Nadia: possible mistype, or just earlier/more-eager
+  flagging — not evidence clamp3 is functionally worse; corruption is far lower.)
+- **Conclusion:** the pin (refcount, all paths) handles 88/89; the 1/89 is the deferred/cross-mm UAF the
+  pin can't catch post-hoc (needs a ref held *before* the free — `SharingRace.Aggregate`). But the goal is
+  the zero-leak ROOT, so: don't band-aid the UAF — **name why the over-removes happen**.
+- **Step 5 (no rebuild):** `CONFIG_PAGE_OWNER=y`; added `page_owner=on` to clamp3's cmdline. The ORPHAN
+  handler's `dump_page` (rmap.c:2072, first 3 over-removes) will now print each over-removed cluster's
+  **alloc/free/last-map incarnation history** → the pattern behind the spurious over-remove → the root op.
+  Boot pending Nadia (re-test login + capture the histories).
