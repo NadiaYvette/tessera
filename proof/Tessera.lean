@@ -51,3 +51,4 @@ import Tessera.Discriminator
 import Tessera.MigrateVsub
 import Tessera.SwapFormat
 import Tessera.Compositionality
+import Tessera.SlotLifecycle
