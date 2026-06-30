@@ -69,4 +69,37 @@ theorem sound_iff_no_overcoalesce {j f sidx m m' : Nat}
     tileIdx f m = tileIdx f m' :=
   subfolio_op_contained rule hm hm'
 
+/-! ### The reverse arrangement (MIPS PageGrain): sub-cluster superpages, guaranteed-backed.
+
+    MMUPAGE_SIZE = 1 KiB (level 0), PAGE_SIZE = 64 KiB (cluster level c = 6); hardware sizes
+    1/4/16/64 KiB = levels 0, 2, 4, 6 — ALL ≤ c, the largest BEING the folio.  So the super-folio
+    hole is structurally unreachable (no size outgrows the managed unit), and the motivation inverts
+    typical superpages: because a folio is a pre-allocated CONTIGUOUS 2^c-frame block, every
+    sub-cluster superpage that fits is already backed — the mapping cannot fail for lack of
+    contiguous memory the way a runtime huge-page allocation can under fragmentation. -/
+
+/-- GUARANTEED BACKING: a level-`j` superpage (j ≤ c) at an aligned intra-folio offset `off` that
+    fits (`off + 2^j ≤ 2^c`) has every one of its frames inside the folio's contiguous block
+    `[fb, fb + 2^c)`.  The folio contiguity supplies the backing unconditionally — no fragmentation,
+    no allocation failure.  (Contrast: a free-standing 2^j superpage must FIND a contiguous run and
+    can fail; this one never queries the free pool.) -/
+theorem superpage_backed {c j off fb frame : Nat}
+    (hfit : off + 2 ^ j ≤ 2 ^ c) (hframe : frame < 2 ^ j) :
+    fb ≤ fb + off + frame ∧ fb + off + frame < fb + 2 ^ c := by
+  omega
+
+/-- In the reverse arrangement every hardware size is ≤ the folio, so EVERY superpage is sub-folio
+    and per-folio management is self-contained for all of them — sound by construction, with
+    over-coalescing not merely forbidden but unavailable. -/
+theorem reverse_uniformly_sound {c j sidx m m' : Nat} (hsize : j ≤ c)
+    (hm : tileIdx j m = sidx) (hm' : tileIdx j m' = sidx) :
+    tileIdx c m = tileIdx c m' :=
+  subfolio_op_contained hsize hm hm'
+
+/-- Concrete instance: a 16 KiB superpage (level 4) sharing a 64 KiB folio (level c = 6) with any
+    other mapping of it keeps both in the one folio. -/
+example (m m' : Nat) (hm : tileIdx 4 m = 3) (hm' : tileIdx 4 m' = 3) :
+    tileIdx 6 m = tileIdx 6 m' :=
+  reverse_uniformly_sound (by decide) hm hm'
+
 end Tessera.HeteroSuperpage
