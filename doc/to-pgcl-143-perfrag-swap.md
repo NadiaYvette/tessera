@@ -93,3 +93,27 @@ Items 2-4 are the refcount path whose error mode IS the UAF being fixed; a wrong
 partial-cluster dup / batch assumption produces a count bug that a 90s repro may not
 surface. Per the agreed plan ("flag any site I'm unsure about"), these are the flagged
 sites — fully designed above, to be executed with the oracle as the verifier.
+
+## FINAL: #143 CLEAN (KVM + oracle), all fixes integrated
+
+Items 2-4 were executed and verified; the swapon false-pass was caught + fixed; and the
+surviving residual (a reclaim stale-TLB, oracle-pinned) was fixed:
+
+- **Per-fragment swap** (11e680f, 08d113a) + **swapon MMUPAGE area** (6584baa): over-put
+  UAF gone, swap genuinely exercised.
+- **Reclaim stale-TLB** (0fa3cae): `arch_tlbbatch_flush` broadcasts the deferred reclaim
+  flush to all online CPUs for pgcl (closing the lazy/PCID stale sub-MMUPAGE entry the
+  mm_cpumask batch missed); `swap_put_entries_direct_noreclaim` restores the swap-in
+  put's `reclaim_cache=false` (the broadcast's timing exposed a per-fragment
+  over-reclaim: swap_cache_get_folio fault via swap_put_entries_cluster).
+
+**Verified clean on BOTH detectors:**
+- smp8 KVM 120 s, swap working: invalid-opcode 0, swap warns 0, Unable-opcode 0,
+  BUG5627 0, Bad page 0, init survives.
+- free-while-USER-mapped oracle (TCG, 360 s): **0** FREE-WHILE-USER-MAPPED, **0**
+  ALLOC-INTO-STALE; init survives 354 s (was: 2 real catches + init death @71 s).
+
+Full #143 stack on drive/143-perfrag: 59a598a (kill-init) + gated BUG_ON + per-fragment
+swap + swapon + 0fa3cae (stale-TLB).  AEX tracer stripped for the clean tree.
+**Refinement (task #13):** the TLB broadcast is heavier than the principled
+`switch_mm`/`tlb_gen` sub-frame fix.  **Next:** hardware testboot (ASK first).
