@@ -46,3 +46,8 @@ import Tessera.RemoveFloor
 import Tessera.PendingGate
 import Tessera.SingleRoot
 import Tessera.RemoveDual
+import Tessera.StraddleObserve
+import Tessera.Discriminator
+import Tessera.MigrateVsub
+import Tessera.SwapFormat
+import Tessera.Compositionality
