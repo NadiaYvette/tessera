@@ -339,3 +339,41 @@ accounting is balanced, the fault is **dynamic** — a concurrency/ordering/lost
 static balance cannot see (Property-2 territory); the discharge is then the **atomic ordering pin**
 (Route 1: `folio_get` at gather-record, `folio_put` after the flush, take/release 1:1), NOT a static
 rebalance — Route 2's obligation (`RefTracksPresent`) is already met.
+
+## 13. reinc #36 boot — the fix WORKS, and the real boot blocker is pinned (freed-while-on-LRU)
+
+The discharge-clear kernel (#36) booted and settled the picture. It was a net win: the REINCARN storm was
+cut ~60% (1000→411, less console spam), so the system got FURTHER — **login succeeded**, apps tried to
+start — which is exactly why it reached and EXPOSED the real remaining bug. `softlockup_all_cpu_backtrace=1`
+delivered a 122-frame all-CPU NMI dump (sysrq L/W did not survive the wedge to disk).
+
+**The count-side stays closed; the boot blocker is a lifecycle/ordering bug — and it UNIFIES §12's residual
+with the pcp-lock wedge.** 12 kernel `bad_page`, all one class: `refcount:0 mapcount:0` (counts CLEAN),
+`active|swapbacked` set, `free_ts 0` (FIRST free, NOT a reincarnation), from Electron/GUI procs
+(element-desktop, gst-plugin-scan). The stack is decisive:
+
+```
+free_unref_folios              ← bad_page: active set at free (PAGE_FLAGS_CHECK_AT_FREE)
+folios_put_refs
+free_pages_and_swap_cache
+__tlb_batch_free_encoded_pages ← the deferred GATHER FLUSH
+```
+
+**Root cause.** `folios_put_refs`' pgcl refcount FLOOR drives a folio to 0 even when the per-cpu `lru_add`
+batch still holds a reference — the folio is `PG_active` with `PG_lru` CLEAR (queued by `folio_add_lru`,
+not yet drained onto the real LRU). Freeing it there (a) reaches the buddy `PG_active` → `bad_page`, and
+(b) leaves the batch a **dangling pointer** → when it drains it touches a freed/reused page and corrupts
+the **pcp/buddy free-list** (`list_del` in `__rmqueue_pcplist`, `list_add` in `free_frozen_page_commit`) →
+`__rmqueue_pcplist`/`free_pcppages_bulk` spin holding `pcp->lock` → the boot −2 `decay_pcp_high` wedge /
+this boot's `xas`+`lruvec` spin → soft-lockup/RCU-stall → **GUI freeze**. Temporal chain confirmed: first
+`bad_page` 18:19:13 → soft-lockup 18:19:40 → list-corruption 18:19:45. **So the "boot blocker" and the
+"residual" are the same bug** — the floor's "leak-not-corrupt" premise is FALSE for the lru_add-pending
+case (the discarded "excess" is a real batch ref).
+
+**Fix — defensive (landed), root (next).** Defensive: in `folios_put_refs`, re-hold and skip the free when
+`folio_test_active(folio) && !folio_test_lru(folio)` (lru_add-pending), mirroring the existing
+`folio_mapped`/pending gates; the lru_add drain sets `PG_lru` and frees it isolated later. Modeled
+axiom-clean as `LruIsolation.gate_never_frees_pending` (re-hold never frees a pending folio) /
+`floor_frees_pending` (the bare floor does) / `gate_frees_isolated` (no over-leak of dead isolated
+folios). Root fix to follow: drain/unqueue the folio from the lru_add batch before the floor, so PG_lru is
+set and `__page_cache_release` clears PG_active. Build #37 carries the defensive gate.
