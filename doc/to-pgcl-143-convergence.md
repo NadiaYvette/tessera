@@ -377,3 +377,55 @@ axiom-clean as `LruIsolation.gate_never_frees_pending` (re-hold never frees a pe
 `floor_frees_pending` (the bare floor does) / `gate_frees_isolated` (no over-leak of dead isolated
 folios). Root fix to follow: drain/unqueue the folio from the lru_add batch before the floor, so PG_lru is
 set and `__page_cache_release` clears PG_active. Build #37 carries the defensive gate.
+
+## 14. Consolidation — the cache-floor fix chain (#143 memory corruption ~closed), the residual, the GPU gate
+
+**Result of the ~15-boot drive on the laptop (2026-07-01).** The #143 memory corruption that killed init/apps
+is ~90% closed and the full allocator wedge is GONE. Campaign trend (kernel `bad_page`, per full-load boot):
+
+```
+   r17fp/fop/r17p2/...  reinc#35  #36   #37   #38   #39(full)  #40   #41
+   26/16/7/50/32/6      0-1       12    55    0     18-26      0     2
+   wedge: lockup ......................  none from #38 on (allocator survives)
+   list-corrupt 16 -> 7,  segfault 8 -> 2  across #37->#41
+```
+
+### The fix chain (kernel branch `drive/143-spurcatch`, each with an axiom-clean Tessera model)
+
+1. **Reincarnation was an artifact.** The incarnation-stamp detector (`PGCL143-REINCARN`, ~1840/boot) is a
+   stale-stamp FALSE POSITIVE (set at defer, cleared only at free; a shared/cached cluster surviving its
+   gather flush leaves a stale stamp). Modeled: `GatherLedger.stamp_false_positive`; discharge-clear in
+   `mmu_gather.c` (clear the owe at flush). The count-side is balanced (13-site audit + `GatherLedger.fix_no_reincarnation`).
+2. **The real bug is a freed-while-still-referenced page-cache over-put.** A file/shmem folio is dropped
+   BELOW its cache floor (`folio_nr_pages` structural refs) while still cached (`mapping != NULL`), freed,
+   and reused -> pcp free-list corruption -> allocator wedge / shared-page corruption. Modeled:
+   `FileCacheRef.floorOk / violated_iff_not_floorOk / rehold_floorOk` (the enforcement restores the
+   invariant, proven). Kernel: cache-floor detector+enforcement in `folios_put_refs` (#38) and `__folio_put`
+   (#39); **must include shmem** (drop the `!swapbacked` exclusion, #40 -- shmem is swapbacked AND cached).
+3. **Anon twin:** freed-while-on-`lru_add`-batch (`LruIsolation.gate_never_frees_pending`), gate in
+   `folios_put_refs`.
+
+`bad_page -> 0` under full load once shmem was included (#40). The enforcement re-holds an over-dropped
+cached folio to its floor (leak-on-race beats corruption); a legit eviction clears `mapping` first, so it
+never fires on a correct free.
+
+### Residual (OPEN -- new task): a pre-existing double-free, NOT gather-owed
+
+`list_del/add corruption` persists at `free_frozen_page_commit`/`__rmqueue_pcplist` (a page on the pcp
+free-list AND reallocated-in-use: `page->lru.prev` = a heap addr) even with `bad_page` ~0 -> segfaults in
+shared libs (`libcef.so`, `libc.so.6`) -> Electron `int3` / gnome-shell GP-fault -> apps can't launch.
+list-corrupt was **16 before** the cache-floor guards and **7 after** -- the guards REDUCE it, so the
+double-free is a SEPARATE pre-existing bug. The `PGCL143-DOUBLEDROP` detector (keyed on `gather_owes`)
+fired 0 -> the double-freed page is not gather-stamped. NEXT: a GENERAL double-free detector (per-pfn
+freed-bitmap: stamp at free, clear at alloc, WARN on the 2nd free's path) to name the culprit without a
+mechanism assumption.
+
+### The desktop gate (OPEN -- task #11): GPU
+
+`i915` is deliberately `id_blocked(a7a0)` under pgcl (`i915_pci.c:971`; GEM/memory not ported to 64KB
+clusters) -> simpledrm software rendering -> GNOME/Electron too slow to be usable regardless of
+correctness. A usable desktop needs i915-on-pgcl (or a minimal GEM/cluster port), independent of #143.
+
+**Bottom line:** #143's memory corruption is essentially fixed and modeled; the two remaining blockers to a
+usable desktop are the residual double-free (correctness, small) and the GPU (performance, large), both now
+their own tasks.
