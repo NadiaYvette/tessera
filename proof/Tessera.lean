@@ -60,3 +60,4 @@ import Tessera.MapGate
 import Tessera.Counters
 import Tessera.GatherLedger
 import Tessera.LruIsolation
+import Tessera.DoubleFree
