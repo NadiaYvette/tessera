@@ -269,9 +269,41 @@ sub-PTEs; the zap defers exactly `nr`):
 | anon COW clustering (old + new folio) | 4460–4566 | `−(extra+1)` old / `+(1+extra)` new | `extra+1` each | **BALANCED** |
 | zap defer (owed side) | 2104 | `__tlb_remove_folio_pages(.., nr, false)` | clears `nr` | **owed = nr (correct IF map side balanced)** |
 
-**Every core anon map/unmap path preserves the invariant.** So the phantom is **not** in anon faulting —
-it is on the **swap-in / file / shmem** side (consistent with task #4 "cross-mm shared-cluster over-put"
-and the already-modeled `FileCacheRef` file over-put), or a shmem-eviction over-put. That audit is the
-open item: `do_swap_page` (swap-in ref-take vs sub-PTEs), `set_pte_range`/`filemap_map_pages` (file/shmem
-fault), and `shmem_undo_range` (the eviction racer's own put count). The phantom is a single site whose
-ref-add is `< nr` present sub-PTEs, or whose put is `> nr` cleared — `GatherLedger.Folio.Phantom`.
+**Every core anon map/unmap path preserves the invariant.** The audit then completed over the FULL
+anon/swapbacked cycle — 13 sites: `do_anonymous_page`, `map_anon_folio_pte_nopf`, fork `copy_present_ptes`,
+`wp_page_copy` (COW), `do_swap_page` (swap-in), `try_to_unmap_one` (swap-out freer), `remove_migration_pte`
+/ `try_to_migrate_one`, `finish_fault`/`set_pte_range`, `filemap_map_folio_range`, shmem, and the zap
+defer. **ALL BALANCED** — ref-add multiplier == present-count multiplier at every site; `set_ptes(ptep,
+pte,n)` writes exactly `n` sub-PTEs so the two are directly comparable. The zap's *former* eager
+`folio_ref_sub(nr-1)` (the real over-put on the anon/large class) is already fixed to defer all `nr`.
+
+### The audit REFUTES the static phantom — and by the model, that means REINCARN lies
+
+There is **no `Folio.Phantom` at any enumerated site.** By `GatherLedger.fix_no_reincarnation`, balanced
+accounting (`Genuine`) makes the reincarnation **structurally impossible** — so REINCARN's ~1840 fires
+cannot be a true phantom. They are a **detector artifact**, the third of this campaign (after STILL-MAPPED
+and file-overput, both stubbed):
+
+- The gather-owes **stamp is set at every deferred free** (`mmu_gather.c:210`) and **cleared only when the
+  pfn is actually freed** (`page_alloc.c:3037-3038`) — there is NO clear when a gather flushes but the pfn
+  survives.
+- A shared/cached cluster (mapped in >1 mm, or held by swapcache/LRU — ubiquitous under fork+mmap) has
+  refcount > 0 after its gather's flush, so **its stamp lingers**. When it is later *legitimately* freed by
+  a non-gather path — the **LRU batch drain** (the dominant "racer", ~1000) — `gather_owes[gi]==pfn` still
+  holds and `in_gflush==0`, so REINCARN warns. **False positive.**
+- On balanced accounting a *true* positive is impossible: the owed ref is a real folio ref, so refcount
+  cannot reach 0 while a gather still owes. The detector's premise ("refcount reached 0 despite the
+  gather's deferred nr refs") presupposes the phantom the audit just ruled out.
+
+**Detector fix (for a trustworthy next boot):** clear `gather_owes[gi]` when the gather **discharges** its
+owe (in the `in_gflush` window at `free_pages_and_swap_cache`), not only when the pfn is freed. Then a
+lingering stamp at free-time genuinely means "a gather deferred this and has NOT yet flushed" — a real
+reincarnation. Predict: REINCARN → ~0.
+
+**The branch point.** If the KERNEL's own `bad_page` did NOT fire (only our REINCARN did), the
+reincarnation strand is CLOSED as an artifact and the boot blocker is elsewhere (the residual reclaim
+stale-TLB on the RO code page, or the placement thread). If `bad_page` DID fire, then since the static
+accounting is balanced, the fault is **dynamic** — a concurrency/ordering/lost-update gap that per-site
+static balance cannot see (Property-2 territory); the discharge is then the **atomic ordering pin**
+(Route 1: `folio_get` at gather-record, `folio_put` after the flush, take/release 1:1), NOT a static
+rebalance — Route 2's obligation (`RefTracksPresent`) is already met.
