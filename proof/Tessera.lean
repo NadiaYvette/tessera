@@ -57,3 +57,4 @@ import Tessera.MapcountOnly
 import Tessera.FloorAtPresent
 import Tessera.FileCacheRef
 import Tessera.MapGate
+import Tessera.Counters
