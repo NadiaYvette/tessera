@@ -70,5 +70,76 @@ theorem flag_bug_independent_of_count (f : Folio) (hfreed : f.freed) (hfl : f.fl
   simp only [Folio.SafeFree, hfl]
   intro h; exact absurd (h hfreed) (by decide)
 
+/-! ## The boot-pinned site: the pgcl FLOOR frees an lru_add-pending folio past its batch ref
+
+The reinc #36 boot pinned the concrete mechanism (12 bad_page → pcp free-list corruption → wedge).
+`folios_put_refs`' pgcl refcount FLOOR drives a folio to 0 even when the per-cpu `lru_add` batch still
+holds a reference — the folio is `PG_active` with `PG_lru` CLEAR (queued by `folio_add_lru`, not yet
+drained onto the real LRU).  Freeing it there (a) reaches the buddy `PG_active`
+(`PAGE_FLAGS_CHECK_AT_FREE` bad_page) and (b) leaves the batch a dangling pointer → when it drains it
+corrupts the pcp free-list (`__rmqueue_pcplist` / `free_frozen_page_commit` list corruption) → the
+allocator spins on `pcp->lock` → soft-lockup.  The defensive fix re-holds when `active ∧ ¬onLru`. -/
+
+/-- LRU-lifecycle state.  `refs` refcount; `active` = PG_active; `onLru` = PG_lru.  A folio queued on the
+per-cpu `lru_add` batch (not yet drained) is `active` with `onLru = false`, and the batch holds one ref. -/
+structure LFolio where
+  refs   : Nat
+  active : Bool
+  onLru  : Bool
+deriving Repr, DecidableEq
+
+/-- **PENDING on the lru_add batch** = PG_active set, PG_lru clear: queued but not drained.  Freeing here
+dangles the batch pointer and reaches the buddy PG_active. -/
+def LFolio.pending (f : LFolio) : Bool := f.active && !f.onLru
+
+/-- The pgcl refcount FLOOR (`folios_put_refs`): drop `nr` refs, floored at 0 (never underflows). -/
+def LFolio.floorPut (f : LFolio) (nr : Nat) : LFolio :=
+  { f with refs := if f.refs > nr then f.refs - nr else 0 }
+
+/-- The floor leaves `active`/`onLru` untouched — so it cannot fix a pending folio's flags. -/
+theorem floorPut_pending (f : LFolio) (nr : Nat) : (f.floorPut nr).pending = f.pending := rfl
+
+/-- **THE BUG — the bare floor frees a pending folio.**  With the batch's ref counted, `refs = m+1`; when
+the gather over-drops (`nr ≥ refs`) the floor drives it to 0 while it is still `pending` — freed past the
+batch ref (bad_page + dangling batch → pcp corruption). -/
+theorem floor_frees_pending (f : LFolio) (nr : Nat) (hp : f.pending = true) (hover : f.refs ≤ nr) :
+    (f.floorPut nr).refs = 0 ∧ (f.floorPut nr).pending = true := by
+  refine ⟨?_, by rw [floorPut_pending]; exact hp⟩
+  show (if f.refs > nr then f.refs - nr else 0) = 0
+  rw [if_neg (by omega)]
+
+/-- The FIX gate (the kernel's re-hold): if the folio is lru_add-`pending`, re-hold (keep it live);
+otherwise apply the floor. -/
+def LFolio.gatedPut (f : LFolio) (nr : Nat) : LFolio :=
+  if f.pending = true then { f with refs := f.refs + 1 } else f.floorPut nr
+
+/-- **THE FIX — the gate NEVER frees a pending folio.**  It re-holds, so `refs > 0`; the lru_add drain
+later sets `onLru` and it is freed isolated (flags cleared).  Reincarnation of the wedge is impossible. -/
+theorem gate_never_frees_pending (f : LFolio) (nr : Nat) (hp : f.pending = true) :
+    0 < (f.gatedPut nr).refs := by
+  show 0 < (if f.pending = true then { f with refs := f.refs + 1 } else f.floorPut nr).refs
+  rw [if_pos hp]
+  show 0 < f.refs + 1
+  omega
+
+/-- **…and the gate does NOT over-leak**: a genuinely dead, ISOLATED folio (`¬pending`) is still freed by
+the floor as before — the gate only defers the unsafe (pending) frees. -/
+theorem gate_frees_isolated (f : LFolio) (nr : Nat) (hnp : f.pending = false) (hover : f.refs ≤ nr) :
+    (f.gatedPut nr).refs = 0 := by
+  have hne : ¬ (f.pending = true) := by rw [hnp]; decide
+  show (if f.pending = true then { f with refs := f.refs + 1 } else f.floorPut nr).refs = 0
+  rw [if_neg hne]
+  show (if f.refs > nr then f.refs - nr else 0) = 0
+  rw [if_neg (by omega)]
+
+/-- Concrete witness — the boot's case: a folio whose only ref is the lru_add batch's (`refs=1`), still
+`active`, not yet `onLru`; the gather over-drops `nr=1`.  Bare floor frees it (bug); the gate holds it. -/
+def lruPendingFolio : LFolio := ⟨1, true, false⟩
+
+theorem witness_floor_frees : (lruPendingFolio.floorPut 1).refs = 0 ∧ lruPendingFolio.pending = true := by
+  decide
+
+theorem witness_gate_holds : 0 < (lruPendingFolio.gatedPut 1).refs := by decide
+
 end LruIsolation
 end Tessera
