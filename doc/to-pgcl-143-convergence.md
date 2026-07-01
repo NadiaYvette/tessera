@@ -213,3 +213,65 @@ with your `encoded_page` / cluster-batching, so a complete patch would be guessw
 you the obligation, both routes, the exact sites, and the skeleton to finalize against your accounting.
 Pick a route, A/B on the laptop, hand back the `bad_page` count, and I confirm it against
 `Incarnation.pinned_inc_correct`.
+
+## 12. Reincarnation UAF PINNED on the laptop — Route 2 formalized (`GatherLedger`), phantom-site audit
+
+The **incarnation-stamp detector** (stamp the gather-owed pfn at `__tlb_remove_folio_pages`, check it at
+`free_unref_folios` — the runtime form of `Incarnation.probeFires`) pinned R12's path-independent core to
+one concrete mechanism on the laptop: **`PGCL143-REINCARN` fired ~1840×** — a pfn **freed by a non-gather
+path while the gather still owed its deferred `nr`-ref free**. The `bad_page` is an `active|swapbacked`
+folio freed while on the LRU (`ts > free_ts`). Three concurrent freers drive the refcount to 0 inside the
+flush window (each drops the folio's *non-mapping* ref):
+
+| racer | site | share |
+|---|---|---|
+| **LRU batch drain** | `folio_batch_move_lru` ← `lru_add` (drops the `lru_add` batch ref) | ~1000 (dominant) |
+| **COW old-folio put** | `wp_page_copy` | ~274 |
+| **shmem/tmpfs eviction** | `shmem_undo_range` ← `shmem_evict_inode` ← `__fput` | ~40 (the tmpfs insight, vindicated) |
+
+**Two corrections this boot forced.** (1) The R17 "mapcount undercount" was a **detector artifact** —
+`present_before` was measured at zap *entry* (pre-clear), so every legit last-unmap tripped it
+(`viafloor=1` proved the floor's own removes did it). **The floor WORKS**; `folio_mapped()` is exact. (2)
+The over-remove is **not** a mapcount bug at all — it is the **deferred-FREE phantom**: the zap defers all
+`nr` refs (c01720e, `zap_present_ptes → __tlb_remove_folio_pages(.., nr, false) → free_pages_and_swap_cache`
+drops `nr`) *believing the folio holds `nr` refs*; the folio's real refcount is **lower** (the phantom), so
+a racer reaches 0 first → free → reuse → the flush's deferred `nr`-drop lands on the next incarnation.
+
+**Modeled — `proof/Tessera/GatherLedger.lean` (axiom-clean), the pgcl-specific form of Route 2 as a CODE
+SPEC.** It refines `Deferred`/`Incarnation` with the split the boot made concrete:
+
+- refcount SPLITS by origin: `refs = base + genuine`, where `base` = the LRU/page-cache/alloc ref **the
+  three racers drop**, `genuine` = mapping refs actually taken (one real `folio_get` per present sub-PTE).
+- **`Genuine` (Route 2): `genuine = mapped`** — the `Counters` per-sub-PTE `refcount` discipline read at
+  the folio level (`RefTracksPresent`, preserved by every `addk`/`remk` with a one-line proof).
+- `fix_zap_pinned` + **`fix_survives_base_drop`**: under `Genuine`, the gather's `owed = nr ≤ mapped =
+  genuine ≤ refs`, so dropping the **entire base** (all three racers at once) still leaves `refs = mapped
+  ≥ nr > 0` — the folio is live for the whole flush window. Reincarnation is **structurally impossible**.
+- `phantom_freed_while_owed` + `phantom_run_underflows`: the negation (`genuine < mapped`) reincarnates and
+  drives the refcount **negative** — the exact laptop `bad_page` — via `Deferred.unpinned_freed_while_owed`.
+- **`fix_no_reincarnation`**: the per-mm `RefTracksPresent`, composed across two sharing mms, discharges
+  `Incarnation.pinned_inc_correct` for all interleavings. This is Route 2's obligation, mechanized.
+
+**So Route 2 is confirmed as the discharge**, and the fix is a *ledger* fix, not a new ref/bit: make every
+site keep `refcount` in lockstep with the present-set per sub-PTE. The `GatherLedger` "FIX-CODE OBLIGATIONS"
+section maps each kernel site to the invariant it must preserve.
+
+### The static ref-balance audit — which site holds the phantom
+
+Checking each site against `RefTracksPresent` (ADD installs exactly `nr` genuine refs for `nr` present
+sub-PTEs; the zap defers exactly `nr`):
+
+| site | `mm/memory.c` | ref move | vs present | verdict |
+|---|---|---|---|---|
+| `do_anonymous_page` (order-0 cluster) | ~6360 | `folio_ref_add(rss-1)` + birth | `rss` | **BALANCED** |
+| `map_anon_folio_pte_nopf` (large anon) | 6092/6113 | `folio_ref_add(nr_ptes-1)` + birth | `set_ptes(nr_ptes)` | **BALANCED** |
+| `copy_present_ptes` (fork, all 4 branches) | 1215–1371 | `folio_ref_add(nr)` (or sub-back on EAGAIN) | `nr` | **BALANCED** |
+| anon COW clustering (old + new folio) | 4460–4566 | `−(extra+1)` old / `+(1+extra)` new | `extra+1` each | **BALANCED** |
+| zap defer (owed side) | 2104 | `__tlb_remove_folio_pages(.., nr, false)` | clears `nr` | **owed = nr (correct IF map side balanced)** |
+
+**Every core anon map/unmap path preserves the invariant.** So the phantom is **not** in anon faulting —
+it is on the **swap-in / file / shmem** side (consistent with task #4 "cross-mm shared-cluster over-put"
+and the already-modeled `FileCacheRef` file over-put), or a shmem-eviction over-put. That audit is the
+open item: `do_swap_page` (swap-in ref-take vs sub-PTEs), `set_pte_range`/`filemap_map_pages` (file/shmem
+fault), and `shmem_undo_range` (the eviction racer's own put count). The phantom is a single site whose
+ref-add is `< nr` present sub-PTEs, or whose put is `> nr` cleared — `GatherLedger.Folio.Phantom`.
