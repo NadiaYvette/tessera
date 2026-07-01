@@ -241,5 +241,65 @@ refs than present sub-PTEs (or defers more than it cleared) breaks `RefTracksPre
 `Phantom`, yielding `phantom_freed_while_owed` — the exact laptop UAF.  That is the invariant the
 static ref-balance audit checks each site against. -/
 
+/-! ## Why the REINCARN detector LIES — a faithful vs a stamp-until-freed detector
+
+The runtime REINCARN check stamps `gather_owes[pfn]` at every defer and clears it only at free
+(`mmu_gather.c:210` / `page_alloc.c:3037`), firing on `freed ∧ stamped`.  But `stamped` conflates "a
+gather deferred this" with "a gather STILL owes it": once the gather DISCHARGES (its flush drops the
+deferred ref) the owe is gone, yet the stamp lingers until the pfn is actually freed.  A later
+LEGITIMATE free then fires it — the artifact behind the ~1840 fires with 0–1 real `bad_page`.  The
+faithful detector tracks the OUTSTANDING owe (inc at defer, DEC at discharge) and fires on `freed ∧
+owed>0`.  Mirrors `Incarnation.probe_faithful` (the correct probe), for the gather-owes detector. -/
+
+/-- Detector state over the event stream. `owed` = undischarged deferred refs; `stamped` = a gather
+deferred this pfn since the last free. -/
+structure Det where
+  owed    : Nat
+  stamped : Bool
+deriving Repr, DecidableEq
+
+/-- A gather defers a free: owe one more, set the stamp. -/
+def Det.defer (d : Det) : Det := { owed := d.owed + 1, stamped := true }
+
+/-- The gather DISCHARGES at flush: it drops one deferred ref.  The buggy detector does NOT clear the
+stamp here (only at free) — that is the artifact. -/
+def Det.discharge (d : Det) : Det := { d with owed := d.owed - 1 }
+
+/-- **REAL reincarnation** = the pfn is freed while an owe is still OUTSTANDING. -/
+def reincarnated (d : Det) : Prop := 0 < d.owed
+
+/-- The REINCARN detector's firing condition at a (non-gather) free. -/
+def stampFires (d : Det) : Bool := d.stamped
+
+/-- The faithful detector's firing condition. -/
+def faithFires (d : Det) : Bool := decide (0 < d.owed)
+
+/-- **The faithful detector is EXACT** — fires iff a real reincarnation. -/
+theorem faith_faithful (d : Det) : faithFires d = true ↔ reincarnated d := by
+  simp only [faithFires, reincarnated, decide_eq_true_eq]
+
+/-- **THE ARTIFACT — the stamp detector fires with NO outstanding owe.** After `defer` then `discharge`
+the owe is 0 (nothing owed) but the stamp is still set, so a legitimate later free fires it: a FALSE
+positive.  This is the ~1840 fires (shared/cached cluster deferred, gather flushed, then freed by LRU
+drain / shmem eviction). -/
+theorem stamp_false_positive :
+    stampFires (Det.discharge (Det.defer ⟨0, false⟩)) = true
+    ∧ faithFires (Det.discharge (Det.defer ⟨0, false⟩)) = false := by decide
+
+/-- **THE DETECTOR FIX — clear the stamp when the gather DISCHARGES** (in the `in_gflush` window at
+`free_pages_and_swap_cache`), not only at free.  Then no outstanding owe ⟹ no stamp ⟹ no false fire. -/
+def Det.dischargeFix (d : Det) : Det :=
+  { owed := d.owed - 1, stamped := if d.owed - 1 = 0 then false else d.stamped }
+
+/-- With the fix, the same `defer`→`discharge` sequence leaves the stamp CLEAR — the false positive is
+gone. -/
+theorem dischargeFix_no_false_positive :
+    stampFires (Det.dischargeFix (Det.defer ⟨0, false⟩)) = false := by decide
+
+/-- …and the fix keeps the detector FAITHFUL where it must fire: a genuine reincarnation (freed while
+`owed>0`, i.e. the gather has NOT discharged) still trips both `stampFires` and `faithFires`. -/
+theorem defer_then_free_still_fires :
+    stampFires (Det.defer ⟨0, false⟩) = true ∧ faithFires (Det.defer ⟨0, false⟩) = true := by decide
+
 end GatherLedger
 end Tessera
