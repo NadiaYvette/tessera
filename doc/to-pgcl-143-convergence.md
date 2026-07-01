@@ -298,7 +298,39 @@ and file-overput, both stubbed):
 **Detector fix (for a trustworthy next boot):** clear `gather_owes[gi]` when the gather **discharges** its
 owe (in the `in_gflush` window at `free_pages_and_swap_cache`), not only when the pfn is freed. Then a
 lingering stamp at free-time genuinely means "a gather deferred this and has NOT yet flushed" — a real
-reincarnation. Predict: REINCARN → ~0.
+reincarnation.
+
+### The laptop's OWN journal settles it — the fix WORKS, REINCARN is the artifact (2026-07-01, no reboot)
+
+The persistent journal (15 boots today) gives the verdict directly. Counting our REINCARN vs the KERNEL's
+own `BUG: Bad page state` (from `bad_page()`, a string we do not emit) per boot:
+
+| boot | kernel | REINCARN (ours) | `BUG: Bad page state` (kernel's) |
+|---|---|---|---|
+| −14 | r17fp | 0 | **26** |
+| −12 | fop | 0 | **16** |
+| −10 | r17p2 | 0 | **7** |
+| −8 | r17p2d | 0 | **50** |
+| −6 | spur | 0 | **32** |
+| −4 | corr | 0 | **6** |
+| **−2** | **reinc** | **1060** | **0** |
+| **−1** | **reinc** | **780** | **1** |
+
+**The deferred-free + balanced-accounting fix drove the kernel's real `bad_page` from 7–50/boot down to
+0–1/boot** — the reincarnation corruption is essentially CLOSED. The 1840 REINCARN fires are uncorrelated
+with real corruption (1060 fires / 0 bad_page on boot −2), and their freer stacks are all LEGITIMATE frees
+carrying a stale `zap_present_ptes` stamp: `shmem_undo_range`←`shmem_evict_inode` (eviction),
+`wp_page_copy`←`folio_batch_move_lru` (COW→LRU drain), bare LRU drain. **REINCARN is the artifact, from the
+live logs, no reboot needed** — the model + audit predicted exactly this.
+
+**The single residual (boot −1, pfn 0x53d0e).** `refcount:0 mapcount:0` (counts CLEAN — no phantom, as the
+audit found), but `active|swapbacked` set at free (`PAGE_FLAGS_CHECK_AT_FREE`), and `ts > free_ts`: freed by
+an LRU drain, reused ~11 ms later by `wp_page_copy` (COW), freed again with stale LRU flags. This is a
+**freed-while-on-LRU flag/isolation race, NOT a refcount phantom** — a different, much rarer mechanism
+(1/boot, near the noise floor; a single `bad_page` leaks one page and continues, it does not kill init).
+The boot blocker (GUI lockup) is therefore decoupled from the reincarnation strand and lives elsewhere
+(GPU/DRM under pgcl; the reclaim stale-TLB residual). Route 2's obligation (`RefTracksPresent`) is met and
+verified in the field; the reincarnation UAF is closed.
 
 **The branch point.** If the KERNEL's own `bad_page` did NOT fire (only our REINCARN did), the
 reincarnation strand is CLOSED as an artifact and the boot blocker is elsewhere (the residual reclaim
