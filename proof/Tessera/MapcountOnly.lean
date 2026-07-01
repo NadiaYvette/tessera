@@ -100,4 +100,24 @@ theorem mcPerClus_exact (present : Int) :
     (0 < present → mcPerClus present = 1) ∧ (present ≤ 0 → mcPerClus present = 0) := by
   refine ⟨fun h => ?_, fun h => ?_⟩ <;> simp only [mcPerClus] <;> split <;> omega
 
+/-! ### The `-143fix + page_owner=on` boot (2026-07-01) — empirical confirmation, second boot.
+
+  With the split-reset fix in (SPLIT-RESET = 0), the survivor was captured with page_owner: the first
+  three orphans were ALL one pfn (4f0f1, comm=caprine), `anon`, install `folio_prealloc ← do_fault`
+  (a COW fault, NOT filemap this boot), surfaced at `madvise`/`exit_mmap` zap, `refcount` climbing
+  1→2→3 across the repeats (the `folio_try_get` band-aid leaking one ref per over-remove). Anchor
+  dump: `refcount:1 mapcount:0` present-1 — the exact `MapcountOnly` point `(rmap 0, ref 1, present 1)`.
+  Every dump had `free_ts < ts` (freed by a prior task's `exit_mmap` mmu_gather batch, then
+  re-allocated by the COW fault) — a reincarnation CORRELATE only; the over-remove is on the clean new
+  incarnation (R13 verdict 2). So the install is do_cow_fault this boot; the survivor is the same
+  remove-side mapcount-only under-count regardless of which install (filemap last boot, COW this boot). -/
+
+/-- The boot's exact anchor, `(rmap 0, ref 1, present 1)`, is a single mapcount-only spurious remove
+from the faithful `(1,1,1)` — the deficit is 1 on rmap, 0 on ref, and R17's per-cluster recompute reads
+it back as mapped (`mcPerClus 1 = 1`). -/
+theorem boot2_cow_anchor :
+    MRP.moRemove { rmap := 1, ref := 1, present := 1 } = { rmap := 0, ref := 1, present := 1 }
+    ∧ mcPerClus (MRP.moRemove { rmap := 1, ref := 1, present := 1 }).present = 1 := by
+  refine ⟨by decide, by decide⟩
+
 end Tessera
