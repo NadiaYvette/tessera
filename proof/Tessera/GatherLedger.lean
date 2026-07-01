@@ -124,6 +124,45 @@ theorem phantom_run_underflows (f : Folio) (d : Nat) (hbase : f.base = 0)
   · simp only [Window.drop, Folio.zapWindow, Folio.refs, hbase]; omega
   · simp only [Window.drop, Folio.zapWindow]; omega
 
+/-! ## The two failure modes the audit checks for — both land in `Phantom`
+
+A site breaks `RefTracksPresent` in one of two ways; each yields `Phantom`, so the static ref-balance
+audit is a search for EITHER — a put that drops more refs than sub-PTEs it clears, or an add that takes
+fewer refs than sub-PTEs it installs. -/
+
+/-- A put/unmap that clears `j` sub-PTEs but drops `k` refs. -/
+def Folio.putkj (f : Folio) (j k : Int) : Folio :=
+  { f with genuine := f.genuine - k, mapped := f.mapped - j }
+
+/-- An add/map that installs `j` sub-PTEs but takes `k` refs. -/
+def Folio.addkj (f : Folio) (j k : Int) : Folio :=
+  { f with genuine := f.genuine + k, mapped := f.mapped + j }
+
+/-- **OVER-PUT ⟹ phantom** (task #4 "cross-mm shared-cluster over-put"): from `Genuine`, dropping MORE
+refs than sub-PTEs cleared (`k > j`) leaves `genuine < mapped`.  This is the laptop's likely site: the
+racers (COW put, shmem eviction) are put paths. -/
+theorem overput_creates_phantom (f : Folio) (j k : Int) (hg : f.Genuine) (hlt : j < k) :
+    (f.putkj j k).Phantom := by
+  simp only [Folio.Genuine] at hg
+  simp only [Folio.Phantom, Folio.putkj]; omega
+
+/-- **UNDER-ADD ⟹ phantom** (the R11 "double-add" dual — a map taking too few refs): from `Genuine`,
+installing MORE sub-PTEs than refs taken (`k < j`) leaves `genuine < mapped`. -/
+theorem underadd_creates_phantom (f : Folio) (j k : Int) (hg : f.Genuine) (hlt : k < j) :
+    (f.addkj j k).Phantom := by
+  simp only [Folio.Genuine] at hg
+  simp only [Folio.Phantom, Folio.addkj]; omega
+
+/-- **BALANCED (`k = j`, `RefTracksPresent`) preserves `Genuine`** — the fix, at each site: move refs
+and mappings by the SAME amount.  Both directions. -/
+theorem balanced_put_preserves_genuine (f : Folio) (j : Int) (hg : f.Genuine) :
+    (f.putkj j j).Genuine := by
+  simp only [Folio.Genuine] at hg ⊢; simp only [Folio.putkj]; omega
+
+theorem balanced_add_preserves_genuine (f : Folio) (j : Int) (hg : f.Genuine) :
+    (f.addkj j j).Genuine := by
+  simp only [Folio.Genuine] at hg ⊢; simp only [Folio.addkj]; omega
+
 /-! ## The fix is the `Counters` per-sub-PTE discipline, composed across mms
 
 `Counters.RefTracksPresent` (this mm keeps `refcount = present`) is the per-mm form of the fix.  It is
