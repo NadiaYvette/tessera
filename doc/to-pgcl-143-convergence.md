@@ -429,3 +429,125 @@ correctness. A usable desktop needs i915-on-pgcl (or a minimal GEM/cluster port)
 **Bottom line:** #143's memory corruption is essentially fixed and modeled; the two remaining blockers to a
 usable desktop are the residual double-free (correctness, small) and the GPU (performance, large), both now
 their own tasks.
+
+## 15. The residual ROOT found: migration `psub`-collapse (an OVERWRITE, not a free)
+
+Five parallel path audits (COW, reclaim/swap-out, MADV_FREE/DONTNEED, fork/PtShare, migration+file-reclaim)
+plus a manual map-side trace **cleared every refcount path**: map/fault, COW (`wp_page_copy` neighbour-atomic),
+fork (`copy_present_ptes`), reclaim (`try_to_unmap_one` + the `nr_mmupages` contiguous-run walker),
+migration ref/mapcount, MADV_FREE (protective), THP-PMD split, truncate/eviction (gated on `folio_mapped`).
+`refcount == present sub-PTEs + pins + cache_refs` holds at every mutation. **There is no "present-PTE-
+without-a-ref" phantom** — the #17 framing was wrong. PtShare is only hugetlb PMD sharing (no pgcl cluster-PT
+sharing), so that hypothesis is dead too.
+
+The residual is a **physical-placement** bug, independently pinned by two audits and a manual trace:
+
+- `try_to_migrate_one` (`mm/rmap.c`) batches a cluster's contiguous present run (`nr_pages =
+  pvmw.nr_mmupages`, up to 16). `get_and_clear_ptes(nr_pages)` folds the run to **one** `pte`, discarding
+  sub-PTEs 1..nr-1's physical sub-index (`psub`). The old code then carried **sub-PTE 0's** `psub`
+  (`pte_mksub(swp_pte, pte_suboffset(pteval))`, once, outside the loop) into a **single** migration entry
+  and wrote it to **all** `nr_pages` sub-PTEs.
+- `remove_migration_pte` (`mm/migrate.c:552-559`) restores **per-entry** (`pte_mksub(pte,
+  pte_suboffset(oi))`). Every `oi` carries sub 0's `psub`, so **every** virtual sub-page is restored onto
+  destination **sub-frame 0**. For a batch of a shared read-only code cluster, virtual sub-pages 1..nr-1
+  then serve sub-frame 0's bytes -> wrong instructions -> Electron `int3` / invalid-opcode. Ref/mapcount
+  stay balanced, so the free-side gates are blind — a silent overwrite.
+- **Why it boots, then corrupts:** the anon swap-out path (`try_to_unmap_one`) already varies `psub`
+  per fragment (`(pte_suboffset(pteval)>>MMUPAGE_SHIFT) + j`), so *swapped* pages place correctly.
+  Only *migrated* (compaction/kcompactd) pages collapse — rarer than reclaim, hence an intermittent
+  residual, not a dead machine. This is the same "migration mis-places vsub!=psub clusters (overwrite,
+  not free)" mechanism as the original #143 kill-init: the fix commit `1c4ae8671b12` added the per-`oi`
+  restore + single-`pteval` carry but **never made the carry per-sub-PTE**, and replaced the old correct
+  `set_ptes` PFN-stride restore. So this fix **completes** `1c4ae8671b12`.
+
+### The fix (`mm/rmap.c try_to_migrate_one`)
+
+Snapshot each present sub-PTE's `psub` into `pgcl_psub[]` **before** the batched `get_and_clear_ptes`, then
+carry it **per entry** in the migration-entry write loop (`e = pte_mksub(swp_pte, pgcl_psub[i])`). Robust
+for an arbitrary (even permuted) `psub` layout — strictly stronger than mirroring the swap path's
+`first + j` stride, which is correct only for contiguous `psub`. Non-present `pteval` (device/already-
+migrating) has no cluster `psub` and is written as-is. A `PGCL143-MIGRATE-PSUB` ratelimited probe fires
+where the old single-carry would have mis-placed (multi-sub-PTE cluster with distinct sub-frames), so a
+repro boot with the probe HOT and no `int3` confirms closure.
+
+Modeled: `Tessera/MigratePsub.lean` (axiom-clean) — `fixed_preserves` (round-trip identity, unconditional),
+`buggy_collapses` + `buggy_misplaces` (the pre-fix overwrite), `fixed_repairs`, and
+`stride_preserves_only_if_contiguous` (why the robust snapshot beats `first + j`).
+
+### Sibling sites (audited; the `pte_mksub`/`pgcl_psub[]` fix chain had never reached these)
+
+The same "write one `psub` to every sub-PTE of a cluster" shape lived in two more migration-entry / PTE
+writers; both fixed in the same pass, both compile clean:
+
+- **THP freeze-split** — `__split_huge_pmd_locked` (`mm/huge_memory.c`), the `freeze || pmd_is_migration`
+  branch that turns a PMD-mapped THP straight into migration entries, wrote `set_pte_at(pte+i, entry)` with
+  **no `pte_mksub`** -> every entry `psub 0`. Reached when a PMD-mapped anon THP is migrated/compacted
+  (`try_to_migrate_one`'s `TTU_SPLIT_HUGE_PMD` -> `split_huge_pmd_locked(freeze=true)`). Fix: a PMD mapping
+  is linear (vsub==psub), so carry `pte_mksub(entry, (i % PAGE_MMUCOUNT) << MMUPAGE_SHIFT)`. (The
+  device-private twin branch has the same shape but is inert here — GPU/i915 is `id_blocked` under pgcl —
+  and its restore side doesn't read `psub` either; left with a note for the eventual GEM/cluster port.)
+- **userfaultfd `UFFDIO_MOVE`** — `move_present_ptes` (`mm/userfaultfd.c`) built the destination PTE with
+  `folio_mk_pte(src_folio, ...)` (cluster sub-frame 0), dropping the source sub-PTE's `psub`. Fix: carry
+  `pte_mksub(orig_dst_pte, pte_suboffset(orig_src_pte))`. Niche (anon-only), but same family.
+
+`mremap`/`move_ptes` is CLEAN (PFN-stride move preserves each sub-offset); khugepaged is CLEAN by
+construction (all collapse entry points early-return `SCAN_FAIL` under `PAGE_MMUSHIFT`). And the
+`__split_folio_to_order` FILE-tail `_mapcount` clobber that *does* drive free-while-mapped is already gated
+behind `folio_test_anon` (the earlier fix), so it is not a residual.
+
+**Status:** all three fixes + the probe + `Tessera/MigratePsub.lean` compile / build clean (`mm/rmap.o`,
+`mm/huge_memory.o`, `mm/userfaultfd.o`; aggregator axiom-clean). NOT yet committed/pushed (pending user
+review). Next: laptop repro boot (`-pgcl4-...`, `page_owner=on`, full Electron load) and check
+`journalctl -k -b -1 | grep -E 'MIGRATE-PSUB|int3|Bad page|invalid opcode'` — the `PGCL143-MIGRATE-PSUB`
+probe HOT with **no** Electron `int3` confirms the residual is closed.
+
+## 16. -psub laptop boot — migration probe COLD, and the wedge unifies with the double-free
+
+The `-pgcl4-143reinc-pgcl4-143psub` kernel booted (GUI up, apps auto-launched) then wedged
+launching a terminal. Journal (`journalctl -k -b -1`) verdict — honest and decisive:
+
+- **`PGCL143-MIGRATE-PSUB` fired 0×.** No multi-sub-PTE cluster was migrated this boot, so the
+  migration fix (§15) could not have mattered here. It is a proven bug fix, kept, but it was NOT this
+  boot's corruption source.
+- **The residual persists from the DOUBLE-FREE, not migration.** Crashes across shared code
+  (`spotify`→`libcef.so`, `geoclue`→`libp11-kit`, Discord/element/signal/caprine, `gsd-sharing`→`libnm`),
+  `Bad page` 2, `Bad rss-counter` 4 (FILE−/ANON+), `DOUBLEFREE` 6, `CACHEFLOOR` 8, `REINCARN` 373.
+
+**★ Task #15 (the `decay_pcp_high` pcp-lock wedge) is NOT a separate bug — it is downstream of freelist
+corruption.** The `softlockup_all_cpu_backtrace` dump: ~5 CPUs stuck in
+`__list_del_entry_valid_or_report` / `__list_add_valid_or_report.cold` ("list_del corruption. next->prev
+should be X, but was Y"), cpu0 in `kernel_init_pages` (handing out a corrupted page), every other CPU
+spinning `native_queued_spin_lock_slowpath` / `decay_pcp_high` (the `vmstat_update` workers). A CPU runs
+the slow list-corruption *report while holding the pcp lock* → all vmstat workers spin in
+`decay_pcp_high` → soft lockup (CPU#5, 23s) → the machine can't allocate → the terminal launch wedges.
+So #15 closes when the freelist stops corrupting.
+
+**What corrupts the freelist — the madvise gapped-cluster double-free (at source):**
+```
+__x64_sys_madvise → do_madvise → tlb_finish_mmu → __tlb_batch_free_encoded_pages
+  → free_pages_and_swap_cache → folios_put_refs → free_unref_folios      (pfn 0x50ce5 ×4)
+```
+The same one-struct-page cluster folio sits in >1 mmu_gather encoded entry (a gapped cluster is zapped
+as several contiguous runs, each its own `__tlb_remove_folio_pages`), so `free_pages_and_swap_cache`
+batches the SAME folio twice into `folios_put_refs` and the 2nd put lands on an already-freed page. The
+#43 `__free_pages_prepare` guard *fires* (`DOUBLEFREE` 6) but too late — `free_unref_folios` has already
+re-touched the pcp list. Siblings: a **page-table page** double-freed via `tlb_remove_table_rcu` (pfn
+0x14050), and a **btrfs FILE page freed while still cached** by kswapd (pfn 0x5e92a, "non-NULL mapping").
+
+### The source fix (task #18): coalesce a folio's gather entries — `free_pages_and_swap_cache`
+
+Fold every encoded entry of the same cluster folio into ONE `folios_put_refs` slot with the summed
+count, so the folio is put **exactly once** no matter how gapped the cluster — the duplicate never
+reaches `free_unref_folios`, so no double-free, no freelist `list_del`/`list_add` corruption, no pcp-lock
+wedge. Freed once when ref-balanced; at worst a benign leak if under-referenced — never a double-free.
+Runs of one gapped cluster are adjacent in the gather so they share a `folio_batch`; a rare batch-boundary
+straddle is still backstopped by the #43 guard. `mm/swap_state.c` `free_pages_and_swap_cache`, `#if
+PAGE_MMUSHIFT`; compiles clean. Modeled: `DoubleFree.lean` (`entries_double_free` = the pre-fix
+per-entry free double-frees a ≥2-run cluster; `deduped_frees_once` / `deduped_never_double_frees` = the
+coalesced put frees exactly once, structurally, for any run count — axiom-clean).
+
+**Status:** migration psub fix + gather-dedupe both in `drive/143-spurcatch` working tree; building
+`-pgcl4-143dedup`. Expectation: the pcp-lock wedge and most shared-code crashes go with the double-free.
+Residual to watch if crashes persist: the over-defer that makes the double-freed folio under-referenced
+(refcount < present sub-PTEs) — which the dedupe converts from corruption into a leak, then chase — plus
+the `tlb_remove_table_rcu` PT-page double-free and the btrfs free-while-cached.

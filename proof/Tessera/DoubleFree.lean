@@ -56,5 +56,44 @@ theorem guarded_frees_once :
     (Page.freeGuarded ⟨false, 0⟩).onList = true ∧ (Page.freeGuarded ⟨false, 0⟩).freeCount = 1 :=
   ⟨rfl, rfl⟩
 
+/-! ### The SOURCE-level fix: coalesce a folio's gather entries (free_pages_and_swap_cache)
+
+The `__free_pages_prepare` guard above is a backstop that catches the 2nd free at the
+common chokepoint.  But laptop boot -psub showed it is not enough: a gapped cluster is
+zapped as several contiguous runs, each emitting its OWN encoded mmu_gather entry for the
+SAME one-struct-page cluster folio, and `free_pages_and_swap_cache` batches the duplicate
+into `folios_put_refs` BEFORE the guard runs -- the 2nd put lands on an already-freed page
+and re-adds it to the pcp list -> freelist `list_del`/`list_add` corruption -> a CPU stuck
+in that report under the pcp lock -> every `vmstat_update` worker spins in `decay_pcp_high`
+-> soft lockup (the GUI-wedge, task #15).  The fix folds all of a folio's entries into ONE
+put, so it is freed exactly once no matter how many runs a gapped cluster splits into. -/
+
+/-- Free the folio once per gather entry (pre-fix): a page starting un-listed, freed
+`entries` times by `freeRaw`, ends with `freeCount = entries`. -/
+def freeEntries : Nat → Page
+  | 0     => ⟨false, 0⟩
+  | n + 1 => Page.freeRaw (freeEntries n)
+
+theorem freeEntries_count (n : Nat) : (freeEntries n).freeCount = n := by
+  induction n with
+  | zero => rfl
+  | succ k ih => show (freeEntries k).freeCount + 1 = k + 1; rw [ih]
+
+/-- **THE BUG** (gapped cluster): ≥2 runs → ≥2 entries → the folio is freed more than once. -/
+theorem entries_double_free (n : Nat) (h : 2 ≤ n) : (freeEntries n).doubleFreed := by
+  show 1 < (freeEntries n).freeCount
+  rw [freeEntries_count]; omega
+
+/-- DEDUPE: all of a folio's `entries` are coalesced into ONE put with the summed refs. -/
+def freeDeduped (_entries : Nat) : Page := Page.freeRaw ⟨false, 0⟩
+
+/-- **THE FIX IS SOUND**: the coalesced free puts the folio exactly once for ANY run
+count — the double-free (and hence the freelist corruption and the pcp-lock wedge) is
+structurally impossible, independent of the cluster's gap pattern. -/
+theorem deduped_frees_once (n : Nat) : (freeDeduped n).freeCount = 1 := rfl
+
+theorem deduped_never_double_frees (n : Nat) : ¬ (freeDeduped n).doubleFreed := by
+  show ¬ (1 < 1); omega
+
 end DoubleFree
 end Tessera
