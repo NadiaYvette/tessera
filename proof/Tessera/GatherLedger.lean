@@ -301,5 +301,105 @@ theorem dischargeFix_no_false_positive :
 theorem defer_then_free_still_fires :
     stampFires (Det.defer ⟨0, false⟩) = true ∧ faithFires (Det.defer ⟨0, false⟩) = true := by decide
 
+/-! ## The count-correct per-gather PIN — a ROBUST fix, no `genuine = mapped` needed
+
+`Genuine` above is the IDEAL, but it is FRAGILE: it must hold at EVERY map/unmap site, and the laptop's
+residual (r2diag2, 2026-07-02: 68 `folios_put_refs` DOUBLE-puts on shared page-cache clusters, `int3`
+in `libcef.so`) shows a phantom the static ref-balance audit still missed.  The PIN is a stronger LOCAL
+fix: at `__tlb_remove_folio_pages` the gather takes its OWN dedicated ref (`folio_get`), dropped at its
+discharge.  Then `owing ≤ refs` BY CONSTRUCTION — premature free is impossible regardless of the
+map-side balance, and the multi-mm shared cluster (which broke the boolean `in_gflush` gate — per-cpu,
+unreliable under PREEMPT — and the count gate — re-hold-at-0 race) is handled because each gather's pin
+is INDEPENDENT and untouchable by any other path. -/
+
+/-- A cluster's DEFERRED-FREE ledger: `refs` = folio refcount; `owing` = the number of mmu_gathers that
+currently owe a discharge, EACH backed by its own dedicated pin (a `folio_get` taken at defer). -/
+structure Ledger where
+  refs  : Nat
+  owing : Nat
+deriving Repr, DecidableEq
+
+/-- **THE PIN INVARIANT.**  Every owing gather holds ≥1 dedicated ref, so `owing ≤ refs`.  This is the
+deferred put "genuinely pinned" as a COUNT — NOT derived from the fragile `genuine = mapped`. -/
+def Ledger.ok (s : Ledger) : Prop := s.owing ≤ s.refs
+
+/-- freed = the refcount reached 0 (the page goes to the buddy / pcp freelist). -/
+def Ledger.freed (s : Ledger) : Prop := s.refs = 0
+
+/-- A gather defers a put and TAKES ITS PIN (`folio_get` at `__tlb_remove_folio_pages`): +1 ref, +1 owing. -/
+def Ledger.defer (s : Ledger) : Ledger := ⟨s.refs + 1, s.owing + 1⟩
+
+/-- The owing gather DISCHARGES (`free_pages_and_swap_cache` drops its pin): −1 ref, −1 owing. -/
+def Ledger.discharge (s : Ledger) : Ledger := ⟨s.refs - 1, s.owing - 1⟩
+
+/-- A non-gather racer (LRU-drain / COW put / shmem eviction) drops ONE non-pin ref.  Sound only when
+`owing < refs` — the pins are the gathers' own, untouchable by a racer. -/
+def Ledger.racer (s : Ledger) : Ledger := ⟨s.refs - 1, s.owing⟩
+
+theorem Ledger.defer_ok (s : Ledger) (h : s.ok) : (s.defer).ok := by
+  simp only [Ledger.ok, Ledger.defer] at *; omega
+
+theorem Ledger.discharge_ok (s : Ledger) (h : s.ok) (ho : 0 < s.owing) : (s.discharge).ok := by
+  simp only [Ledger.ok, Ledger.discharge] at *; omega
+
+theorem Ledger.racer_ok (s : Ledger) (h : s.ok) (hr : s.owing < s.refs) : (s.racer).ok := by
+  simp only [Ledger.ok, Ledger.racer] at *; omega
+
+/-- **NO PREMATURE FREE (the reincarnation is impossible).**  While any gather owes a deferred put, the
+cluster is NOT freed — straight from the invariant.  This is the #143 int3 root ruled out by
+construction. -/
+theorem Ledger.owing_not_freed (s : Ledger) (h : s.ok) (ho : 0 < s.owing) : ¬ s.freed := by
+  simp only [Ledger.ok, Ledger.freed] at *; omega
+
+/-- **THE RACER CANNOT FREE AN OWED CLUSTER.**  A sound racer drop never frees while a gather owes — the
+exact fix for the `lru_add_drain` / cross-mm freers the DOUBLEDROP probe pinned on the laptop. -/
+theorem Ledger.racer_cannot_free (s : Ledger) (h : s.ok) (ho : 0 < s.owing) (hr : s.owing < s.refs) :
+    ¬ (s.racer).freed := by
+  simp only [Ledger.ok, Ledger.freed, Ledger.racer] at *; omega
+
+/-- **CROSS-GATHER — the case that broke every gate.**  Two mms' gathers each pin the shared cluster
+(`⟨2,2⟩`, all base refs already dropped): the FIRST discharge does NOT free it (the other's pin holds),
+the SECOND frees it exactly once, nothing left owing.  No premature free, no double free — by
+construction, with no `in_gflush` disambiguation and no re-hold. -/
+theorem Ledger.two_gathers_exactly_once :
+    ¬ (Ledger.discharge ⟨2, 2⟩).freed
+    ∧ (Ledger.discharge (Ledger.discharge ⟨2, 2⟩)).freed
+    ∧ (Ledger.discharge (Ledger.discharge ⟨2, 2⟩)).owing = 0 := by
+  simp [Ledger.discharge, Ledger.freed]
+
+/-- **NO LEAK.**  The last owner's discharge of a pin-only cluster frees it exactly once. -/
+theorem Ledger.last_discharge_frees_once :
+    (Ledger.discharge ⟨1, 1⟩).freed ∧ (Ledger.discharge ⟨1, 1⟩).owing = 0 := by
+  simp [Ledger.discharge, Ledger.freed]
+
+/-! ### Contrast — the NO-PIN design + the refcount FLOOR band-aid MANUFACTURE the double-free
+
+Without the pin the deferred put leaves the mapping ref merely "in flight": `owing` is NOT backed by a
+dedicated ref, so `owing` can exceed `refs`.  A racer then frees the owed cluster, and the refcount
+FLOOR band-aid (`folios_put_refs`: `new = k ≤ old ? old−k : 0`) clamps the gather's later STALE put to 0
+and the free path re-reads "refs reached 0" → frees it AGAIN: the 68 `folios_put_refs` double-puts. -/
+
+/-- No-pin defer: owe a discharge WITHOUT taking a dedicated ref (the current kernel). -/
+def Ledger.deferNoPin (s : Ledger) : Ledger := ⟨s.refs, s.owing + 1⟩
+
+/-- **THE BUG.**  A no-pin defer of a singly-held cluster, then a racer drop, frees it WHILE owed. -/
+theorem Ledger.noPin_reincarnates :
+    (Ledger.racer (Ledger.deferNoPin ⟨1, 0⟩)).freed
+    ∧ 0 < (Ledger.deferNoPin (⟨1, 0⟩ : Ledger)).owing := by
+  simp [Ledger.racer, Ledger.deferNoPin, Ledger.freed]
+
+/-- The refcount FLOOR: a put of `k` refs on `old`, clamped at 0 (the `folios_put_refs` band-aid). -/
+def floorPut (old k : Nat) : Nat := if k ≤ old then old - k else 0
+
+/-- **THE FLOOR RE-FREES A STALE PUT.**  On an already-freed folio (`old = 0`) any deferred put `k > 0`
+yields `floorPut 0 k = 0`, and the free path reads "refs reached 0" and frees it AGAIN — the double-free
+(both freers `folios_put_refs`).  The floor converts the phantom's underflow into the double-free; the
+PIN removes the precondition, since `owing_not_freed` keeps the folio non-zero while a discharge is
+owed. -/
+theorem floor_refrees_stale (k : Nat) (hk : 0 < k) : floorPut 0 k = 0 := by
+  have h : ¬ (k ≤ 0) := by omega
+  simp only [floorPut, if_neg h]
+
 end GatherLedger
 end Tessera
+
