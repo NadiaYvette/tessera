@@ -64,3 +64,5 @@ import Tessera.DoubleFree
 import Tessera.MigratePsub
 import Tessera.GatherGate
 import Tessera.SwapDevice
+import Tessera.BatchFree
+import Tessera.StalePut

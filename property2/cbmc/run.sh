@@ -26,5 +26,12 @@ check() { # label expected args...
 check "pin_reincarnation PIN=0 (bug present)"  FAILED     pin_reincarnation.c -DPIN=0 --unwind 3
 check "pin_reincarnation PIN=1 (pin fixes it)" SUCCESSFUL pin_reincarnation.c -DPIN=1 --unwind 3
 check "pin_crossgather   PIN=1 (clean case)"   SUCCESSFUL pin_crossgather.c   -DPIN=1
+# batched-free cluster dedup (BatchFree.lean / batch_free.v): per-entry double-frees, dedupe fixes it
+check "batch_free_dedup  DEDUP=0 (bug present)" FAILED     batch_free_dedup.c  -DDEDUP=0 --unwind 4
+check "batch_free_dedup  DEDUP=1 (dedupe fix)"  SUCCESSFUL batch_free_dedup.c  -DDEDUP=1 --unwind 4
+# stale-put / refcount-floor double-free (StalePut.lean / stale_put.v): floor bug, stock+guard safe
+check "stale_put_floor   POLICY=0 (stock safe)" SUCCESSFUL stale_put_floor.c   -DPOLICY=0
+check "stale_put_floor   POLICY=1 (floor bug)"  FAILED     stale_put_floor.c   -DPOLICY=1
+check "stale_put_floor   POLICY=2 (guard fix)"  SUCCESSFUL stale_put_floor.c   -DPOLICY=2
 [ "$fail" -eq 0 ] && echo "SUITE OK" || echo "SUITE FAIL"
 exit "$fail"
