@@ -99,3 +99,41 @@ Proof. unfold deferDrop. lia. Qed.
 Theorem defer_no_free_while_referenced own other :
   0 < other -> 0 < deferDrop (own + other) own.
 Proof. unfold deferDrop. lia. Qed.
+
+(* ---- r20: a still-cached file/shmem folio is never freed by a stale/cross-gather over-drop ----
+   The r16 owe-floor excludes in_gflush, so two gathers both discharging a shared cluster (in_gflush
+   on BOTH) over-drop unfloored (r19: same pfn 7->0 then 0-again).  A provable over-drop (nr>rc) of a
+   CACHED folio (mapping!=NULL) floors at 1 (the cache ref) even on the gather's own discharge. *)
+
+Definition cacheFloor (rc nr : nat) (cached : bool) : nat :=
+  if (cached && (rc <? nr))%bool then 1 else rc - nr.
+
+(* NO FREE-WHILE-CACHED: an over-drop of a cached folio lands at exactly 1 (the cache ref survives). *)
+Theorem cacheFloor_cached_over rc nr :
+  rc < nr -> cacheFloor rc nr true = 1.
+Proof.
+  intro H. unfold cacheFloor. simpl.
+  destruct (rc <? nr) eqn:E.
+  - reflexivity.
+  - apply Nat.ltb_ge in E. lia.
+Qed.
+
+Theorem cacheFloor_cached_not_freed rc nr :
+  rc < nr -> 0 < cacheFloor rc nr true.
+Proof. intro H. rewrite (cacheFloor_cached_over rc nr H). lia. Qed.
+
+(* ZERO BLAST RADIUS (normal put): no over-drop is identical to the stock put, cached or not. *)
+Theorem cacheFloor_no_overdrop rc nr cached :
+  nr <= rc -> cacheFloor rc nr cached = rc - nr.
+Proof.
+  intro H. unfold cacheFloor. destruct cached; simpl.
+  - destruct (rc <? nr) eqn:E.
+    + apply Nat.ltb_lt in E. lia.
+    + reflexivity.
+  - reflexivity.
+Qed.
+
+(* ZERO BLAST RADIUS (uncached): anon/swapcache identical to the stock 0-floor -> last put frees. *)
+Theorem cacheFloor_uncached rc nr :
+  cacheFloor rc nr false = rc - nr.
+Proof. unfold cacheFloor. reflexivity. Qed.

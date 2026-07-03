@@ -71,5 +71,29 @@ int main(void)
 		/* SAFETY r19: the other owners' refs are never dropped -> no free-while-referenced. */
 		assert(res2 >= other);
 	}
+
+	/*
+	 * ---- r20: a still-cached file/shmem folio is never freed by a stale/cross-gather over-drop ----
+	 * The r16 owe-floor excludes in_gflush, so two gathers both discharging a shared cluster
+	 * (in_gflush on BOTH) over-drop unfloored (r19: same pfn 0x52e01 dropped 7->0 then 0-again).
+	 * A provable over-drop (nr > rc) of a still-CACHED file/shmem folio (mapping!=NULL holds a cache
+	 * ref; all r19 OVERPUT were anon=0) floors at 1 (the cache ref) even on the gather's own
+	 * discharge.  Mirrors RefFloor.cacheFloor.
+	 */
+	{
+		int rc3 = nondet_int(), nr3 = nondet_int(), cached = nondet_int();
+		int res3;
+
+		__CPROVER_assume(rc3 >= 0 && nr3 >= 0 && rc3 <= 1000000 && nr3 <= 1000000);
+		__CPROVER_assume(cached == 0 || cached == 1);
+
+		res3 = (rc3 > nr3) ? rc3 - nr3 : 0;	/* the 0-floor put */
+#if FIX
+		if (cached && nr3 > rc3)		/* r20: over-drop of a cached folio -> keep the cache ref */
+			res3 = 1;
+#endif
+		/* SAFETY r20: a still-cached folio is never freed (res==0) by a provable over-drop. */
+		assert(!(cached && nr3 > rc3 && res3 == 0));
+	}
 	return 0;
 }

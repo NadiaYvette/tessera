@@ -133,5 +133,37 @@ just as free-while-mapped was on the code side. -/
 theorem defer_no_free_while_referenced (own other : Nat) (ho : 0 < other) :
     0 < deferDrop (own + other) own := by unfold deferDrop; omega
 
+/-! ### r20: a still-cached file/shmem folio is never freed by a stale/cross-gather over-drop -/
+
+/-- r20 (mm/swap.c folios_put_refs): `cached` = the folio still holds a page-cache ref (file/shmem,
+mapping ≠ NULL).  The r16 owe-floor EXCLUDES the gather's own discharge (in_gflush), so two gathers
+both discharging a shared cluster (in_gflush on BOTH) over-drop unfloored -> their combined drop eats
+the cache/other-owner refs.  A provable over-drop (`nr > rc`, the deferred count stale from a
+concurrent / cross-gather drop) of a CACHED folio floors at 1 (the cache ref) even on the gather's own
+discharge; anon/swapcache (uncached) keeps the 0-floor so the last put still frees. -/
+def cacheFloor (rc nr : Nat) (cached : Bool) : Nat :=
+  if cached = true ∧ rc < nr then 1 else rc - nr
+
+/-- **NO FREE-WHILE-CACHED**: an over-drop (`nr > rc`) of a cached folio lands at exactly 1 -- the
+page-cache ref survives, so the combined cross-gather over-drop cannot free a still-cached shared
+cluster (the r19 pfn 0x52e01: 7→0 then 0-again is instead held at 1). -/
+theorem cacheFloor_cached_over (rc nr : Nat) (h : rc < nr) : cacheFloor rc nr true = 1 := by
+  unfold cacheFloor; rw [if_pos ⟨rfl, h⟩]
+
+/-- The operational corollary: a cached folio is never freed (refcount > 0) under the over-drop. -/
+theorem cacheFloor_cached_not_freed (rc nr : Nat) (h : rc < nr) : 0 < cacheFloor rc nr true := by
+  rw [cacheFloor_cached_over rc nr h]; omega
+
+/-- **ZERO BLAST RADIUS (normal put)**: no over-drop (`nr ≤ rc`) is byte-identical to the stock put,
+cached or not -- the floor fires ONLY on a provable over-drop. -/
+theorem cacheFloor_no_overdrop (rc nr : Nat) (cached : Bool) (h : nr ≤ rc) :
+    cacheFloor rc nr cached = rc - nr := by
+  unfold cacheFloor; rw [if_neg]; rintro ⟨_, hlt⟩; omega
+
+/-- **ZERO BLAST RADIUS (uncached)**: anon/swapcache is identical to the stock 0-floor -- the last put
+still frees a truly-uncached folio. -/
+theorem cacheFloor_uncached (rc nr : Nat) : cacheFloor rc nr false = rc - nr := by
+  unfold cacheFloor; rw [if_neg]; rintro ⟨hf, _⟩; exact absurd hf (by decide)
+
 end RefFloor
 end Tessera
