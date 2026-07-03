@@ -71,3 +71,31 @@ Proof. lia. Qed.
 (* Concrete: a folio mapped by 3 (mc=3), a bogus over-put of 5.  Stock frees it; the fix holds at 3. *)
 Theorem concrete : putFloor0 3 5 = 0 /\ putFloorMc 3 3 5 = 3.
 Proof. unfold putFloor0, putFloorMc. simpl. split; reflexivity. Qed.
+
+(* ---- r19: the gather defers only the refs for the mappings it ACTUALLY removed ----
+   r18 floored the mapcount removal to `own` edges but left the refcount deferral at the batch size
+   nr >= own; at discharge it dropped nr refs on a folio whose refcount was own+other (OTHER owners
+   hold `other`), over-dropping by nr-own into `other` -> data page freed-while-referenced (the
+   OVERPUT deficit -> renderer SIGSEGV).  Defer exactly `own`. *)
+
+Definition deferDrop (rc own : nat) : nat := rc - own.
+
+(* NO OVER-DROP: deferring `own` from own+other leaves exactly the other owners' refs. *)
+Theorem deferDrop_keeps_others own other :
+  deferDrop (own + other) own = other.
+Proof. unfold deferDrop. lia. Qed.
+
+(* THE BUG (stock nr-defer): deferring nr>own drops below the other owners' refs. *)
+Theorem stock_overdrops own other nr :
+  own < nr -> 0 < other -> (own + other) - nr < other.
+Proof. lia. Qed.
+
+(* LOCKSTEP: own<=nr (floored edge count), so the refcount deferral never exceeds the mapcount removal. *)
+Theorem deferDrop_ge_stock rc own nr :
+  own <= nr -> rc - nr <= deferDrop rc own.
+Proof. unfold deferDrop. lia. Qed.
+
+(* FULL SYMMETRIC CLOSURE: while other owners hold a ref, the floored deferral keeps refcount > 0. *)
+Theorem defer_no_free_while_referenced own other :
+  0 < other -> 0 < deferDrop (own + other) own.
+Proof. unfold deferDrop. lia. Qed.

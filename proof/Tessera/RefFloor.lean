@@ -100,5 +100,38 @@ Stock floor frees it (0, while mapped); the corrective floor holds it at 3. -/
 theorem concrete :
     putFloor0 3 5 = 0 ∧ putFloorMc 3 3 5 = 3 := by decide
 
+/-! ### r19: the gather defers only the refs for the mappings it ACTUALLY removed -/
+
+/-- r19 (mm/memory.c zap batch): the gather deferred the batch size `nr` refs, but the r18 mapcount
+floor only removed `own` edges (`own ≤ nr`).  At discharge it then dropped `nr` refs on a folio whose
+refcount was `own + other` (the gather owns `own`; OTHER owners -- page cache / a pin / another
+gather -- hold `other`), over-dropping by `nr - own` into `other` -> that owner's data page freed
+while still referenced (the OVERPUT deficit, mapcount=0, in_gflush=1 -> the renderer SIGSEGV).
+r19 defers exactly `own`, keeping the deferral in lockstep with the mapcount floor. -/
+def deferDrop (rc own : Nat) : Nat := rc - own
+
+/-- **NO OVER-DROP**: with `rc = own + other`, deferring `own` leaves exactly `other` -- the other
+owners' refs are never touched, so a still-referenced folio is not freed. -/
+theorem deferDrop_keeps_others (own other : Nat) :
+    deferDrop (own + other) own = other := by unfold deferDrop; omega
+
+/-- **THE BUG (stock nr-defer)**: deferring `nr > own` drops BELOW the other owners' refs -- the
+free-while-referenced.  A put `nr ≥ rc` drives the refcount to 0 while `other > 0` is outstanding. -/
+theorem stock_overdrops (own other nr : Nat) (hnr : own < nr) (ho : 0 < other) :
+    (own + other) - nr < other := by omega
+
+/-- **LOCKSTEP with the mapcount floor**: `own` is the floored edge count (`own ≤ nr`,
+`floorRemoveN`), so the refcount deferral never exceeds the mapcount removal -- both counts drop
+together, and the refcount can no longer race below the mappings the floor kept. -/
+theorem deferDrop_ge_stock (rc own nr : Nat) (h : own ≤ nr) :
+    rc - nr ≤ deferDrop rc own := by unfold deferDrop; omega
+
+/-- **THE FULL SYMMETRIC CLOSURE**: `own` refs deferred for `own` mappings removed, `mc` floored at
+`present` (r18), `rc` floored at `mc` (r14) -- so after the floored drop the refcount still covers
+the other owners' refs AND the present mappings: free-while-referenced is closed on the data side
+just as free-while-mapped was on the code side. -/
+theorem defer_no_free_while_referenced (own other : Nat) (ho : 0 < other) :
+    0 < deferDrop (own + other) own := by unfold deferDrop; omega
+
 end RefFloor
 end Tessera

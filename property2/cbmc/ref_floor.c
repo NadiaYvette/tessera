@@ -44,5 +44,32 @@ int main(void)
 	assert(!(mc > 0 && new_refs == 0));
 	/* SAFETY r16: a gather-owed folio is never freed -> cannot be reincarnated + stale-freed. */
 	assert(!(owed && new_refs == 0));
+
+	/*
+	 * ---- r19: the gather defers only the refs for the mappings it ACTUALLY removed ----
+	 * r18 floored the mapcount removal to `own` edges but left the refcount deferral at the batch
+	 * size nr >= own.  At discharge it dropped nr refs on a folio whose refcount was own+other
+	 * (OTHER owners -- page cache / a pin / another gather -- hold `other`), over-dropping by
+	 * nr-own into `other` -> that data page freed while still referenced (the OVERPUT deficit,
+	 * mapcount=0, in_gflush=1 -> the renderer SIGSEGV).  Defer exactly `own`.  Mirrors
+	 * RefFloor.deferDrop.
+	 */
+	{
+		int own = nondet_int(), other = nondet_int(), nr = nondet_int();
+		int rc2, drop, res2;
+
+		__CPROVER_assume(own >= 0 && other >= 0 && nr >= own);
+		__CPROVER_assume(own <= 1000000 && other <= 1000000 && nr <= 1000000);
+		rc2 = own + other;		/* gather owns `own`; other owners hold `other` */
+#if FIX
+		drop = own;			/* r19: defer only what the gather owns */
+#else
+		drop = nr;			/* stock: defer the batch size nr >= own -- over-drops */
+#endif
+		res2 = (drop <= rc2) ? rc2 - drop : 0;
+
+		/* SAFETY r19: the other owners' refs are never dropped -> no free-while-referenced. */
+		assert(res2 >= other);
+	}
 	return 0;
 }
