@@ -33,5 +33,8 @@ check "batch_free_dedup  DEDUP=1 (dedupe fix)"  SUCCESSFUL batch_free_dedup.c  -
 check "stale_put_floor   POLICY=0 (stock safe)" SUCCESSFUL stale_put_floor.c   -DPOLICY=0
 check "stale_put_floor   POLICY=1 (floor bug)"  FAILED     stale_put_floor.c   -DPOLICY=1
 check "stale_put_floor   POLICY=2 (guard fix)"  SUCCESSFUL stale_put_floor.c   -DPOLICY=2
+# reincarnation quarantine coverage (Quarantine.lean / quarantine.v): partial gate leaks off-path, universal closes it
+check "quarantine_choke  UNIVERSAL=0 (partial bug)" FAILED     quarantine_choke.c -DUNIVERSAL=0
+check "quarantine_choke  UNIVERSAL=1 (choke fix)"   SUCCESSFUL quarantine_choke.c -DUNIVERSAL=1
 [ "$fail" -eq 0 ] && echo "SUITE OK" || echo "SUITE FAIL"
 exit "$fail"
