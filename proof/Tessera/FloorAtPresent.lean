@@ -117,6 +117,33 @@ theorem removeCorrected_real_when_room (x : RSP) (h : x.present < x.rmap) :
     x.removeCorrected.rmap = x.rmap - 1 ∧ x.removeCorrected.stat = x.stat - 1 := by
   unfold RSP.removeCorrected; rw [if_pos h]; exact ⟨rfl, rfl⟩
 
+/-! ### r13refgate: the free-gate that closes the free-while-mapped door on the REFCOUNT path -/
+
+/-- `folio_mapped` as the kernel tests it: the honest per-cluster counter `rmap` (= folio_mapcount)
+is ≥ 1.  The r12fix corrective floor keeps `present ≤ rmap`, so this is EXACT for a mapped cluster. -/
+def RSP.folioMapped (x : RSP) : Prop := 1 ≤ x.rmap
+
+/-- The free-gate: a free is only ALLOWED when the folio is not mapped (`rmap = 0`).  r12fix makes
+`rmap` honest; r13refgate applies this gate on the bypass free paths (free_unref_folios) too, so a
+still-mapped folio is refused on EVERY path -- not just the folios_put_refs discharge. -/
+def RSP.freeAllowed (x : RSP) : Prop := x.rmap = 0
+
+/-- **THE r13refgate CAPSTONE**: honest counter (`present ≤ rmap`, from the corrective floor) + the
+free-gate (`freeAllowed ⇒ rmap = 0`) ⇒ a folio is freed ONLY when `present = 0` -- NO sub-PTE maps
+it.  The refcount over-drop can drive `rmap`… no: the free is now gated on `rmap`, and `rmap` is
+honest, so free-while-`present`>0 (the #143 int3 / WM-crash / deadlock) is IMPOSSIBLE. -/
+theorem no_free_while_mapped (x : RSP) (hp : 0 ≤ x.present)
+    (hinv : x.present ≤ x.rmap) (hfree : x.freeAllowed) : x.present = 0 := by
+  unfold RSP.freeAllowed at hfree
+  omega
+
+/-- Contrapositive, the operational form: a mapped folio (`present ≥ 1`) is NEVER freeAllowed under
+the honest invariant -- the gate refuses exactly the free-while-mapped cases, none else. -/
+theorem mapped_not_freeAllowed (x : RSP) (hinv : x.present ≤ x.rmap) (hm : 1 ≤ x.present) :
+    ¬ x.freeAllowed := by
+  unfold RSP.freeAllowed
+  omega
+
 /-! ### Why FULL per-cluster (phase 2) additionally needs the stat DECOUPLED -/
 
 /-- If `_mapcount` is made per-cluster (`mcPerClus`) and the stat stays COUPLED to that edge, the stat

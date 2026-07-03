@@ -36,5 +36,8 @@ check "stale_put_floor   POLICY=2 (guard fix)"  SUCCESSFUL stale_put_floor.c   -
 # reincarnation quarantine coverage (Quarantine.lean / quarantine.v): partial gate leaks off-path, universal closes it
 check "quarantine_choke  UNIVERSAL=0 (partial bug)" FAILED     quarantine_choke.c -DUNIVERSAL=0
 check "quarantine_choke  UNIVERSAL=1 (choke fix)"   SUCCESSFUL quarantine_choke.c -DUNIVERSAL=1
+# corrective floor (FloorAtPresent removeCorrected / floor_at_present.v): old skip-only floor leaves the over-remove; r12fix corrects it
+check "floor_at_present  FIX=0 (skip-only bug)"     FAILED     floor_at_present.c -DFIX=0
+check "floor_at_present  FIX=1 (corrective fix)"    SUCCESSFUL floor_at_present.c -DFIX=1
 [ "$fail" -eq 0 ] && echo "SUITE OK" || echo "SUITE FAIL"
 exit "$fail"
