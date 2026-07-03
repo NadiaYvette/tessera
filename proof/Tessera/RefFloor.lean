@@ -55,6 +55,38 @@ theorem putFloorMc_eq_when_room (rc mc k : Nat)
   · simp only [if_pos hk] at h ⊢; omega
   · simp only [if_neg hk] at h ⊢; omega
 
+/-! ### r16owefloor: also refuse to free a GATHER-OWED folio (the reincarnation face) -/
+
+/-- r16: page_owner PROVED the residual double-free is a folio the mmu_gather still OWES,
+over-dropped to 0 by a non-gather path while UNMAPPED (`mc = 0`, so `putFloorMc` lets it reach 0),
+freed, reincarnated by `__vmalloc`, then stale-freed.  Extend the floor to also hold `>= 1` while
+`owed` (and not the gather's own discharge): `floor = max(putFloorMc, if owed then 1 else 0)`. -/
+def putFloorOwed (rc mc k : Nat) (owed : Bool) : Nat :=
+  max (putFloorMc rc mc k) (if owed then 1 else 0)
+
+/-- **THE r16 RESULT**: a gather-owed folio is NEVER freed by the over-drop (`refcount >= 1`), so it
+cannot be freed-to-buddy while owed -> cannot be reincarnated by `__vmalloc` and stale-freed. -/
+theorem putFloorOwed_owed_not_freed (rc mc k : Nat) : 1 ≤ putFloorOwed rc mc k true := by
+  show 1 ≤ max (putFloorMc rc mc k) 1; omega
+
+/-- **NO REINCARNATION**: an owed folio's refcount never reaches 0 -- the free-while-owed the
+double-free needs is impossible. -/
+theorem owed_never_freed (rc mc k : Nat) (h : putFloorOwed rc mc k true = 0) : False := by
+  have := putFloorOwed_owed_not_freed rc mc k; omega
+
+/-- **ZERO BLAST RADIUS**: not owed ⇒ identical to the r14 mapcount floor (the last put still
+frees an unmapped, un-owed folio). -/
+theorem putFloorOwed_eq_when_not_owed (rc mc k : Nat) :
+    putFloorOwed rc mc k false = putFloorMc rc mc k := by
+  show max (putFloorMc rc mc k) 0 = putFloorMc rc mc k; omega
+
+/-- The owe floor never DROPS the mapcount floor (still `>= mc`), so it composes with r12fix/r14. -/
+theorem putFloorOwed_ge_mc (rc mc k : Nat) (owed : Bool) : mc ≤ putFloorOwed rc mc k owed := by
+  have h := putFloorMc_ge_mc rc mc k
+  cases owed
+  · show mc ≤ max (putFloorMc rc mc k) 0; omega
+  · show mc ≤ max (putFloorMc rc mc k) 1; omega
+
 /-! ### The full chain: both counts now floor at the present sub-PTEs -/
 
 /-- **FULL CHAIN**: r12fix (`present ≤ mc`) + r14 (`mc ≤ rc`) ⇒ `present ≤ rc`, so a refcount-0 free

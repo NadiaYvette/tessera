@@ -34,6 +34,33 @@ Theorem putFloorMc_eq_when_room rc mc k :
   putFloorMc rc mc k = (if k <=? rc then rc - k else 0).
 Proof. intro H. unfold putFloorMc. apply Nat.max_l. exact H. Qed.
 
+(* ---- r16owefloor: also refuse to free a GATHER-OWED folio (the reincarnation face) ----
+   page_owner PROVED the residual double-free is a gather-owed folio over-dropped to 0 while
+   UNMAPPED (mc=0, so putFloorMc lets it reach 0), freed, reincarnated by __vmalloc, stale-freed.
+   Extend the floor to also hold >= 1 while owed. *)
+Definition putFloorOwed (rc mc k : nat) (owed : bool) : nat :=
+  Nat.max (putFloorMc rc mc k) (if owed then 1 else 0).
+
+(* THE r16 RESULT: a gather-owed folio is NEVER freed by the over-drop (refcount >= 1). *)
+Theorem putFloorOwed_owed_not_freed rc mc k : 1 <= putFloorOwed rc mc k true.
+Proof. unfold putFloorOwed. change (if true then 1 else 0) with 1. apply Nat.le_max_r. Qed.
+
+(* NO REINCARNATION: an owed folio's refcount never reaches 0. *)
+Theorem owed_never_freed rc mc k : putFloorOwed rc mc k true = 0 -> False.
+Proof. intro H. pose proof (putFloorOwed_owed_not_freed rc mc k). lia. Qed.
+
+(* ZERO BLAST RADIUS: not owed => identical to the r14 mapcount floor. *)
+Theorem putFloorOwed_eq_when_not_owed rc mc k :
+  putFloorOwed rc mc k false = putFloorMc rc mc k.
+Proof. unfold putFloorOwed. change (if false then 1 else 0) with 0. apply Nat.max_l. apply Nat.le_0_l. Qed.
+
+(* The owe floor never DROPS the mapcount floor (still >= mc). *)
+Theorem putFloorOwed_ge_mc rc mc k owed : mc <= putFloorOwed rc mc k owed.
+Proof.
+  unfold putFloorOwed. pose proof (putFloorMc_ge_mc rc mc k).
+  pose proof (Nat.le_max_l (putFloorMc rc mc k) (if owed then 1 else 0)). lia.
+Qed.
+
 (* FULL CHAIN: r12fix (present<=mc) + r14 (mc<=rc) => present<=rc => free (rc=0) only when
    present=0.  Both the count that lies (mapcount) and the count that frees (refcount) floor at the
    present mappings. *)
