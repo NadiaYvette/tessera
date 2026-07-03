@@ -158,4 +158,58 @@ theorem perClus_coupled_stat_wrong {present : Int} (h : 1 < present) :
 edge — then `stat = present` regardless of the per-cluster `_mapcount`. -/
 theorem decoupled_stat_faithful (present : Int) : (fun p => p) present = present := rfl
 
+/-! ### r18: the BATCHED present-floor for the large-folio zap remove -/
+
+/-- r18 floored `folio_remove_rmap_subptes` (mm/memory.c large-folio zap path).  r17 pinned the
+residual free-while-mapped to SITE 1 (zap): the stock large-folio path did a bare `atomic_sub(count)`
+on a shared file/shmem cluster page's `_mapcount`, driving it BELOW the sub-PTEs still present in this
+table (`ph`).  Clamp the removed count so the result never drops below `ph`: remove `min(count, mc-ph)`
+when `mc > ph`, else nothing.  (The small-folio path already floors per-edge via `putFloorMc`.) -/
+def floorRemoveN (mc ph count : Nat) : Nat :=
+  if ph < mc then (if count ≤ mc - ph then mc - count else ph) else mc
+
+/-- **INVARIANT PRESERVED**: a well-formed cluster page (`present ≤ mapcount`) STAYS well-formed after
+the batched floored removal — it never drives `mapcount` below `present`, so `folio_mapped()` cannot
+lie about a still-mapped cluster (no free-while-mapped from the large-folio zap). -/
+theorem floorRemoveN_preserves (mc ph count : Nat) (h : ph ≤ mc) :
+    ph ≤ floorRemoveN mc ph count := by
+  unfold floorRemoveN
+  by_cases hlt : ph < mc
+  · simp only [if_pos hlt]
+    by_cases hc : count ≤ mc - ph
+    · simp only [if_pos hc]; omega
+    · simp only [if_neg hc]; omega
+  · simp only [if_neg hlt]; omega
+
+/-- **NEVER INCREASES**: the floor only clamps a removal (result ≤ mc); it never adds mapcount. -/
+theorem floorRemoveN_le (mc ph count : Nat) : floorRemoveN mc ph count ≤ mc := by
+  unfold floorRemoveN
+  by_cases hlt : ph < mc
+  · simp only [if_pos hlt]
+    by_cases hc : count ≤ mc - ph
+    · simp only [if_pos hc]; omega
+    · simp only [if_neg hc]; omega
+  · simp only [if_neg hlt]; omega
+
+/-- **ZERO BLAST RADIUS**: when the batch does not over-remove (`count ≤ mc - ph`, room to spare) the
+floor removes the FULL `count` — identical to the stock `mc - count`, so correct zaps are unchanged. -/
+theorem floorRemoveN_full (mc ph count : Nat) (hp : ph ≤ mc) (hroom : count ≤ mc - ph) :
+    floorRemoveN mc ph count = mc - count := by
+  unfold floorRemoveN
+  by_cases hlt : ph < mc
+  · simp only [if_pos hlt, if_pos hroom]
+  · simp only [if_neg hlt]; omega
+
+/-- **FREE-WHILE-MAPPED CLOSURE (batched)**: after the floored batch removal, `mapcount` reaches 0
+ONLY when `present = 0`.  Composes with `no_free_while_mapped` — the large-folio zap can no longer
+zero a still-mapped cluster's counter. -/
+theorem floorRemoveN_zero_only_unmapped (mc ph count : Nat) (h : ph ≤ mc)
+    (hz : floorRemoveN mc ph count = 0) : ph = 0 := by
+  have := floorRemoveN_preserves mc ph count h; omega
+
+/-- Concrete: a shmem cluster page mapped by 14 sub-PTEs (`mc=14`) with 8 still present (`ph=8`), a
+zap batch of `count=10`.  Stock removes 10 → 4 < 8 present (free-while-mapped: the r17 `.cjs` code
+page); the r18 floor removes only 6 → 8, exactly present. -/
+theorem concreteN : floorRemoveN 14 8 10 = 8 ∧ (14 - 10 : Nat) = 4 := by decide
+
 end Tessera

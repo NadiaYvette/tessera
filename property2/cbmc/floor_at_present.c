@@ -43,5 +43,32 @@ int main(void)
 	/* r13refgate free-gate: honest rmap => a free (gated on rmap==0) happens only when unmapped. */
 	if (p <= r && r == 0)
 		assert(p == 0);			/* no free-while-mapped */
+
+	/*
+	 * ---- r18: the BATCHED large-folio floor (mm/memory.c folio_remove_rmap_subptes) ----
+	 * r17 pinned the residual free-while-mapped to SITE 1 (zap): the stock large-folio path did a
+	 * bare atomic_sub(count) on a shared file/shmem cluster page's _mapcount.  Clamp the removed
+	 * count so mapcount never drops below present_here.  Mirrors FloorAtPresent.floorRemoveN.
+	 */
+	{
+		int mc = nondet_int(), ph = nondet_int(), count = nondet_int();
+		int rm, res;
+
+		__CPROVER_assume(ph >= 0 && count >= 0);
+		__CPROVER_assume(mc >= 0 && mc <= 1000000 && count <= 1000000);
+		__CPROVER_assume(ph <= mc);	/* well-formed cluster page before the batch */
+
+#if FIX
+		rm = (mc > ph) ? ((count <= mc - ph) ? count : mc - ph) : 0;
+#else
+		rm = count;			/* stock: bare atomic_sub(count) -- unfloored */
+#endif
+		res = mc - rm;
+
+		/* SAFETY r18: the floored batch keeps present <= mapcount (no free-while-mapped). */
+		assert(ph <= res);
+		if (res == 0)
+			assert(ph == 0);	/* mapcount reaches 0 only when unmapped */
+	}
 	return 0;
 }

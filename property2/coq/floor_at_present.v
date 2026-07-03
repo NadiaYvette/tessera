@@ -74,3 +74,59 @@ Proof. unfold freeAllowed. lia. Qed.
 Theorem mapped_not_freeAllowed x :
   present x <= rmap x -> 1 <= present x -> ~ freeAllowed x.
 Proof. unfold freeAllowed. lia. Qed.
+
+(* ---- r18: the BATCHED present-floor for the large-folio zap remove (Tessera FloorAtPresent,
+   mm/memory.c folio_remove_rmap_subptes path).  r17 pinned the residual free-while-mapped to
+   SITE 1 (zap): the stock large-folio path did a bare atomic_sub(count), driving a shared
+   file/shmem cluster page's _mapcount BELOW present_here.  Clamp the removed count so the result
+   never drops below ph. ---- *)
+
+Definition floorRemoveN (mc ph count : Z) : Z :=
+  if ph <? mc then (if count <=? mc - ph then mc - count else ph) else mc.
+
+(* INVARIANT PRESERVED: present<=mapcount stays true after the batched floored removal. *)
+Theorem floorRemoveN_preserves mc ph count :
+  ph <= mc -> ph <= floorRemoveN mc ph count.
+Proof.
+  intro H. unfold floorRemoveN.
+  destruct (ph <? mc) eqn:E1; simpl.
+  - apply Z.ltb_lt in E1. destruct (count <=? mc - ph) eqn:E2; simpl.
+    + apply Z.leb_le in E2. lia.
+    + lia.
+  - apply Z.ltb_ge in E1. lia.
+Qed.
+
+(* NEVER INCREASES: the floor only clamps a removal (result<=mc). *)
+Theorem floorRemoveN_le mc ph count :
+  0 <= count -> floorRemoveN mc ph count <= mc.
+Proof.
+  intro Hc. unfold floorRemoveN.
+  destruct (ph <? mc) eqn:E1; simpl.
+  - apply Z.ltb_lt in E1. destruct (count <=? mc - ph) eqn:E2; simpl.
+    + apply Z.leb_le in E2. lia.
+    + lia.
+  - lia.
+Qed.
+
+(* ZERO BLAST RADIUS: with room to spare the floor removes the full count (= stock mc - count). *)
+Theorem floorRemoveN_full mc ph count :
+  0 <= count -> ph <= mc -> count <= mc - ph -> floorRemoveN mc ph count = mc - count.
+Proof.
+  intros Hc Hp Hr. unfold floorRemoveN.
+  destruct (ph <? mc) eqn:E1; simpl.
+  - apply Z.ltb_lt in E1. destruct (count <=? mc - ph) eqn:E2; simpl.
+    + reflexivity.
+    + apply Z.leb_gt in E2. lia.
+  - apply Z.ltb_ge in E1. lia.
+Qed.
+
+(* FREE-WHILE-MAPPED CLOSURE (batched): mapcount reaches 0 only when present=0. *)
+Theorem floorRemoveN_zero_only_unmapped mc ph count :
+  0 <= ph -> ph <= mc -> floorRemoveN mc ph count = 0 -> ph = 0.
+Proof.
+  intros Hnn H Hz. pose proof (floorRemoveN_preserves mc ph count H). lia.
+Qed.
+
+(* Concrete (r17 .cjs case): mc=14, ph=8, batch=10.  Stock -> 4 (< 8 present); floor -> 8. *)
+Theorem concreteN : floorRemoveN 14 8 10 = 8.
+Proof. reflexivity. Qed.
