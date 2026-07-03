@@ -77,6 +77,46 @@ theorem removeFloored_stat_floored (x : RSP) (h : x.faithful) :
     x.removeFloored.present ≤ x.removeFloored.stat := by
   rw [removeFloored_spurious_noop x h]; obtain ⟨_, hs⟩ := h; omega
 
+/-! ### r12fix (task #8): CORRECT an already-violated undercount, not just skip -/
+
+/-- r11probe proved `rmap` (folio_mapcount) reaches states BELOW `present` -- a real over-remove
+drove it there BEFORE the floor caught up.  `removeFloored` only SKIPS, so it keeps `rmap` from
+dropping further but never REPAIRS an existing `rmap < present`, and `folio_mapped` still lies.
+`removeCorrected` (the r12fix): with room (`present < rmap`) do the real floored remove; on an
+already-undercounted cluster (`rmap < present`) restore `rmap := present` (the local ground truth);
+else hold. -/
+def RSP.removeCorrected (x : RSP) : RSP :=
+  if x.present < x.rmap then { rmap := x.rmap - 1, stat := x.stat - 1, present := x.present }
+  else if x.rmap < x.present then { rmap := x.present, stat := x.stat, present := x.present }
+  else x
+
+/-- **THE r12fix SAFETY RESULT**: `removeCorrected` RESTORES `present ≤ rmap` from ANY state --
+including the over-removed `rmap < present` the diagnostics captured.  So `folio_mapped` (`rmap ≥ 1`)
+is honest whenever `present > 0`, and the free-while-mapped guard can never be defeated by the
+mapcount undercount that drove the #143 int3 / WM-crash / deadlock. -/
+theorem removeCorrected_restores_inv (x : RSP) :
+    x.removeCorrected.present ≤ x.removeCorrected.rmap := by
+  unfold RSP.removeCorrected
+  by_cases h1 : x.present < x.rmap
+  · rw [if_pos h1]; dsimp only; omega
+  · rw [if_neg h1]
+    by_cases h2 : x.rmap < x.present
+    · rw [if_pos h2]; dsimp only; omega
+    · rw [if_neg h2]; omega
+
+/-- **The correction never over-shoots**: it sets `rmap` to exactly `present`, never above -- so it
+cannot manufacture a phantom mapping beyond the sub-PTEs actually present. -/
+theorem removeCorrected_not_above (x : RSP) (h : x.rmap < x.present) :
+    x.removeCorrected.rmap = x.present := by
+  unfold RSP.removeCorrected
+  rw [if_neg (by omega : ¬ x.present < x.rmap), if_pos h]
+
+/-- **The fix does not stall legitimate unmaps**: with room (`present < rmap`) it still performs the
+real rmap/stat drop. -/
+theorem removeCorrected_real_when_room (x : RSP) (h : x.present < x.rmap) :
+    x.removeCorrected.rmap = x.rmap - 1 ∧ x.removeCorrected.stat = x.stat - 1 := by
+  unfold RSP.removeCorrected; rw [if_pos h]; exact ⟨rfl, rfl⟩
+
 /-! ### Why FULL per-cluster (phase 2) additionally needs the stat DECOUPLED -/
 
 /-- If `_mapcount` is made per-cluster (`mcPerClus`) and the stat stays COUPLED to that edge, the stat
