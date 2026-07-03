@@ -39,5 +39,7 @@ check "quarantine_choke  UNIVERSAL=1 (choke fix)"   SUCCESSFUL quarantine_choke.
 # corrective floor (FloorAtPresent removeCorrected / floor_at_present.v): old skip-only floor leaves the over-remove; r12fix corrects it
 check "floor_at_present  FIX=0 (skip-only bug)"     FAILED     floor_at_present.c -DFIX=0
 check "floor_at_present  FIX=1 (corrective fix)"    SUCCESSFUL floor_at_present.c -DFIX=1
+check "ref_floor        FIX=0 (0-floor bug)"      FAILED     ref_floor.c        -DFIX=0
+check "ref_floor        FIX=1 (corrective fix)"    SUCCESSFUL ref_floor.c        -DFIX=1
 [ "$fail" -eq 0 ] && echo "SUITE OK" || echo "SUITE FAIL"
 exit "$fail"
