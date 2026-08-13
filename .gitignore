@@ -19,3 +19,4 @@
 # Rust / Kani build output
 target/
 .scratch-clamp-build.log
+sail_smt_cache

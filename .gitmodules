@@ -1,0 +1,30 @@
+[submodule "third_party/sail"]
+	path = third_party/sail
+	url = https://github.com/rems-project/sail.git
+[submodule "third_party/sail-riscv"]
+	path = third_party/sail-riscv
+	url = https://github.com/riscv/sail-riscv.git
+[submodule "third_party/sail-arm"]
+	path = third_party/sail-arm
+	url = https://github.com/rems-project/sail-arm.git
+[submodule "third_party/sail-cheri-mips"]
+	path = third_party/sail-cheri-mips
+	url = https://github.com/CTSRD-CHERI/sail-cheri-mips.git
+[submodule "third_party/sail-x86-from-acl2"]
+	path = third_party/sail-x86-from-acl2
+	url = https://github.com/rems-project/sail-x86-from-acl2.git
+[submodule "third_party/coq-sail"]
+	path = third_party/coq-sail
+	url = https://github.com/rems-project/coq-sail.git
+[submodule "third_party/rmem"]
+	path = third_party/rmem
+	url = https://github.com/rems-project/rmem.git
+[submodule "third_party/isla"]
+	path = third_party/isla
+	url = https://github.com/rems-project/isla.git
+[submodule "third_party/islaris"]
+	path = third_party/islaris
+	url = https://github.com/rems-project/islaris.git
+[submodule "third_party/iris"]
+	path = third_party/iris
+	url = https://gitlab.mpi-sws.org/iris/iris.git
