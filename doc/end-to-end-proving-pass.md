@@ -128,10 +128,13 @@ never reduced.
   both **closed under the global context** (axiom-free). The intermediate levels
   survive by `eq_vec` decidability (`read_pte_remove_other`), so — contrary to the
   original estimate — no `pte_address` bitvector inequalities were needed.
-- **Stage 2** — concurrent shootdown over the concrete multi-core `Machine`:
-  port `property2/coq/tlb_shootdown.v`'s one-shot-token invariant from booleans to
-  `Machine`/`translate`/`sfence_vma`; prove no core translates a freed frame after
-  the protocol completes (then the gpfsl weak-memory lift).
+- **Stage 2** 🔶 — the N-core broadcast shootdown over the concrete multi-core
+  `Machine` (see `doc/stage2-shootdown.md`). **S2.0 done (2026-08-13)**:
+  `hardware/rocq/shootdown.v` proves `shootdown_correct` — after removing the leaf
+  PTE and `sfence_vma_va`-ing every core, *no core* translates the freed frame
+  (`translate = None ∧ tlb_lookup = None`), axiom-free. Remaining: **S2.1** the
+  concurrent Iris HeapLang proof (broadcast-barrier invariant, concrete heap
+  values), then **S2.2** the gpfsl weak-memory lift.
 - **Stage 3** — ABI refinement over the walk: `translate` computes exactly the
   abstract Layer-S mapping (`tilingMapping` in `proof/Tessera/RefinementS.lean`),
   the cross-prover joint documented as a statement, not a mechanical link.

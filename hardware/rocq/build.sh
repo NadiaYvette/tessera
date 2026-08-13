@@ -28,5 +28,6 @@ rocq compile $FLAGS machine_types.v
 rocq compile $FLAGS machine.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
+rocq compile $FLAGS shootdown.v
 
 echo "OK: hardware model generated and checked."

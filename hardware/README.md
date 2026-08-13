@@ -21,6 +21,12 @@ See ../doc/hardware-model-plan.md (design) and ../doc/end-to-end-proving-pass.md
     * `unmap_leaf_correct`;
     * `unmap_leaf_without_flush_breaks_coherence`.
   All four theorems are **closed under the global context** (axiom-free).
+- **Stage 2 (N-core broadcast shootdown)** — `rocq/shootdown.v` proves, over the
+  generated multi-core `Machine`, that after the broadcast shootdown (remove the
+  leaf PTE + `sfence_vma_va` every core) no core translates the freed frame:
+    * `shootdown_correct` (S2.0, sequential) — closed under the global context.
+  S2.1 (concurrent Iris HeapLang) and S2.2 (gpfsl weak-memory) are next — see
+  ../doc/stage2-shootdown.md.
 
 ## Layout
 
@@ -28,6 +34,7 @@ See ../doc/hardware-model-plan.md (design) and ../doc/end-to-end-proving-pass.md
     rocq/                  generated Rocq (machine.v, machine_types.v)
     rocq/coherence.v       kernel control ops + the two root-removal theorems
     rocq/coherence_leaf.v  software walk + the two leaf-removal theorems
+    rocq/shootdown.v       N-core broadcast shootdown + shootdown_correct (S2.0)
     rocq/build.sh          Sail -> Rocq -> checked .vo (single command)
 
 ## Toolchain
@@ -48,7 +55,7 @@ Or by hand:
                  -Q <user-contrib>/SailStdpp SailStdpp \
                  -Q <user-contrib>/iris iris \
                  rocq/machine_types.v rocq/machine.v \
-                 rocq/coherence.v rocq/coherence_leaf.v
+                 rocq/coherence.v rocq/coherence_leaf.v rocq/shootdown.v
 
 where `<user-contrib>` is `~/.opam/rocq-9.2/lib/coq/user-contrib`.
 
