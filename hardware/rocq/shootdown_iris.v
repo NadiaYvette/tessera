@@ -156,6 +156,27 @@ Definition all_cores (n : nat) : gset nat := list_to_set (seq 0 n).
 Definition sd_pure (n k : nat) (m : gmap nat (exclR unitO)) : Prop :=
   k + size (dom m) = n ∧ dom m ⊆ all_cores n.
 
+(* When the ack counter has reached n, the pending map is empty: every remote has
+   acked. These two lemmas are the pure bridge from `sd_pure` to `m = ∅` / `dom m = ∅`. *)
+Lemma sd_pure_dom_empty (n : nat) (m : gmap nat (exclR unitO)) :
+  sd_pure n n m -> dom m = ∅.
+Proof.
+  intros [Hsum Hsub]. apply leibniz_equiv. apply size_empty_inv. lia.
+Qed.
+
+Lemma sd_pure_done (n : nat) (m : gmap nat (exclR unitO)) :
+  sd_pure n n m -> m = ∅.
+Proof.
+  intros Hpure. apply map_empty. intros i.
+  apply not_elem_of_dom. rewrite (sd_pure_dom_empty n m Hpure). set_solver.
+Qed.
+
+Lemma all_cores_clear (n : nat) (m : gmap nat (exclR unitO)) :
+  dom m = ∅ → all_cores n ∖ dom m = all_cores n.
+Proof.
+  intros Hdom. rewrite Hdom. apply difference_empty_L.
+Qed.
+
 Class sdG Σ := SdG { sd_inG : inG Σ (authR (gmapUR nat (exclR unitO)));
                       sd_tokG : inG Σ (exclR unitO) }.
 Local Existing Instances sd_inG sd_tokG.
@@ -342,12 +363,20 @@ Qed.
     - iDestruct "Hfin" as "[_ %Hmempty]". exfalso. subst m. set_solver.
   Qed.
 
+  Lemma cleared_tlbs_all_cores (n : nat) (m : gmap nat (exclR unitO)) (tlb : loc) :
+    dom m = ∅ →
+    ([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None) -∗
+    ([∗ set] j ∈ all_cores n, (tlb +ₗ Z.of_nat j) ↦ encode_tlb None).
+  Proof.
+    intros Hdom. rewrite (all_cores_clear n m Hdom). iIntros "$".
+  Qed.
+
   (* -------- the leader's ack-counter wait: spin until cnt == n -------- *)
 
   Lemma wait_cnt_spec (γ γtok : gname) (tlb go cnt : loc) (n : nat) :
     {{{ inv N (sd_inv γ γtok tlb go cnt n) ∗ own γtok (Excl ()) }}}
       wait_cnt #cnt #n
-    {{{ RET #(); own γtok (Excl ()) }}}.
+    {{{ RET #(); [∗ set] j ∈ all_cores n, (tlb +ₗ Z.of_nat j) ↦ encode_tlb None }}}.
   Proof.
     iIntros (Φ) "[#HI Htok] HΦ".
     iLöb as "IH" forall (Φ).
@@ -355,17 +384,35 @@ Qed.
     wp_bind (! #cnt)%E.
     iInv "HI" as (m k) "(>Hgo & >Hcnt & >Hauth & >Htlbor & >%Hpure)" "Hclose".
     wp_load.
-    iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
-    { iNext. iExists m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
-    iModIntro. wp_pures.
     destruct (decide (k = n)) as [-> | Hne].
-    - rewrite (bool_decide_true (LitV (LitInt (Z.of_nat n)) = LitV (LitInt (Z.of_nat n)))) //.
-      wp_pures. by iApply "HΦ".
-    - assert (Hneq : LitV (LitInt (Z.of_nat k)) ≠ LitV (LitInt (Z.of_nat n))) by
+    - (* final iteration: k = n, so all cores have acked (m = ∅). Extract the
+         cleared TLBs, deposit the token (branch b), and return them. *)
+      iDestruct "Htlbor" as "[Hacked | Hfin]".
+      + iMod ("Hclose" with "[Hgo Hcnt Hauth Htok]") as "_".
+        { iNext. iExists m, n. iFrame "Hgo Hcnt Hauth". iSplitL.
+          - iRight. iFrame "Htok". iPureIntro. exact (sd_pure_done n m Hpure).
+          - iPureIntro. exact Hpure. }
+        iModIntro. wp_pures.
+        rewrite (bool_decide_true (LitV (LitInt (Z.of_nat n)) = LitV (LitInt (Z.of_nat n)))) //.
+        wp_pures.
+        pose proof (sd_pure_dom_empty n m Hpure) as Hdom.
+        iDestruct (cleared_tlbs_all_cores n m tlb Hdom with "Hacked") as "Hacked'".
+        iApply "HΦ".
+        iModIntro.
+        iFrame "Hacked'".
+      + (* branch (b): the token would be held both by the leader and the invariant. *)
+        iDestruct "Hfin" as "[Htok' _]".
+        iDestruct (own_valid_2 with "Htok Htok'") as %Hv.
+        exfalso. exact (exclusive_l (Excl ()) (Excl ()) Hv).
+    - (* loop: k ≠ n *)
+      iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
+      { iNext. iExists m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
+      iModIntro. wp_pures.
+      assert (Hneq : LitV (LitInt (Z.of_nat k)) ≠ LitV (LitInt (Z.of_nat n))) by
         (intros H; apply Hne; apply Nat2Z.inj; congruence).
       rewrite (bool_decide_false (LitV (LitInt (Z.of_nat k)) = LitV (LitInt (Z.of_nat n))) Hneq).
       wp_pures. wp_apply ("IH" with "Htok").
-      iIntros "Htok". iApply ("HΦ" with "Htok").
+      iIntros "Hacked". iApply ("HΦ" with "Hacked").
   Qed.
 
   (* -------- the forking loop: spawn remote j for j = i .. n-1 -------- *)
@@ -484,7 +531,7 @@ Qed.
     {{{ ⌜0 < n⌝ }}} broadcast #n
     {{{ RET #(); ∃ (γ γtok : gname) (pte tlb go cnt : loc),
         inv N (sd_inv γ γtok tlb go cnt n) ∗
-        own γtok (Excl ()) ∗
+        ([∗ set] j ∈ all_cores n, (tlb +ₗ Z.of_nat j) ↦ encode_tlb None) ∗
         pte ↦ encode_pte invalid_pte }}}.
   Proof.
     iIntros (Φ) "Hn HΦ". iDestruct "Hn" as %Hn.
@@ -516,9 +563,9 @@ Qed.
     { rewrite all_cores_0 difference_empty_L. done. }
     wp_apply (fork_remotes_spec γ γtok tlb go cnt 0 n with "[$HI $Hrest0]"); [iIntros "_"].
     wp_pures.
-    wp_apply (wait_cnt_spec γ γtok tlb go cnt n with "[$HI $Htok]"); [iIntros "Htok"].
+    wp_apply (wait_cnt_spec γ γtok tlb go cnt n with "[$HI $Htok]"); [iIntros "Htlb_cleared"].
     iApply "HΦ".
-    iExists γ, γtok, pte, tlb, go, cnt. iFrame "Htok Hpte". iFrame "#".
+    iExists γ, γtok, pte, tlb, go, cnt. iFrame "Htlb_cleared Hpte". iFrame "#".
   Qed.
 
 End proof.
