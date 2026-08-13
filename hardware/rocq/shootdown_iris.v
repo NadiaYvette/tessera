@@ -93,7 +93,7 @@ Qed.
    Concrete values, program, ghost state.
    ============================================================ *)
 
-From iris.algebra Require Import auth gset.
+From iris.algebra Require Import auth gset gmap excl.
 From iris.base_logic.lib Require Import invariants.
 From iris.heap_lang Require Import proofmode.
 From iris.heap_lang.lib Require Import par.
@@ -147,8 +147,61 @@ Definition broadcast : val :=
 
 Definition all_cores (n : nat) : gset nat := list_to_set (seq 0 n).
 
-Class sdG Σ := SdG { sd_inG : inG Σ (authR (gsetUR nat)) }.
-Local Existing Instance sd_inG.
-Definition sdΣ : gFunctors := #[GFunctor (authR (gsetUR nat))].
+(* The pure side-condition of the invariant, hoisted out of `⌜⌝` so the compound
+   nat/set arithmetic isn't parsed under `bi_pure`'s `%type%stdpp` scope. *)
+Definition sd_pure (n k : nat) (m : gmap nat (exclR unitO)) (b : bool) : Prop :=
+  k + size (dom m) = n ∧ dom m ⊆ all_cores n ∧ (k = 0 ∨ b = true).
+
+Class sdG Σ := SdG { sd_inG : inG Σ (authR (gmapUR nat (exclR unitO)));
+                      sd_tokG : inG Σ (exclR unitO) }.
+Local Existing Instances sd_inG sd_tokG.
+Definition sdΣ : gFunctors := #[GFunctor (authR (gmapUR nat (exclR unitO))); GFunctor (exclR unitO)].
 Global Instance subG_sdΣ {Σ} : subG sdΣ Σ → sdG Σ.
 Proof. solve_inG. Qed.
+
+(* ============================================================
+   The concurrent proof.
+   ============================================================ *)
+
+Definition pending_map (n : nat) : gmap nat (exclR unitO) :=
+  gset_to_gmap (Excl ()) (all_cores n).
+
+Lemma elem_of_all_cores (n i : nat) : i ∈ all_cores n ↔ i < n.
+Proof.
+  rewrite /all_cores elem_of_list_to_set elem_of_seq. lia.
+Qed.
+
+Lemma size_dom_delete {A} `{Countable A} (m : gmap A (exclR unitO)) (i : A) :
+  i ∈ dom m → size (dom (delete i m)) = size (dom m) - 1.
+Proof.
+  intros Hi. rewrite !size_dom. rewrite map_size_delete_Some.
+  - lia.
+  - apply elem_of_dom. done.
+Qed.
+
+Section proof.
+  Context `{!heapGS Σ, !spawnG Σ, !sdG Σ}.
+  Let N := nroot .@ "sd".
+
+  Definition sd_inv (γ γtok : gname) (pte tlb go cnt : loc) (n : nat) : iProp Σ :=
+    (∃ (b : bool) (m : gmap nat (exclR unitO)) (k : nat),
+       go ↦ #b ∗
+       cnt ↦ #k ∗
+       own γ (● m) ∗
+       (if b then ([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None)
+                  ∨ (own γtok (Excl ()) ∗ ⌜ m = ∅ ⌝)
+        else True) ∗
+       ⌜ sd_pure n k m b ⌝)%I.
+
+Lemma pending_token_delete γ (m : gmap nat (exclR unitO)) (i : nat) :
+  own γ (● m) -∗ own γ (◯ {[i := Excl ()]}) ==∗ own γ (● (delete i m)).
+Proof.
+  iIntros "Hm Hi".
+  iMod (own_update_2 with "Hm Hi") as "H".
+  { apply auth_update. apply delete_singleton_local_update. apply excl_exclusive. }
+  iDestruct (own_op with "H") as "[Hm _]".
+  by iFrame.
+Qed.
+
+End proof.
+
