@@ -82,5 +82,6 @@ axiom_free shootdown_iris  remote_spec
 axiom_free shootdown_iris  wait_cnt_spec
 axiom_free shootdown_iris  fork_remotes_spec
 axiom_free shootdown_iris  broadcast_spec
+axiom_free shootdown_iris  broadcast_reifies_machine
 
 echo "OK: hardware model generated and checked (axiom-free)."

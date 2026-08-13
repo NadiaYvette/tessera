@@ -13,6 +13,8 @@ Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import machine_types.
 Require Import machine.
+Require Import shootdown. (* core_with_root / invalidate_shootdown / invalidate_shootdown_correct *)
+Import ListNotations.
 
 (* ============================================================
    Concrete-value encoding.
@@ -94,13 +96,16 @@ Qed.
    ============================================================ *)
 
 From iris.algebra Require Import auth gset gmap excl.
-From iris.base_logic.lib Require Import invariants.
+From iris.base_logic.lib Require Import invariants ghost_var.
 From iris.heap_lang Require Import proofmode.
 From iris.heap_lang.lib Require Import par.
 
 Definition invalid_pte : Pte :=
   {| Pte_valid := false; Pte_read := true; Pte_write := true;
      Pte_exec := true; Pte_user := true; Pte_ppn := mword_of_int 0 |}.
+
+Lemma invalid_pte_not_valid : invalid_pte.(Pte_valid) = false.
+Proof. reflexivity. Qed.
 
 Definition valid_pte : Pte :=
   {| Pte_valid := true; Pte_read := true; Pte_write := true;
@@ -185,6 +190,39 @@ Global Instance subG_sdΣ {Σ} : subG sdΣ Σ → sdG Σ.
 Proof. solve_inG. Qed.
 
 (* ============================================================
+   The machine ghost + the reification bridge.
+   ============================================================ *)
+
+(* Carries the concrete [Machine] through the broadcast proof so the program's
+   postcondition can cite the machine-level coherence conclusion. *)
+Class machineG Σ := MachineG { machine_inG : ghost_varG Σ Machine }.
+Local Existing Instances machine_inG.
+Definition machineΣ : gFunctors := #[ghost_varΣ Machine].
+Global Instance subG_machineΣ {Σ} : subG machineΣ Σ → machineG Σ.
+Proof. solve_inG. Qed.
+Definition machine_ctx `{!machineG Σ} (γm : gname) (m : Machine) : iProp Σ := ghost_var γm 1 m.
+
+(* The machine the broadcast program models: n cores sharing page-table root
+   `root`, each caching the stale `leaf_entry` for `va`, over memory `mem`. *)
+Definition broadcast_pre_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
+  {| Machine_mem := mem;
+     Machine_cores := List.map (fun _ => {| Core_satp_ppn := root; Core_tlb := [leaf_entry] |}) (seq 0 n) |}.
+
+(* The reification bridge: the broadcast program's post-state (leaf PTE written
+   invalid, every TLB cleared) reifies to `invalidate_shootdown` of the
+   pre-machine; citing `invalidate_shootdown_correct` yields "no core translates
+   `va`". *)
+Lemma broadcast_reifies_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) :
+  Forall (fun c => translate c (invalidate_shootdown (broadcast_pre_machine root va mem n) root va invalid_pte).(Machine_mem) va = None /\
+                   tlb_lookup c va = None)
+         (invalidate_shootdown (broadcast_pre_machine root va mem n) root va invalid_pte).(Machine_cores).
+Proof.
+  apply (invalidate_shootdown_correct (broadcast_pre_machine root va mem n) root va invalid_pte invalid_pte_not_valid).
+  unfold broadcast_pre_machine. cbn.
+  rewrite Forall_map. apply Forall_forall. intros c _. cbn. reflexivity.
+Qed.
+
+(* ============================================================
    The concurrent proof.
    ============================================================ *)
 
@@ -210,7 +248,7 @@ Proof.
 Qed.
 
 Section proof.
-  Context `{!heapGS Σ, !spawnG Σ, !sdG Σ}.
+  Context `{!heapGS Σ, !spawnG Σ, !sdG Σ, !machineG Σ}.
   Let N := nroot .@ "sd".
 
   (* Single-phase invariant: it is only ever established AFTER the leader sets
@@ -517,30 +555,39 @@ Qed.
 
   (* -------- the leader: setup, fork, wait --------
 
-     Reification bridge (S2.0 -> S2.1): the pure corollary `shootdown_empty_cores`
-     (shootdown.v) cites `shootdown_correct` to conclude `translate = None /\
-     tlb_lookup = None` on every core for the machine whose cores are n copies of
-     `core_with_root root` and whose leaf PTE for `va` is removed. The post-state
-     here (`pte ↦ encode_pte invalid_pte`, and per-core `tlb[j] ↦ encode_tlb None`
-     held in the invariant once every remote has acked) decodes to exactly that
-     machine via `decode_pte_encode` / `decode_tlb_encode`. NB: the program writes
-     an *invalid* leaf PTE (break-before-make) where `shootdown` *removes* the
-     entry — both fault the walk, but they are distinct operations. *)
+     Reification bridge (HeapLang -> Machine), two layers:
+       - `broadcast_reifies_machine` (pure, above) cites `invalidate_shootdown_correct`
+         for the machine-level conclusion `Forall (translate = None /\ tlb_lookup =
+         None)` on every core of `invalidate_shootdown (broadcast_pre_machine root va
+         mem n) root va invalid_pte`.
+       - This spec carries a machine ghost `machine_ctx γm` and advances it from
+         `broadcast_pre_machine root va mem n` to that post-machine. The ghost is a
+         *specification abstraction* (it packages the machine-level consequence); the
+         value-level link is the encode/decode inverses (`decode_pte_encode` /
+         `decode_tlb_encode`): the program's post-state (`pte ↦ encode_pte invalid_pte`,
+         per-core `tlb[j] ↦ encode_tlb None`) decodes to exactly the invalid leaf PTE
+         and empty TLBs. NB: the program clears *every* TLB entry (a full flush) where
+         `invalidate_shootdown`/`sfence_vma_va` drops only `va`-matching entries — the
+         program is the stronger implementation, and the conclusion is unchanged. *)
 
-  Lemma broadcast_spec (n : nat) :
-    {{{ ⌜0 < n⌝ }}} broadcast #n
+  Lemma broadcast_spec (γm : gname) (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) :
+    {{{ ⌜0 < n⌝ ∗ machine_ctx γm (broadcast_pre_machine root va mem n) }}}
+      broadcast #n
     {{{ RET #(); ∃ (γ γtok : gname) (pte tlb go cnt : loc),
         inv N (sd_inv γ γtok tlb go cnt n) ∗
         ([∗ set] j ∈ all_cores n, (tlb +ₗ Z.of_nat j) ↦ encode_tlb None) ∗
-        pte ↦ encode_pte invalid_pte }}}.
+        pte ↦ encode_pte invalid_pte ∗
+        machine_ctx γm (invalidate_shootdown (broadcast_pre_machine root va mem n) root va invalid_pte) }}}.
   Proof.
-    iIntros (Φ) "Hn HΦ". iDestruct "Hn" as %Hn.
+    iIntros (Φ) "[Hn Hm0] HΦ". iDestruct "Hn" as %Hn.
     wp_rec. wp_pures.
     wp_alloc pte as "Hpte".
     wp_alloc tlb as "Htlb"; first by lia.
     wp_alloc go as "Hgo".
     wp_alloc cnt as "Hcnt".
     wp_store. wp_store.
+    iMod (ghost_var_update (invalidate_shootdown (broadcast_pre_machine root va mem n) root va invalid_pte)
+                            γm (broadcast_pre_machine root va mem n) with "Hm0") as "Hm1".
     iMod (own_alloc (● (pending_map n) ⋅ ◯ (pending_map n))) as (γ) "[Hauth Hfrag]";
       first by apply auth_both_valid_2; [apply pending_map_valid | reflexivity].
     iMod (own_alloc (Excl ())) as (γtok) "Htok"; first done.
@@ -565,7 +612,7 @@ Qed.
     wp_pures.
     wp_apply (wait_cnt_spec γ γtok tlb go cnt n with "[$HI $Htok]"); [iIntros "Htlb_cleared"].
     iApply "HΦ".
-    iExists γ, γtok, pte, tlb, go, cnt. iFrame "Htlb_cleared Hpte". iFrame "#".
+    iExists γ, γtok, pte, tlb, go, cnt. iFrame "Htlb_cleared Hpte Hm1". iFrame "#".
   Qed.
 
 End proof.
