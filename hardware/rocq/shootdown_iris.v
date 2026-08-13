@@ -118,21 +118,25 @@ Definition wait : val :=
   rec: "wait" "y" := if: !"y" then #() else "wait" "y".
 
 Definition wait_cnt : val :=
-  λ: "cnt" "n",
-    (rec: "w" "x" := if: (!"cnt") = "n" then #() else "w" #()) #().
+  rec: "wait_cnt" "cnt" "n" :=
+    if: (!"cnt") = "n" then #() else "wait_cnt" "cnt" "n".
 
 Definition remote : val :=
   λ: "tlb" "go" "cnt" "i",
     wait "go" ;;
     ("tlb" +ₗ "i") <- encode_tlb None ;;
-    "cnt" <- !"cnt" + #1.
+    (* Ack counting uses an atomic fetch-and-add: a load+store increment is a
+       lost update under weak memory, and a pure binop step cannot run inside
+       the [iInv] accessor (its mask-restoring fupd blocks [wp_op]). *)
+    FAA "cnt" #1 ;;
+    #().
 
 Definition fork_remotes : val :=
-  λ: "tlb" "go" "cnt" "i" "n",
-    (rec: "f" "j" :=
-      if: "j" < "n"
-      then (Fork (remote "tlb" "go" "cnt" "j") ;; "f" ("j" + #1))
-      else #()) "i".
+  rec: "fork_remotes" "tlb" "go" "cnt" "i" "n" :=
+    if: "i" < "n"
+    then (Fork (remote "tlb" "go" "cnt" "i") ;;
+          "fork_remotes" "tlb" "go" "cnt" ("i" + #1) "n")
+    else #().
 
 Definition broadcast : val :=
   λ: "n",
@@ -149,8 +153,8 @@ Definition all_cores (n : nat) : gset nat := list_to_set (seq 0 n).
 
 (* The pure side-condition of the invariant, hoisted out of `⌜⌝` so the compound
    nat/set arithmetic isn't parsed under `bi_pure`'s `%type%stdpp` scope. *)
-Definition sd_pure (n k : nat) (m : gmap nat (exclR unitO)) (b : bool) : Prop :=
-  k + size (dom m) = n ∧ dom m ⊆ all_cores n ∧ (k = 0 ∨ b = true).
+Definition sd_pure (n k : nat) (m : gmap nat (exclR unitO)) : Prop :=
+  k + size (dom m) = n ∧ dom m ⊆ all_cores n.
 
 Class sdG Σ := SdG { sd_inG : inG Σ (authR (gmapUR nat (exclR unitO)));
                       sd_tokG : inG Σ (exclR unitO) }.
@@ -165,6 +169,11 @@ Proof. solve_inG. Qed.
 
 Definition pending_map (n : nat) : gmap nat (exclR unitO) :=
   gset_to_gmap (Excl ()) (all_cores n).
+
+Lemma pending_map_valid (n : nat) : ✓ (pending_map n).
+Proof.
+  intros i. rewrite /pending_map lookup_gset_to_gmap. case_decide; cbn; done.
+Qed.
 
 Lemma elem_of_all_cores (n i : nat) : i ∈ all_cores n ↔ i < n.
 Proof.
@@ -183,15 +192,17 @@ Section proof.
   Context `{!heapGS Σ, !spawnG Σ, !sdG Σ}.
   Let N := nroot .@ "sd".
 
+  (* Single-phase invariant: it is only ever established AFTER the leader sets
+     go := true (before that the leader holds everything locally), so `go ↦ #true`
+     is fixed and there is no `b` case-split to reason about. *)
   Definition sd_inv (γ γtok : gname) (tlb go cnt : loc) (n : nat) : iProp Σ :=
-    (∃ (b : bool) (m : gmap nat (exclR unitO)) (k : nat),
-       go ↦ #b ∗
+    (∃ (m : gmap nat (exclR unitO)) (k : nat),
+       go ↦ #true ∗
        cnt ↦ #k ∗
        own γ (● m) ∗
-       (if b then ([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None)
-                  ∨ (own γtok (Excl ()) ∗ ⌜ m = ∅ ⌝)
-        else True) ∗
-       ⌜ sd_pure n k m b ⌝)%I.
+       (([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None)
+        ∨ (own γtok (Excl ()) ∗ ⌜ m = ∅ ⌝)) ∗
+       ⌜ sd_pure n k m ⌝)%I.
 
 Lemma pending_token_delete γ (m : gmap nat (exclR unitO)) (i : nat) :
   own γ (● m) -∗ own γ (◯ {[i := Excl ()]}) ==∗ own γ (● (delete i m)).
@@ -228,25 +239,276 @@ Qed.
 
   (* -------- the wait loop -------- *)
 
+  (* `go` is fixed true in the invariant, so the wait is a single load. *)
   Lemma wait_spec (γ γtok : gname) (tlb go cnt : loc) (n : nat) :
     {{{ inv N (sd_inv γ γtok tlb go cnt n) }}}
       wait #go
     {{{ RET #(); True }}}.
   Proof.
     iIntros (Φ) "#HI HΦ".
+    wp_rec.
+    wp_bind (! #go)%E.
+    iInv "HI" as (m k) "(>Hgo & >Hcnt & >Hauth & >Htlbor & >%Hpure)" "Hclose".
+    wp_load.
+    iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
+    { iNext. iExists m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
+    iModIntro. wp_pures. by iApply "HΦ".
+  Qed.
+
+  (* -------- the remote's ack: spend the pending token, deposit the cleared TLB -------- *)
+
+  Lemma token_in_dom γ (m : gmap nat (exclR unitO)) (i : nat) :
+    own γ (● m) -∗ own γ (◯ {[i := Excl ()]}) -∗ ⌜ i ∈ dom m ⌝.
+  Proof.
+    iIntros "Hauth Hi".
+    iDestruct (own_valid_2 with "Hauth Hi") as %Hvalid.
+    apply auth_both_valid_discrete in Hvalid as [Hincl Hvalidm].
+    iPureIntro.
+    apply elem_of_dom. unfold is_Some.
+    pose proof (proj1 (singleton_included_exclusive_l m i (Excl ())
+                        (excl_exclusive (Excl ())) Hvalidm) Hincl) as Hlook.
+    destruct (Some_equiv_eq (m !! i) (Excl ())) as [Hfwd _].
+    destruct (Hfwd Hlook) as (y & Heq & _).
+    eauto.
+  Qed.
+
+  Lemma ack_dom_step (n i : nat) (m : gmap nat (exclR unitO)) :
+    i ∈ dom m → i ∈ all_cores n →
+    all_cores n ∖ dom (delete i m) = {[i]} ∪ (all_cores n ∖ dom m).
+  Proof.
+    intros Him Hall.
+    rewrite dom_delete_L.
+    apply set_eq. intro x.
+    setoid_rewrite elem_of_union.
+    setoid_rewrite elem_of_difference.
+    setoid_rewrite not_elem_of_difference.
+    split.
+    - intros [Hxn [Hnd | Hxi]].
+      + right. split; [done | done].
+      + left. done.
+    - intros [Hxi | [Hxn Hnd]].
+      + apply elem_of_singleton_1 in Hxi. subst x.
+        split; [done | right; apply elem_of_singleton_2; done].
+      + split; [done | left; done].
+  Qed.
+
+  Lemma remote_ack γ (tlb : loc) (n i : nat) (m : gmap nat (exclR unitO)) :
+    i ∈ dom m → i ∈ all_cores n →
+    own γ (● m) -∗ own γ (◯ {[i := Excl ()]}) -∗
+    (tlb +ₗ Z.of_nat i) ↦ encode_tlb None -∗
+    ([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None) ==∗
+    own γ (● (delete i m)) ∗
+    ([∗ set] j ∈ (all_cores n ∖ dom (delete i m)), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None).
+  Proof.
+    iIntros (Him Hall) "Hauth Hi Htlb Hacked".
+    iMod (pending_token_delete γ m i with "Hauth Hi") as "Hauth'".
+    iAssert ([∗ set] j ∈ (all_cores n ∖ dom (delete i m)), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None)%I
+      with "[Htlb Hacked]" as "Hacked'".
+    { rewrite (ack_dom_step n i m Him Hall).
+      rewrite big_opS_insert; [| set_solver ].
+      iFrame. }
+    iModIntro. iFrame "Hauth' Hacked'".
+  Qed.
+
+  Lemma remote_spec (γ γtok : gname) (tlb go cnt : loc) (n i : nat) :
+    {{{ inv N (sd_inv γ γtok tlb go cnt n) ∗
+        own γ (◯ {[i := Excl ()]}) ∗ (tlb +ₗ Z.of_nat i) ↦ encode_tlb (Some leaf_entry) }}}
+      remote #tlb #go #cnt #i
+    {{{ RET #(); True }}}.
+  Proof.
+    iIntros (Φ) "(#HI & Hi & Htlb) HΦ".
+    wp_rec. wp_pures.
+    wp_apply (wait_spec γ γtok tlb go cnt n with "[$HI]"); [iIntros "_"].
+    wp_pures. wp_store.
+    wp_bind (FAA #cnt #1)%E.
+    iInv "HI" as (m k) "(>Hgo & >Hcnt & >Hauth & >Htlbor & >%Hpure)" "Hclose".
+    wp_faa.
+    iDestruct (token_in_dom with "Hauth Hi") as %Him.
+    destruct Hpure as [Hsum Hsub].
+    assert (Hall : i ∈ all_cores n) by (apply Hsub; done).
+    iDestruct "Htlbor" as "[Hacked | Hfin]".
+    - iMod (remote_ack γ tlb n i m Him Hall with "Hauth Hi Htlb Hacked") as "[Hauth' Hacked']".
+      iMod ("Hclose" with "[Hgo Hcnt Hauth' Hacked']") as "_".
+      { iNext. iExists (delete i m), (S k). rewrite Nat2Z.inj_succ. iFrame "Hgo Hcnt Hauth'".
+        iSplitL "Hacked'".
+        - iLeft. iFrame "Hacked'".
+        - iPureIntro. split.
+          + rewrite (size_dom_delete m i Him).
+            assert (Hsz : 0 < size (dom m)) by
+              (apply Nat.neq_0_lt_0; apply (proj2 (size_non_empty_iff (dom m))); set_solver).
+            lia.
+          + rewrite dom_delete_L. set_solver. }
+      iModIntro. wp_pures. by iApply "HΦ".
+    - iDestruct "Hfin" as "[_ %Hmempty]". exfalso. subst m. set_solver.
+  Qed.
+
+  (* -------- the leader's ack-counter wait: spin until cnt == n -------- *)
+
+  Lemma wait_cnt_spec (γ γtok : gname) (tlb go cnt : loc) (n : nat) :
+    {{{ inv N (sd_inv γ γtok tlb go cnt n) ∗ own γtok (Excl ()) }}}
+      wait_cnt #cnt #n
+    {{{ RET #(); own γtok (Excl ()) }}}.
+  Proof.
+    iIntros (Φ) "[#HI Htok] HΦ".
     iLöb as "IH" forall (Φ).
     wp_rec. wp_pures.
-    wp_bind (! #go)%E.
-    iInv "HI" as (b m k) "(>Hgo & >Hcnt & >Hauth & >Htlbor & >Hpure)" "Hclose".
-    iDestruct "Hpure" as %Hpure.
+    wp_bind (! #cnt)%E.
+    iInv "HI" as (m k) "(>Hgo & >Hcnt & >Hauth & >Htlbor & >%Hpure)" "Hclose".
     wp_load.
-    destruct b.
-    - iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
-      { iNext. iExists true, m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
-      iModIntro. wp_pures. by iApply "HΦ".
-    - iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
-      { iNext. iExists false, m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
-      iModIntro. wp_pures. by iApply ("IH" with "HΦ").
+    iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
+    { iNext. iExists m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
+    iModIntro. wp_pures.
+    destruct (decide (k = n)) as [-> | Hne].
+    - rewrite (bool_decide_true (LitV (LitInt (Z.of_nat n)) = LitV (LitInt (Z.of_nat n)))) //.
+      wp_pures. by iApply "HΦ".
+    - assert (Hneq : LitV (LitInt (Z.of_nat k)) ≠ LitV (LitInt (Z.of_nat n))) by
+        (intros H; apply Hne; apply Nat2Z.inj; congruence).
+      rewrite (bool_decide_false (LitV (LitInt (Z.of_nat k)) = LitV (LitInt (Z.of_nat n))) Hneq).
+      wp_pures. wp_apply ("IH" with "Htok").
+      iIntros "Htok". iApply ("HΦ" with "Htok").
+  Qed.
+
+  (* -------- the forking loop: spawn remote j for j = i .. n-1 -------- *)
+
+  Lemma all_cores_step (n i : nat) :
+    i < n →
+    all_cores n ∖ all_cores i = {[i]} ∪ (all_cores n ∖ all_cores (i + 1)).
+  Proof.
+    intros Hin. apply set_eq. intro x.
+    setoid_rewrite elem_of_difference.
+    setoid_rewrite elem_of_union.
+    setoid_rewrite elem_of_singleton.
+    setoid_rewrite elem_of_difference.
+    setoid_rewrite elem_of_all_cores.
+    intuition lia.
+  Qed.
+
+  Lemma fork_remotes_spec (γ γtok : gname) (tlb go cnt : loc) (i n : nat) :
+    {{{ inv N (sd_inv γ γtok tlb go cnt n) ∗
+        [∗ set] j ∈ (all_cores n ∖ all_cores i),
+          own γ (◯ {[j := Excl ()]}) ∗ (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some leaf_entry) }}}
+      fork_remotes #tlb #go #cnt #i #n
+    {{{ RET #(); True }}}.
+  Proof.
+    iIntros (Φ) "[#HI Hrest] HΦ".
+    iLöb as "IH" forall (i Φ).
+    wp_rec. wp_pures.
+    destruct (decide (i < n)) as [Hin | Hnot].
+    - assert (HinZ : (Z.of_nat i < Z.of_nat n)%Z) by lia.
+      rewrite (bool_decide_true ((Z.of_nat i < Z.of_nat n)%Z) HinZ).
+      wp_pures.
+      rewrite (all_cores_step n i Hin).
+      rewrite big_sepS_union; last first.
+      { intros x Hx. apply elem_of_singleton_1 in Hx; subst x.
+        intros Hi. apply elem_of_difference in Hi as [Hn Hnotin].
+        exfalso. apply Hnotin. apply elem_of_all_cores. lia. }
+      rewrite big_sepS_singleton.
+      iDestruct "Hrest" as "[Htok_i Hrest']".
+      iDestruct "Htok_i" as "[Htok_i Htlbi]".
+      wp_smart_apply (wp_fork with "[Htok_i Htlbi]").
+      + iNext. iApply (remote_spec γ γtok tlb go cnt n i with "[$HI $Htok_i $Htlbi]").
+        iNext. iIntros "_". done.
+      + wp_pures.
+        replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+        wp_apply ("IH" with "Hrest'").
+        iIntros "_". by iApply "HΦ".
+    - assert (HnotZ : ¬ (Z.of_nat i < Z.of_nat n)%Z) by lia.
+      rewrite (bool_decide_false ((Z.of_nat i < Z.of_nat n)%Z) HnotZ).
+      wp_pures. by iApply "HΦ".
+  Qed.
+
+  (* -------- pure helpers for broadcast_spec -------- *)
+
+  Lemma all_cores_0 : all_cores 0 = ∅.
+  Proof. rewrite /all_cores. reflexivity. Qed.
+
+  Lemma dom_pending_map (n : nat) : dom (pending_map n) = all_cores n.
+  Proof. rewrite /pending_map. apply dom_gset_to_gmap. Qed.
+
+  Lemma size_all_cores (n : nat) : size (all_cores n) = n.
+  Proof.
+    rewrite /all_cores size_list_to_set.
+    - rewrite length_seq. lia.
+    - apply NoDup_seq.
+  Qed.
+
+  Lemma loc_add_S (l : loc) (i : nat) : l +ₗ (S i) = (l +ₗ 1) +ₗ i.
+  Proof.
+    rewrite Loc.add_assoc Loc.eq_spec /= Nat2Z.inj_succ. lia.
+  Qed.
+
+  Lemma array_replicate_seq (l : loc) (n : nat) (v : val) :
+    l ↦∗ replicate n v ⊣⊢ [∗ list] i ∈ seq 0 n, (l +ₗ (i : nat)) ↦ v.
+  Proof.
+    revert l. induction n as [| n' IH]; intros l.
+    - cbn [replicate seq]. rewrite array_nil big_sepL_nil. done.
+    - cbn [replicate seq].
+      rewrite array_cons big_sepL_cons Nat2Z.inj_0 Loc.add_0.
+      rewrite (IH (l +ₗ 1)).
+      rewrite -fmap_S_seq big_sepL_fmap.
+      setoid_rewrite loc_add_S.
+      done.
+  Qed.
+
+  Lemma big_sepL_seq_all_cores (Φ : nat → iProp Σ) (n : nat) :
+    ([∗ list] i ∈ seq 0 n, Φ i)%I ⊣⊢ [∗ set] i ∈ all_cores n, Φ i.
+  Proof.
+    rewrite /all_cores -big_sepS_list_to_set; [done | apply NoDup_seq].
+  Qed.
+
+  (* Fuses the [Z.to_nat (Z.of_nat n)] normalization of the [AllocN] length with the
+     list-to-set bridge, since Coq's [rewrite ... in H] cannot touch an Iris hypothesis. *)
+  Lemma array_replicate_all_cores (l : loc) (n : nat) (v : val) :
+    l ↦∗ replicate (Z.to_nat (Z.of_nat n)) v ⊣⊢
+    [∗ set] i ∈ all_cores n, (l +ₗ Z.of_nat i) ↦ v.
+  Proof.
+    rewrite (array_replicate_seq l (Z.to_nat (Z.of_nat n)) v).
+    rewrite Nat2Z.id.
+    rewrite (big_sepL_seq_all_cores (λ i, (l +ₗ Z.of_nat i) ↦ v)%I n).
+    reflexivity.
+  Qed.
+
+  (* -------- the leader: setup, fork, wait -------- *)
+
+  Lemma broadcast_spec (n : nat) :
+    {{{ ⌜0 < n⌝ }}} broadcast #n
+    {{{ RET #(); ∃ (γ γtok : gname) (pte tlb go cnt : loc),
+        inv N (sd_inv γ γtok tlb go cnt n) ∗
+        own γtok (Excl ()) ∗
+        pte ↦ encode_pte invalid_pte }}}.
+  Proof.
+    iIntros (Φ) "Hn HΦ". iDestruct "Hn" as %Hn.
+    wp_rec. wp_pures.
+    wp_alloc pte as "Hpte".
+    wp_alloc tlb as "Htlb"; first by lia.
+    wp_alloc go as "Hgo".
+    wp_alloc cnt as "Hcnt".
+    wp_store. wp_store.
+    iMod (own_alloc (● (pending_map n) ⋅ ◯ (pending_map n))) as (γ) "[Hauth Hfrag]";
+      first by apply auth_both_valid_2; [apply pending_map_valid | reflexivity].
+    iMod (own_alloc (Excl ())) as (γtok) "Htok"; first done.
+    iMod (inv_alloc N _ (sd_inv γ γtok tlb go cnt n) with "[Hgo Hcnt Hauth]") as "#HI".
+    { iNext. iExists (pending_map n), 0. iFrame "Hgo Hcnt Hauth".
+      iSplit.
+      - iLeft. rewrite dom_pending_map difference_diag_L. done.
+      - iPureIntro. split.
+        + rewrite dom_pending_map size_all_cores. lia.
+        + rewrite dom_pending_map. set_solver. }
+    iDestruct (pending_tokens_split γ n with "Hfrag") as "Htoks".
+    iDestruct (array_replicate_all_cores tlb n (encode_tlb (Some leaf_entry))
+                 with "Htlb") as "HtlbS".
+    iDestruct (big_sepS_sep_2 (λ j, own γ (◯ {[j := Excl ()]}))
+                    (λ j, (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some leaf_entry))%I (all_cores n)
+               with "Htoks HtlbS") as "Hrest".
+    iAssert (([∗ set] j ∈ (all_cores n ∖ all_cores 0),
+                own γ (◯ {[j := Excl ()]}) ∗ (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some leaf_entry)))%I
+      with "[Hrest]" as "Hrest0".
+    { rewrite all_cores_0 difference_empty_L. done. }
+    wp_apply (fork_remotes_spec γ γtok tlb go cnt 0 n with "[$HI $Hrest0]"); [iIntros "_"].
+    wp_pures.
+    wp_apply (wait_cnt_spec γ γtok tlb go cnt n with "[$HI $Htok]"); [iIntros "Htok"].
+    iApply "HΦ".
+    iExists γ, γtok, pte, tlb, go, cnt. iFrame "Htok Hpte". iFrame "#".
   Qed.
 
 End proof.

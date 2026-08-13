@@ -88,3 +88,28 @@ skeleton and the Iris proofs are variant-parameterized (mirrors arch-coverage.md
   later for assembly-level (Islaris-style) verification.
 - Naming: hardware/ (Sail sources + generated coq/ + emulator/) parallel to proof/
   (Lean), property2/ (Coq+Iris), rust/ (Kani).
+
+## Backlog (long-range, not sequenced — revisit after S2.1/S2.2)
+
+Remembered so they are not lost; each lists its conformance oracle / fidelity risk.
+
+- **RISC-V Svnapot** — add the `N` bit, NAPOT leaf decode, and low-PPN-substitution
+  to `machine.sail`; smallest diff, extends the current Sv39 model, no new concepts.
+- **MIPS PageGrain (1 KiB, ESP) + software-refill** — the `mmu-variants.md`
+  demonstration platform. Hand-write a translation-only Sail model (TLB + CP0
+  `PageGrain`/`PageMask`/`EntryHi`/`EntryLo` + `compute_pagemask`). **A conformance
+  oracle already exists**: `~/src/QEMU` branch `nadia.chambers/page-grain-001`
+  (4 commits, MD00091-cited). Key semantics it encodes: enable = `Config3.SP ∧
+  PageGrain.ESP`; PageMask is a run of 1s with even count (the `{4^k·M}` spectrum);
+  `pfn_shift = 10` (vs 12) under ESP; `VPN2X = EntryHi[12:11]`; MaskX stored "as
+  if 0b11" when ESP=0. Differential-test the Sail model against it (closes G1).
+- **LoongArch** — next arch of interest (telix target: `kernel/src/arch/loongarch64/`,
+  QEMU runner present). Software-refill (MIPS-like) → reuse the refill-handler
+  theorem; but **no upstream Sail model exists**, so hand-write from the manual and
+  differential-test against QEMU's loongarch64 TCG (the only oracle).
+- **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
+  onto coq 8.20; see `rigor-trust-line.md` §6.
+- **Compiler-verification / trust-boundary relocation (far future)** — the
+  Singularity/Midori direction (`~/src/frankenstein`, `~/src/organ-bank`) moves the
+  security boundary from the unverifiable MMU to the verifiable compiler/runtime;
+  K-specs (`organ-ir.k`, `perceus-claims.k`) are the seed. See `rigor-trust-line.md`.

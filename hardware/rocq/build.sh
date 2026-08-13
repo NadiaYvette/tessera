@@ -71,5 +71,9 @@ axiom_free shootdown_iris  wait_spec
 axiom_free shootdown_iris  pending_token_delete
 axiom_free shootdown_iris  auth_frag_gset_to_gmap
 axiom_free shootdown_iris  pending_tokens_split
+axiom_free shootdown_iris  remote_spec
+axiom_free shootdown_iris  wait_cnt_spec
+axiom_free shootdown_iris  fork_remotes_spec
+axiom_free shootdown_iris  broadcast_spec
 
 echo "OK: hardware model generated and checked (axiom-free)."
