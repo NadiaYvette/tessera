@@ -183,7 +183,7 @@ Section proof.
   Context `{!heapGS Σ, !spawnG Σ, !sdG Σ}.
   Let N := nroot .@ "sd".
 
-  Definition sd_inv (γ γtok : gname) (pte tlb go cnt : loc) (n : nat) : iProp Σ :=
+  Definition sd_inv (γ γtok : gname) (tlb go cnt : loc) (n : nat) : iProp Σ :=
     (∃ (b : bool) (m : gmap nat (exclR unitO)) (k : nat),
        go ↦ #b ∗
        cnt ↦ #k ∗
@@ -202,6 +202,52 @@ Proof.
   iDestruct (own_op with "H") as "[Hm _]".
   by iFrame.
 Qed.
+
+  (* -------- ghost helpers: pending_map = big_opS, fragment splitting -------- *)
+
+  Lemma auth_frag_gset_to_gmap {A : cmra} `{Countable K} (x : A) (S : gset K) :
+    ◯ (gset_to_gmap x S) ≡ [^op set] j ∈ S, ◯ {[j := x]}.
+  Proof.
+    apply (set_ind_L (λ S, ◯ (gset_to_gmap x S) ≡ [^op set] j ∈ S, ◯ {[j := x]})).
+    - cbn. rewrite /auth_frag /view_frag.
+      rewrite gset_to_gmap_empty big_opS_empty. reflexivity.
+    - intros i X Hi IH.
+      rewrite gset_to_gmap_union_singleton.
+      rewrite insert_singleton_op; [| apply lookup_gset_to_gmap_None, Hi].
+      rewrite auth_frag_op big_opS_insert; [| exact Hi].
+      by rewrite IH.
+  Qed.
+
+  Lemma pending_tokens_split γ n :
+    own γ (◯ (pending_map n)) ⊢ [∗ set] j ∈ all_cores n, own γ (◯ {[j := Excl ()]}).
+  Proof.
+    rewrite /pending_map.
+    setoid_rewrite (auth_frag_gset_to_gmap (A := exclR unitO) (Excl ()) (all_cores n)).
+    apply big_opS_own_1.
+  Qed.
+
+  (* -------- the wait loop -------- *)
+
+  Lemma wait_spec (γ γtok : gname) (tlb go cnt : loc) (n : nat) :
+    {{{ inv N (sd_inv γ γtok tlb go cnt n) }}}
+      wait #go
+    {{{ RET #(); True }}}.
+  Proof.
+    iIntros (Φ) "#HI HΦ".
+    iLöb as "IH" forall (Φ).
+    wp_rec. wp_pures.
+    wp_bind (! #go)%E.
+    iInv "HI" as (b m k) "(>Hgo & >Hcnt & >Hauth & >Htlbor & >Hpure)" "Hclose".
+    iDestruct "Hpure" as %Hpure.
+    wp_load.
+    destruct b.
+    - iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
+      { iNext. iExists true, m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
+      iModIntro. wp_pures. by iApply "HΦ".
+    - iMod ("Hclose" with "[Hgo Hcnt Hauth Htlbor]") as "_".
+      { iNext. iExists false, m, k. iFrame "Hgo Hcnt Hauth Htlbor". iPureIntro. done. }
+      iModIntro. wp_pures. by iApply ("IH" with "HΦ").
+  Qed.
 
 End proof.
 
