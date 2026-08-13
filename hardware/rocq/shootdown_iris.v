@@ -468,7 +468,17 @@ Qed.
     reflexivity.
   Qed.
 
-  (* -------- the leader: setup, fork, wait -------- *)
+  (* -------- the leader: setup, fork, wait --------
+
+     Reification bridge (S2.0 -> S2.1): the pure corollary `shootdown_empty_cores`
+     (shootdown.v) cites `shootdown_correct` to conclude `translate = None /\
+     tlb_lookup = None` on every core for the machine whose cores are n copies of
+     `core_with_root root` and whose leaf PTE for `va` is removed. The post-state
+     here (`pte ↦ encode_pte invalid_pte`, and per-core `tlb[j] ↦ encode_tlb None`
+     held in the invariant once every remote has acked) decodes to exactly that
+     machine via `decode_pte_encode` / `decode_tlb_encode`. NB: the program writes
+     an *invalid* leaf PTE (break-before-make) where `shootdown` *removes* the
+     entry — both fault the walk, but they are distinct operations. *)
 
   Lemma broadcast_spec (n : nat) :
     {{{ ⌜0 < n⌝ }}} broadcast #n

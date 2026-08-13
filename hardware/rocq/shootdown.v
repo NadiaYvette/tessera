@@ -89,3 +89,42 @@ Proof.
     + apply (shootdown_core root mem va c). apply (Forall_inv Hroot).
     + apply IH. apply (Forall_inv_tail Hroot).
 Qed.
+
+(* ============================================================
+   The S2.1 reification bridge: the broadcast's reified post-state.
+   ============================================================ *)
+
+(* An empty TLB is unchanged by SFENCE.VMA — nothing cached to drop. *)
+Lemma sfence_vma_va_empty (c : Core) (va : mword 64) :
+  c.(Core_tlb) = [] -> sfence_vma_va c va = c.
+Proof.
+  destruct c as [satp tlb]. cbn. intros ->. cbn. reflexivity.
+Qed.
+
+(* SFENCE-ing a list of empty-TLB cores is the identity (list form of the above). *)
+Lemma map_sfence_empty (root : mword 44) (va : mword 64) (n : nat) :
+  List.map (fun c => sfence_vma_va c va) (List.map (fun _ => core_with_root root) (seq 0 n)) =
+  List.map (fun _ => core_with_root root) (seq 0 n).
+Proof.
+  rewrite List.map_map.
+  apply List.map_ext_in. intros a _. apply sfence_vma_va_empty. reflexivity.
+Qed.
+
+(* The broadcast's reified post-state (S2.1): n cores sharing the page-table root
+   with empty TLBs, and the leaf PTE for `va` removed. This is `shootdown` applied
+   to the machine whose cores are all `core_with_root root`; citing
+   `shootdown_correct` yields the S2.0 conclusion on every core. *)
+Lemma shootdown_empty_cores (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) :
+  Forall (fun c => translate c (unmap_leaf_mem (core_with_root root) mem va) va = None /\
+                   tlb_lookup c va = None)
+         (List.map (fun _ => core_with_root root) (seq 0 n)).
+Proof.
+  assert (Hroot : Forall (fun c => c.(Core_satp_ppn) = root)
+                        (List.map (fun _ => core_with_root root) (seq 0 n))).
+  { rewrite Forall_map. apply Forall_forall. intros x _. reflexivity. }
+  specialize (shootdown_correct
+    {| Machine_mem := mem;
+       Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n) |}
+    root va Hroot) as H.
+  cbn in H. rewrite map_sfence_empty in H. exact H.
+Qed.
