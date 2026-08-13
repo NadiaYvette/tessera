@@ -63,6 +63,49 @@ Proof.
     + cbn [read_pte]. rewrite E. exact IH.
 Qed.
 
+(* The PTE store: write `p` at physical address `a`, inserting the slot if it is
+   not already present (a store, unlike `remove_entry`'s delete). This is the
+   break-before-make write the broadcast program performs. *)
+Fixpoint write_entry (mem : list MemEntry) (a : mword 56) (p : Pte) : list MemEntry :=
+  match mem with
+  | [] => [{| MemEntry_addr := a; MemEntry_pte := p |}]
+  | e :: rest =>
+      if eq_vec (e.(MemEntry_addr)) a then {| MemEntry_addr := a; MemEntry_pte := p |} :: rest
+      else e :: write_entry rest a p
+  end.
+
+(* After writing `p` at `a`, the walk reads `p` back at `a`. *)
+Lemma read_pte_after_write (mem : list MemEntry) (a : mword 56) (p : Pte) :
+  read_pte (write_entry mem a p) a = Some p.
+Proof.
+  induction mem as [| e rest IH]; cbn [write_entry].
+  - cbn [read_pte]. rewrite eq_vec_refl. reflexivity.
+  - destruct (eq_vec (e.(MemEntry_addr)) a) eqn:E.
+    + cbn [read_pte]. rewrite eq_vec_refl. reflexivity.
+    + cbn [read_pte]. rewrite E. exact IH.
+Qed.
+
+(* Writing at `a` leaves every *other* address untouched. *)
+Lemma read_pte_after_write_other (mem : list MemEntry) (a b : mword 56) (p : Pte) :
+  a <> b -> read_pte (write_entry mem a p) b = read_pte mem b.
+Proof.
+  intros Hne. induction mem as [| e rest IH]; cbn [write_entry].
+  - simpl.
+    assert (Hq : eq_vec a b = false) by (apply eq_vec_false_iff; intro H; apply Hne; exact H).
+    rewrite Hq. reflexivity.
+  - destruct (eq_vec (e.(MemEntry_addr)) a) eqn:Ea.
+    + apply eq_vec_true_iff in Ea.
+      simpl.
+      assert (Hq1 : eq_vec a b = false) by (apply eq_vec_false_iff; intro H; apply Hne; exact H).
+      rewrite Hq1.
+      assert (Hq2 : eq_vec (e.(MemEntry_addr)) b = false).
+      { apply eq_vec_false_iff. intro H. apply Hne. rewrite <- H. rewrite <- Ea. reflexivity. }
+      rewrite Hq2. reflexivity.
+    + simpl. destruct (eq_vec (e.(MemEntry_addr)) b) eqn:Eb.
+      * reflexivity.
+      * exact IH.
+Qed.
+
 (* After SFENCE.VMA-by-VA, the TLB no longer answers for that VA. *)
 Lemma find_tlb_absent_after_filter (entries : list TlbEntry) (vpn : mword 27) (off : mword 12) :
   find_tlb (filter_tlb entries vpn) vpn off = None.

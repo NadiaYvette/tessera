@@ -128,3 +128,69 @@ Proof.
     root va Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.
+
+(* ============================================================
+   The break-before-make variant: invalidate the leaf PTE (write an invalid PTE)
+   rather than remove it — the faithful model of the broadcast program.
+   ============================================================ *)
+
+(* Per-core: after the leaf PTE is written invalid and this core's TLB is
+   invalidated, the core neither translates `va` nor answers from its TLB. *)
+Lemma invalidate_shootdown_core (root : mword 44) (mem : list MemEntry) (va : mword 64) (p : Pte) (c : Core) :
+  p.(Pte_valid) = false ->
+  c.(Core_satp_ppn) = root ->
+  translate (sfence_vma_va c va) (invalidate_leaf_mem (core_with_root root) mem va p) va = None /\
+  tlb_lookup (sfence_vma_va c va) va = None.
+Proof.
+  intros Hinv Hsatp. split.
+  - rewrite translate_sfence_invariant.
+    rewrite (translate_satp_congr c (core_with_root root) (invalidate_leaf_mem (core_with_root root) mem va p) va Hsatp).
+    unfold invalidate_leaf_mem.
+    destruct (leaf_addr (core_with_root root) mem va) as [a |] eqn:Hl.
+    + apply (invalidate_leaf_faults (core_with_root root) mem va a p Hl Hinv).
+    + apply (leaf_addr_none_implies_translate_none (core_with_root root) mem va Hl).
+  - apply sfence_vma_va_clears.
+Qed.
+
+(* The invalidate-shootdown: write the leaf PTE for `va` to invalid `p` and
+   invalidate every core's TLB (break-before-make), vs `shootdown`'s removal. *)
+Definition invalidate_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) : Machine :=
+  {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
+     Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores) |}.
+
+Theorem invalidate_shootdown_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  p.(Pte_valid) = false ->
+  Forall (fun c => c.(Core_satp_ppn) = root) m.(Machine_cores) ->
+  Forall (fun c => translate c (invalidate_shootdown m root va p).(Machine_mem) va = None /\
+                   tlb_lookup c va = None)
+         (invalidate_shootdown m root va p).(Machine_cores).
+Proof.
+  destruct m as [cores mem]. cbn.
+  intros Hinv Hroot.
+  unfold invalidate_shootdown; cbn.
+  rewrite Forall_map.
+  induction cores as [| c cs IH].
+  - constructor.
+  - constructor.
+    + apply (invalidate_shootdown_core root mem va p c Hinv). apply (Forall_inv Hroot).
+    + apply IH. apply (Forall_inv_tail Hroot).
+Qed.
+
+(* The invalidate variant of the reification bridge: n empty-TLB cores sharing
+   the root, with the leaf PTE written invalid — cites `invalidate_shootdown_correct`. *)
+Lemma invalidate_shootdown_empty_cores (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) (p : Pte) :
+  p.(Pte_valid) = false ->
+  Forall (fun c => translate c (invalidate_leaf_mem (core_with_root root) mem va p) va = None /\
+                   tlb_lookup c va = None)
+         (List.map (fun _ => core_with_root root) (seq 0 n)).
+Proof.
+  intros Hinv.
+  assert (Hroot : Forall (fun c => c.(Core_satp_ppn) = root)
+                        (List.map (fun _ => core_with_root root) (seq 0 n))).
+  { rewrite Forall_map. apply Forall_forall. intros x _. reflexivity. }
+  specialize (invalidate_shootdown_correct
+    {| Machine_mem := mem;
+       Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n) |}
+    root va p Hinv Hroot) as H.
+  cbn in H. rewrite map_sfence_empty in H. exact H.
+Qed.

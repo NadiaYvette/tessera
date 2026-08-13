@@ -66,10 +66,14 @@ axiom_free coherence       unmap_correct
 axiom_free coherence       unmap_without_flush_breaks_coherence
 axiom_free coherence_leaf  unmap_leaf_correct
 axiom_free coherence_leaf  unmap_leaf_without_flush_breaks_coherence
+axiom_free coherence_leaf  invalidate_leaf_faults
+axiom_free coherence_leaf  invalidate_leaf_correct
 axiom_free shootdown       shootdown_correct
 axiom_free shootdown       sfence_vma_va_empty
 axiom_free shootdown       map_sfence_empty
 axiom_free shootdown       shootdown_empty_cores
+axiom_free shootdown       invalidate_shootdown_correct
+axiom_free shootdown       invalidate_shootdown_empty_cores
 axiom_free shootdown_iris  wait_spec
 axiom_free shootdown_iris  pending_token_delete
 axiom_free shootdown_iris  auth_frag_gset_to_gmap

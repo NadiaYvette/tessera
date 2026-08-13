@@ -154,6 +154,75 @@ Proof.
 Qed.
 
 (* ============================================================
+   Break-before-make: write an invalid PTE (the broadcast's step 1).
+   ============================================================ *)
+
+(* The break-before-make unmap: write an *invalid* PTE at the leaf slot (rather
+   than removing the entry). Mirrors the broadcast program's `pte <- invalid_pte`. *)
+Definition invalidate_leaf_mem (core : Core) (mem : list MemEntry) (va : mword 64) (p : Pte) : list MemEntry :=
+  match leaf_addr core mem va with
+  | Some a => write_entry mem a p
+  | None => mem
+  end.
+
+(* Writing an invalid PTE at the resolved leaf slot faults the hardware walk at
+   level 0 — the same conclusion as `leaf_addr_removal_faults`, but for the
+   break-before-make write instead of the entry removal. *)
+Lemma invalidate_leaf_faults (core : Core) (mem : list MemEntry) (va : mword 64) (a : mword 56) (p : Pte) :
+  leaf_addr core mem va = Some a ->
+  p.(Pte_valid) = false ->
+  translate core (write_entry mem a p) va = None.
+Proof.
+  intros H Hinv. unfold leaf_addr in H.
+  destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va))) as [p2 |] eqn:Hl2.
+  - simpl in H. destruct (p2.(Pte_valid)) eqn:Ev2.
+    + simpl in H. destruct (is_leaf p2) eqn:El2.
+      * simpl in H. discriminate.
+      * simpl in H. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |] eqn:Hl1.
+        -- simpl in H. destruct (p1.(Pte_valid)) eqn:Ev1.
+           ++ simpl in H. destruct (is_leaf p1) eqn:El1.
+              ** simpl in H. discriminate.
+              ** simpl in H. injection H as Ha.
+                 unfold translate. cbn.
+                 destruct (eq_vec a (pte_address core.(Core_satp_ppn) (vpn2 va))) eqn:Eroot.
+                 --- apply eq_vec_true_iff in Eroot.
+                     rewrite <- Eroot. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                 --- apply eq_vec_false_iff in Eroot.
+                     rewrite (read_pte_after_write_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) p Eroot).
+                     rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn.
+                     destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
+                     ---- apply eq_vec_true_iff in El1a.
+                          rewrite <- El1a. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                     ---- apply eq_vec_false_iff in El1a.
+                          rewrite (read_pte_after_write_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) p El1a).
+                          rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn.
+                          rewrite Ha. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+           ++ simpl in H. discriminate.
+        -- simpl in H. discriminate.
+    + simpl in H. discriminate.
+  - simpl in H. discriminate.
+Qed.
+
+(* Break-before-make WITH its flush: invalidate + SFENCE.VMA, the faithful model
+   of the broadcast program's step 1+2. *)
+Definition invalidate_leaf (core : Core) (mem : list MemEntry) (va : mword 64) (p : Pte) : Core * list MemEntry :=
+  (sfence_vma_va core va, invalidate_leaf_mem core mem va p).
+
+Lemma invalidate_leaf_correct (core : Core) (mem : list MemEntry) (va : mword 64) (p : Pte) :
+  p.(Pte_valid) = false ->
+  let '(c, m) := invalidate_leaf core mem va p in
+  translate c m va = None /\ tlb_lookup c va = None.
+Proof.
+  intros Hinv. unfold invalidate_leaf. simpl. split.
+  - rewrite translate_sfence_invariant.
+    unfold invalidate_leaf_mem.
+    destruct (leaf_addr core mem va) as [a |] eqn:Hl.
+    + apply (invalidate_leaf_faults core mem va a p Hl Hinv).
+    + apply (leaf_addr_none_implies_translate_none core mem va Hl).
+  - apply sfence_vma_va_clears.
+Qed.
+
+(* ============================================================
    The coherence theorems for leaf removal (the §4 crux).
    ============================================================ *)
 
