@@ -91,3 +91,26 @@ re-establishes `TLB ⊆ mapping` on every core — the concurrent analogue of
 
 Build the SC Iris proofs: `cd coq && ./build.sh`. Build the weak-memory proofs:
 `cd coq/weak && ./build.sh`.
+
+## pgcl #143 — the count-correct per-gather PIN (`coq/pin_ledger.v`, `cbmc/`)
+
+The #143 desktop-blocking corruption (shared `libcef.so` clusters double-freed → Electron
+`int3`) is the *reincarnation*: a racer (`lru_add_drain` / COW put / shmem eviction) frees a
+cluster while an `mmu_gather` still owes a deferred put on it → reuse-while-owed → the
+double-free the `r2diag2` boot caught 68×. The **r3pin** fix makes each gather take its own
+dedicated `folio_get` (the *pin*) at `__tlb_remove_folio_pages`, dropped 1:1 at discharge,
+so `owing ≤ refs` holds by construction and no premature free is possible — cross-gather
+included (the case that broke the earlier per-cpu `in_gflush` gate and the count gate).
+
+- **Coq** (`coq/pin_ledger.v`, plain Coq, all `Qed`): the ledger `⟨refs, owing⟩` with
+  `owing_not_freed`, `racer_cannot_free`, `two_gathers_exactly_once`,
+  `last_discharge_frees_once`, and `floor_refrees_stale` (why the refcount-floor band-aid
+  *manufactures* the double-free). This is the counting obligation the Iris existence-ref
+  proofs (`refcount_race.v` / `rmap_defer.v`) rely on, made cross-gather; it mirrors Lean
+  `proof/Tessera/GatherLedger.lean` (axiom-clean, `propext`/`Quot.sound`).
+- **CBMC** (`cbmc/`, `./run.sh`): the same property on the *real* `folios_put_refs` floor
+  arithmetic, with CBMC enumerating every racer interleaving. `pin_reincarnation.c` is
+  `FAILED` at PIN=0 (reproduces the bug, so the check bites) and `SUCCESSFUL` at PIN=1 (the
+  pin fixes it); `pin_crossgather.c` keeps the balanced case clean. Kernel sites:
+  `mm/mmu_gather.c` (`__tlb_remove_folio_pages_size`) + `mm/swap_state.c`
+  (`free_pages_and_swap_cache`, `this_refs += 1`).

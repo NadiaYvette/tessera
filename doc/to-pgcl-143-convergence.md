@@ -213,3 +213,341 @@ with your `encoded_page` / cluster-batching, so a complete patch would be guessw
 you the obligation, both routes, the exact sites, and the skeleton to finalize against your accounting.
 Pick a route, A/B on the laptop, hand back the `bad_page` count, and I confirm it against
 `Incarnation.pinned_inc_correct`.
+
+## 12. Reincarnation UAF PINNED on the laptop — Route 2 formalized (`GatherLedger`), phantom-site audit
+
+The **incarnation-stamp detector** (stamp the gather-owed pfn at `__tlb_remove_folio_pages`, check it at
+`free_unref_folios` — the runtime form of `Incarnation.probeFires`) pinned R12's path-independent core to
+one concrete mechanism on the laptop: **`PGCL143-REINCARN` fired ~1840×** — a pfn **freed by a non-gather
+path while the gather still owed its deferred `nr`-ref free**. The `bad_page` is an `active|swapbacked`
+folio freed while on the LRU (`ts > free_ts`). Three concurrent freers drive the refcount to 0 inside the
+flush window (each drops the folio's *non-mapping* ref):
+
+| racer | site | share |
+|---|---|---|
+| **LRU batch drain** | `folio_batch_move_lru` ← `lru_add` (drops the `lru_add` batch ref) | ~1000 (dominant) |
+| **COW old-folio put** | `wp_page_copy` | ~274 |
+| **shmem/tmpfs eviction** | `shmem_undo_range` ← `shmem_evict_inode` ← `__fput` | ~40 (the tmpfs insight, vindicated) |
+
+**Two corrections this boot forced.** (1) The R17 "mapcount undercount" was a **detector artifact** —
+`present_before` was measured at zap *entry* (pre-clear), so every legit last-unmap tripped it
+(`viafloor=1` proved the floor's own removes did it). **The floor WORKS**; `folio_mapped()` is exact. (2)
+The over-remove is **not** a mapcount bug at all — it is the **deferred-FREE phantom**: the zap defers all
+`nr` refs (c01720e, `zap_present_ptes → __tlb_remove_folio_pages(.., nr, false) → free_pages_and_swap_cache`
+drops `nr`) *believing the folio holds `nr` refs*; the folio's real refcount is **lower** (the phantom), so
+a racer reaches 0 first → free → reuse → the flush's deferred `nr`-drop lands on the next incarnation.
+
+**Modeled — `proof/Tessera/GatherLedger.lean` (axiom-clean), the pgcl-specific form of Route 2 as a CODE
+SPEC.** It refines `Deferred`/`Incarnation` with the split the boot made concrete:
+
+- refcount SPLITS by origin: `refs = base + genuine`, where `base` = the LRU/page-cache/alloc ref **the
+  three racers drop**, `genuine` = mapping refs actually taken (one real `folio_get` per present sub-PTE).
+- **`Genuine` (Route 2): `genuine = mapped`** — the `Counters` per-sub-PTE `refcount` discipline read at
+  the folio level (`RefTracksPresent`, preserved by every `addk`/`remk` with a one-line proof).
+- `fix_zap_pinned` + **`fix_survives_base_drop`**: under `Genuine`, the gather's `owed = nr ≤ mapped =
+  genuine ≤ refs`, so dropping the **entire base** (all three racers at once) still leaves `refs = mapped
+  ≥ nr > 0` — the folio is live for the whole flush window. Reincarnation is **structurally impossible**.
+- `phantom_freed_while_owed` + `phantom_run_underflows`: the negation (`genuine < mapped`) reincarnates and
+  drives the refcount **negative** — the exact laptop `bad_page` — via `Deferred.unpinned_freed_while_owed`.
+- **`fix_no_reincarnation`**: the per-mm `RefTracksPresent`, composed across two sharing mms, discharges
+  `Incarnation.pinned_inc_correct` for all interleavings. This is Route 2's obligation, mechanized.
+
+**So Route 2 is confirmed as the discharge**, and the fix is a *ledger* fix, not a new ref/bit: make every
+site keep `refcount` in lockstep with the present-set per sub-PTE. The `GatherLedger` "FIX-CODE OBLIGATIONS"
+section maps each kernel site to the invariant it must preserve.
+
+### The static ref-balance audit — which site holds the phantom
+
+Checking each site against `RefTracksPresent` (ADD installs exactly `nr` genuine refs for `nr` present
+sub-PTEs; the zap defers exactly `nr`):
+
+| site | `mm/memory.c` | ref move | vs present | verdict |
+|---|---|---|---|---|
+| `do_anonymous_page` (order-0 cluster) | ~6360 | `folio_ref_add(rss-1)` + birth | `rss` | **BALANCED** |
+| `map_anon_folio_pte_nopf` (large anon) | 6092/6113 | `folio_ref_add(nr_ptes-1)` + birth | `set_ptes(nr_ptes)` | **BALANCED** |
+| `copy_present_ptes` (fork, all 4 branches) | 1215–1371 | `folio_ref_add(nr)` (or sub-back on EAGAIN) | `nr` | **BALANCED** |
+| anon COW clustering (old + new folio) | 4460–4566 | `−(extra+1)` old / `+(1+extra)` new | `extra+1` each | **BALANCED** |
+| zap defer (owed side) | 2104 | `__tlb_remove_folio_pages(.., nr, false)` | clears `nr` | **owed = nr (correct IF map side balanced)** |
+
+**Every core anon map/unmap path preserves the invariant.** The audit then completed over the FULL
+anon/swapbacked cycle — 13 sites: `do_anonymous_page`, `map_anon_folio_pte_nopf`, fork `copy_present_ptes`,
+`wp_page_copy` (COW), `do_swap_page` (swap-in), `try_to_unmap_one` (swap-out freer), `remove_migration_pte`
+/ `try_to_migrate_one`, `finish_fault`/`set_pte_range`, `filemap_map_folio_range`, shmem, and the zap
+defer. **ALL BALANCED** — ref-add multiplier == present-count multiplier at every site; `set_ptes(ptep,
+pte,n)` writes exactly `n` sub-PTEs so the two are directly comparable. The zap's *former* eager
+`folio_ref_sub(nr-1)` (the real over-put on the anon/large class) is already fixed to defer all `nr`.
+
+### The audit REFUTES the static phantom — and by the model, that means REINCARN lies
+
+There is **no `Folio.Phantom` at any enumerated site.** By `GatherLedger.fix_no_reincarnation`, balanced
+accounting (`Genuine`) makes the reincarnation **structurally impossible** — so REINCARN's ~1840 fires
+cannot be a true phantom. They are a **detector artifact**, the third of this campaign (after STILL-MAPPED
+and file-overput, both stubbed):
+
+- The gather-owes **stamp is set at every deferred free** (`mmu_gather.c:210`) and **cleared only when the
+  pfn is actually freed** (`page_alloc.c:3037-3038`) — there is NO clear when a gather flushes but the pfn
+  survives.
+- A shared/cached cluster (mapped in >1 mm, or held by swapcache/LRU — ubiquitous under fork+mmap) has
+  refcount > 0 after its gather's flush, so **its stamp lingers**. When it is later *legitimately* freed by
+  a non-gather path — the **LRU batch drain** (the dominant "racer", ~1000) — `gather_owes[gi]==pfn` still
+  holds and `in_gflush==0`, so REINCARN warns. **False positive.**
+- On balanced accounting a *true* positive is impossible: the owed ref is a real folio ref, so refcount
+  cannot reach 0 while a gather still owes. The detector's premise ("refcount reached 0 despite the
+  gather's deferred nr refs") presupposes the phantom the audit just ruled out.
+
+**Detector fix (for a trustworthy next boot):** clear `gather_owes[gi]` when the gather **discharges** its
+owe (in the `in_gflush` window at `free_pages_and_swap_cache`), not only when the pfn is freed. Then a
+lingering stamp at free-time genuinely means "a gather deferred this and has NOT yet flushed" — a real
+reincarnation.
+
+### The laptop's OWN journal settles it — the fix WORKS, REINCARN is the artifact (2026-07-01, no reboot)
+
+The persistent journal (15 boots today) gives the verdict directly. Counting our REINCARN vs the KERNEL's
+own `BUG: Bad page state` (from `bad_page()`, a string we do not emit) per boot:
+
+| boot | kernel | REINCARN (ours) | `BUG: Bad page state` (kernel's) |
+|---|---|---|---|
+| −14 | r17fp | 0 | **26** |
+| −12 | fop | 0 | **16** |
+| −10 | r17p2 | 0 | **7** |
+| −8 | r17p2d | 0 | **50** |
+| −6 | spur | 0 | **32** |
+| −4 | corr | 0 | **6** |
+| **−2** | **reinc** | **1060** | **0** |
+| **−1** | **reinc** | **780** | **1** |
+
+**The deferred-free + balanced-accounting fix drove the kernel's real `bad_page` from 7–50/boot down to
+0–1/boot** — the reincarnation corruption is essentially CLOSED. The 1840 REINCARN fires are uncorrelated
+with real corruption (1060 fires / 0 bad_page on boot −2), and their freer stacks are all LEGITIMATE frees
+carrying a stale `zap_present_ptes` stamp: `shmem_undo_range`←`shmem_evict_inode` (eviction),
+`wp_page_copy`←`folio_batch_move_lru` (COW→LRU drain), bare LRU drain. **REINCARN is the artifact, from the
+live logs, no reboot needed** — the model + audit predicted exactly this.
+
+**The single residual (boot −1, pfn 0x53d0e).** `refcount:0 mapcount:0` (counts CLEAN — no phantom, as the
+audit found), but `active|swapbacked` set at free (`PAGE_FLAGS_CHECK_AT_FREE`), and `ts > free_ts`: freed by
+an LRU drain, reused ~11 ms later by `wp_page_copy` (COW), freed again with stale LRU flags. This is a
+**freed-while-on-LRU flag/isolation race, NOT a refcount phantom** — a different, much rarer mechanism
+(1/boot, near the noise floor; a single `bad_page` leaks one page and continues, it does not kill init).
+The boot blocker (GUI lockup) is therefore decoupled from the reincarnation strand and lives elsewhere
+(GPU/DRM under pgcl; the reclaim stale-TLB residual). Route 2's obligation (`RefTracksPresent`) is met and
+verified in the field; the reincarnation UAF is closed.
+
+**The branch point.** If the KERNEL's own `bad_page` did NOT fire (only our REINCARN did), the
+reincarnation strand is CLOSED as an artifact and the boot blocker is elsewhere (the residual reclaim
+stale-TLB on the RO code page, or the placement thread). If `bad_page` DID fire, then since the static
+accounting is balanced, the fault is **dynamic** — a concurrency/ordering/lost-update gap that per-site
+static balance cannot see (Property-2 territory); the discharge is then the **atomic ordering pin**
+(Route 1: `folio_get` at gather-record, `folio_put` after the flush, take/release 1:1), NOT a static
+rebalance — Route 2's obligation (`RefTracksPresent`) is already met.
+
+## 13. reinc #36 boot — the fix WORKS, and the real boot blocker is pinned (freed-while-on-LRU)
+
+The discharge-clear kernel (#36) booted and settled the picture. It was a net win: the REINCARN storm was
+cut ~60% (1000→411, less console spam), so the system got FURTHER — **login succeeded**, apps tried to
+start — which is exactly why it reached and EXPOSED the real remaining bug. `softlockup_all_cpu_backtrace=1`
+delivered a 122-frame all-CPU NMI dump (sysrq L/W did not survive the wedge to disk).
+
+**The count-side stays closed; the boot blocker is a lifecycle/ordering bug — and it UNIFIES §12's residual
+with the pcp-lock wedge.** 12 kernel `bad_page`, all one class: `refcount:0 mapcount:0` (counts CLEAN),
+`active|swapbacked` set, `free_ts 0` (FIRST free, NOT a reincarnation), from Electron/GUI procs
+(element-desktop, gst-plugin-scan). The stack is decisive:
+
+```
+free_unref_folios              ← bad_page: active set at free (PAGE_FLAGS_CHECK_AT_FREE)
+folios_put_refs
+free_pages_and_swap_cache
+__tlb_batch_free_encoded_pages ← the deferred GATHER FLUSH
+```
+
+**Root cause.** `folios_put_refs`' pgcl refcount FLOOR drives a folio to 0 even when the per-cpu `lru_add`
+batch still holds a reference — the folio is `PG_active` with `PG_lru` CLEAR (queued by `folio_add_lru`,
+not yet drained onto the real LRU). Freeing it there (a) reaches the buddy `PG_active` → `bad_page`, and
+(b) leaves the batch a **dangling pointer** → when it drains it touches a freed/reused page and corrupts
+the **pcp/buddy free-list** (`list_del` in `__rmqueue_pcplist`, `list_add` in `free_frozen_page_commit`) →
+`__rmqueue_pcplist`/`free_pcppages_bulk` spin holding `pcp->lock` → the boot −2 `decay_pcp_high` wedge /
+this boot's `xas`+`lruvec` spin → soft-lockup/RCU-stall → **GUI freeze**. Temporal chain confirmed: first
+`bad_page` 18:19:13 → soft-lockup 18:19:40 → list-corruption 18:19:45. **So the "boot blocker" and the
+"residual" are the same bug** — the floor's "leak-not-corrupt" premise is FALSE for the lru_add-pending
+case (the discarded "excess" is a real batch ref).
+
+**Fix — defensive (landed), root (next).** Defensive: in `folios_put_refs`, re-hold and skip the free when
+`folio_test_active(folio) && !folio_test_lru(folio)` (lru_add-pending), mirroring the existing
+`folio_mapped`/pending gates; the lru_add drain sets `PG_lru` and frees it isolated later. Modeled
+axiom-clean as `LruIsolation.gate_never_frees_pending` (re-hold never frees a pending folio) /
+`floor_frees_pending` (the bare floor does) / `gate_frees_isolated` (no over-leak of dead isolated
+folios). Root fix to follow: drain/unqueue the folio from the lru_add batch before the floor, so PG_lru is
+set and `__page_cache_release` clears PG_active. Build #37 carries the defensive gate.
+
+## 14. Consolidation — the cache-floor fix chain (#143 memory corruption ~closed), the residual, the GPU gate
+
+**Result of the ~15-boot drive on the laptop (2026-07-01).** The #143 memory corruption that killed init/apps
+is ~90% closed and the full allocator wedge is GONE. Campaign trend (kernel `bad_page`, per full-load boot):
+
+```
+   r17fp/fop/r17p2/...  reinc#35  #36   #37   #38   #39(full)  #40   #41
+   26/16/7/50/32/6      0-1       12    55    0     18-26      0     2
+   wedge: lockup ......................  none from #38 on (allocator survives)
+   list-corrupt 16 -> 7,  segfault 8 -> 2  across #37->#41
+```
+
+### The fix chain (kernel branch `drive/143-spurcatch`, each with an axiom-clean Tessera model)
+
+1. **Reincarnation was an artifact.** The incarnation-stamp detector (`PGCL143-REINCARN`, ~1840/boot) is a
+   stale-stamp FALSE POSITIVE (set at defer, cleared only at free; a shared/cached cluster surviving its
+   gather flush leaves a stale stamp). Modeled: `GatherLedger.stamp_false_positive`; discharge-clear in
+   `mmu_gather.c` (clear the owe at flush). The count-side is balanced (13-site audit + `GatherLedger.fix_no_reincarnation`).
+2. **The real bug is a freed-while-still-referenced page-cache over-put.** A file/shmem folio is dropped
+   BELOW its cache floor (`folio_nr_pages` structural refs) while still cached (`mapping != NULL`), freed,
+   and reused -> pcp free-list corruption -> allocator wedge / shared-page corruption. Modeled:
+   `FileCacheRef.floorOk / violated_iff_not_floorOk / rehold_floorOk` (the enforcement restores the
+   invariant, proven). Kernel: cache-floor detector+enforcement in `folios_put_refs` (#38) and `__folio_put`
+   (#39); **must include shmem** (drop the `!swapbacked` exclusion, #40 -- shmem is swapbacked AND cached).
+3. **Anon twin:** freed-while-on-`lru_add`-batch (`LruIsolation.gate_never_frees_pending`), gate in
+   `folios_put_refs`.
+
+`bad_page -> 0` under full load once shmem was included (#40). The enforcement re-holds an over-dropped
+cached folio to its floor (leak-on-race beats corruption); a legit eviction clears `mapping` first, so it
+never fires on a correct free.
+
+### Residual (OPEN -- new task): a pre-existing double-free, NOT gather-owed
+
+`list_del/add corruption` persists at `free_frozen_page_commit`/`__rmqueue_pcplist` (a page on the pcp
+free-list AND reallocated-in-use: `page->lru.prev` = a heap addr) even with `bad_page` ~0 -> segfaults in
+shared libs (`libcef.so`, `libc.so.6`) -> Electron `int3` / gnome-shell GP-fault -> apps can't launch.
+list-corrupt was **16 before** the cache-floor guards and **7 after** -- the guards REDUCE it, so the
+double-free is a SEPARATE pre-existing bug. The `PGCL143-DOUBLEDROP` detector (keyed on `gather_owes`)
+fired 0 -> the double-freed page is not gather-stamped. NEXT: a GENERAL double-free detector (per-pfn
+freed-bitmap: stamp at free, clear at alloc, WARN on the 2nd free's path) to name the culprit without a
+mechanism assumption.
+
+### The desktop gate (OPEN -- task #11): GPU
+
+`i915` is deliberately `id_blocked(a7a0)` under pgcl (`i915_pci.c:971`; GEM/memory not ported to 64KB
+clusters) -> simpledrm software rendering -> GNOME/Electron too slow to be usable regardless of
+correctness. A usable desktop needs i915-on-pgcl (or a minimal GEM/cluster port), independent of #143.
+
+**Bottom line:** #143's memory corruption is essentially fixed and modeled; the two remaining blockers to a
+usable desktop are the residual double-free (correctness, small) and the GPU (performance, large), both now
+their own tasks.
+
+## 15. The residual ROOT found: migration `psub`-collapse (an OVERWRITE, not a free)
+
+Five parallel path audits (COW, reclaim/swap-out, MADV_FREE/DONTNEED, fork/PtShare, migration+file-reclaim)
+plus a manual map-side trace **cleared every refcount path**: map/fault, COW (`wp_page_copy` neighbour-atomic),
+fork (`copy_present_ptes`), reclaim (`try_to_unmap_one` + the `nr_mmupages` contiguous-run walker),
+migration ref/mapcount, MADV_FREE (protective), THP-PMD split, truncate/eviction (gated on `folio_mapped`).
+`refcount == present sub-PTEs + pins + cache_refs` holds at every mutation. **There is no "present-PTE-
+without-a-ref" phantom** — the #17 framing was wrong. PtShare is only hugetlb PMD sharing (no pgcl cluster-PT
+sharing), so that hypothesis is dead too.
+
+The residual is a **physical-placement** bug, independently pinned by two audits and a manual trace:
+
+- `try_to_migrate_one` (`mm/rmap.c`) batches a cluster's contiguous present run (`nr_pages =
+  pvmw.nr_mmupages`, up to 16). `get_and_clear_ptes(nr_pages)` folds the run to **one** `pte`, discarding
+  sub-PTEs 1..nr-1's physical sub-index (`psub`). The old code then carried **sub-PTE 0's** `psub`
+  (`pte_mksub(swp_pte, pte_suboffset(pteval))`, once, outside the loop) into a **single** migration entry
+  and wrote it to **all** `nr_pages` sub-PTEs.
+- `remove_migration_pte` (`mm/migrate.c:552-559`) restores **per-entry** (`pte_mksub(pte,
+  pte_suboffset(oi))`). Every `oi` carries sub 0's `psub`, so **every** virtual sub-page is restored onto
+  destination **sub-frame 0**. For a batch of a shared read-only code cluster, virtual sub-pages 1..nr-1
+  then serve sub-frame 0's bytes -> wrong instructions -> Electron `int3` / invalid-opcode. Ref/mapcount
+  stay balanced, so the free-side gates are blind — a silent overwrite.
+- **Why it boots, then corrupts:** the anon swap-out path (`try_to_unmap_one`) already varies `psub`
+  per fragment (`(pte_suboffset(pteval)>>MMUPAGE_SHIFT) + j`), so *swapped* pages place correctly.
+  Only *migrated* (compaction/kcompactd) pages collapse — rarer than reclaim, hence an intermittent
+  residual, not a dead machine. This is the same "migration mis-places vsub!=psub clusters (overwrite,
+  not free)" mechanism as the original #143 kill-init: the fix commit `1c4ae8671b12` added the per-`oi`
+  restore + single-`pteval` carry but **never made the carry per-sub-PTE**, and replaced the old correct
+  `set_ptes` PFN-stride restore. So this fix **completes** `1c4ae8671b12`.
+
+### The fix (`mm/rmap.c try_to_migrate_one`)
+
+Snapshot each present sub-PTE's `psub` into `pgcl_psub[]` **before** the batched `get_and_clear_ptes`, then
+carry it **per entry** in the migration-entry write loop (`e = pte_mksub(swp_pte, pgcl_psub[i])`). Robust
+for an arbitrary (even permuted) `psub` layout — strictly stronger than mirroring the swap path's
+`first + j` stride, which is correct only for contiguous `psub`. Non-present `pteval` (device/already-
+migrating) has no cluster `psub` and is written as-is. A `PGCL143-MIGRATE-PSUB` ratelimited probe fires
+where the old single-carry would have mis-placed (multi-sub-PTE cluster with distinct sub-frames), so a
+repro boot with the probe HOT and no `int3` confirms closure.
+
+Modeled: `Tessera/MigratePsub.lean` (axiom-clean) — `fixed_preserves` (round-trip identity, unconditional),
+`buggy_collapses` + `buggy_misplaces` (the pre-fix overwrite), `fixed_repairs`, and
+`stride_preserves_only_if_contiguous` (why the robust snapshot beats `first + j`).
+
+### Sibling sites (audited; the `pte_mksub`/`pgcl_psub[]` fix chain had never reached these)
+
+The same "write one `psub` to every sub-PTE of a cluster" shape lived in two more migration-entry / PTE
+writers; both fixed in the same pass, both compile clean:
+
+- **THP freeze-split** — `__split_huge_pmd_locked` (`mm/huge_memory.c`), the `freeze || pmd_is_migration`
+  branch that turns a PMD-mapped THP straight into migration entries, wrote `set_pte_at(pte+i, entry)` with
+  **no `pte_mksub`** -> every entry `psub 0`. Reached when a PMD-mapped anon THP is migrated/compacted
+  (`try_to_migrate_one`'s `TTU_SPLIT_HUGE_PMD` -> `split_huge_pmd_locked(freeze=true)`). Fix: a PMD mapping
+  is linear (vsub==psub), so carry `pte_mksub(entry, (i % PAGE_MMUCOUNT) << MMUPAGE_SHIFT)`. (The
+  device-private twin branch has the same shape but is inert here — GPU/i915 is `id_blocked` under pgcl —
+  and its restore side doesn't read `psub` either; left with a note for the eventual GEM/cluster port.)
+- **userfaultfd `UFFDIO_MOVE`** — `move_present_ptes` (`mm/userfaultfd.c`) built the destination PTE with
+  `folio_mk_pte(src_folio, ...)` (cluster sub-frame 0), dropping the source sub-PTE's `psub`. Fix: carry
+  `pte_mksub(orig_dst_pte, pte_suboffset(orig_src_pte))`. Niche (anon-only), but same family.
+
+`mremap`/`move_ptes` is CLEAN (PFN-stride move preserves each sub-offset); khugepaged is CLEAN by
+construction (all collapse entry points early-return `SCAN_FAIL` under `PAGE_MMUSHIFT`). And the
+`__split_folio_to_order` FILE-tail `_mapcount` clobber that *does* drive free-while-mapped is already gated
+behind `folio_test_anon` (the earlier fix), so it is not a residual.
+
+**Status:** all three fixes + the probe + `Tessera/MigratePsub.lean` compile / build clean (`mm/rmap.o`,
+`mm/huge_memory.o`, `mm/userfaultfd.o`; aggregator axiom-clean). NOT yet committed/pushed (pending user
+review). Next: laptop repro boot (`-pgcl4-...`, `page_owner=on`, full Electron load) and check
+`journalctl -k -b -1 | grep -E 'MIGRATE-PSUB|int3|Bad page|invalid opcode'` — the `PGCL143-MIGRATE-PSUB`
+probe HOT with **no** Electron `int3` confirms the residual is closed.
+
+## 16. -psub laptop boot — migration probe COLD, and the wedge unifies with the double-free
+
+The `-pgcl4-143reinc-pgcl4-143psub` kernel booted (GUI up, apps auto-launched) then wedged
+launching a terminal. Journal (`journalctl -k -b -1`) verdict — honest and decisive:
+
+- **`PGCL143-MIGRATE-PSUB` fired 0×.** No multi-sub-PTE cluster was migrated this boot, so the
+  migration fix (§15) could not have mattered here. It is a proven bug fix, kept, but it was NOT this
+  boot's corruption source.
+- **The residual persists from the DOUBLE-FREE, not migration.** Crashes across shared code
+  (`spotify`→`libcef.so`, `geoclue`→`libp11-kit`, Discord/element/signal/caprine, `gsd-sharing`→`libnm`),
+  `Bad page` 2, `Bad rss-counter` 4 (FILE−/ANON+), `DOUBLEFREE` 6, `CACHEFLOOR` 8, `REINCARN` 373.
+
+**★ Task #15 (the `decay_pcp_high` pcp-lock wedge) is NOT a separate bug — it is downstream of freelist
+corruption.** The `softlockup_all_cpu_backtrace` dump: ~5 CPUs stuck in
+`__list_del_entry_valid_or_report` / `__list_add_valid_or_report.cold` ("list_del corruption. next->prev
+should be X, but was Y"), cpu0 in `kernel_init_pages` (handing out a corrupted page), every other CPU
+spinning `native_queued_spin_lock_slowpath` / `decay_pcp_high` (the `vmstat_update` workers). A CPU runs
+the slow list-corruption *report while holding the pcp lock* → all vmstat workers spin in
+`decay_pcp_high` → soft lockup (CPU#5, 23s) → the machine can't allocate → the terminal launch wedges.
+So #15 closes when the freelist stops corrupting.
+
+**What corrupts the freelist — the madvise gapped-cluster double-free (at source):**
+```
+__x64_sys_madvise → do_madvise → tlb_finish_mmu → __tlb_batch_free_encoded_pages
+  → free_pages_and_swap_cache → folios_put_refs → free_unref_folios      (pfn 0x50ce5 ×4)
+```
+The same one-struct-page cluster folio sits in >1 mmu_gather encoded entry (a gapped cluster is zapped
+as several contiguous runs, each its own `__tlb_remove_folio_pages`), so `free_pages_and_swap_cache`
+batches the SAME folio twice into `folios_put_refs` and the 2nd put lands on an already-freed page. The
+#43 `__free_pages_prepare` guard *fires* (`DOUBLEFREE` 6) but too late — `free_unref_folios` has already
+re-touched the pcp list. Siblings: a **page-table page** double-freed via `tlb_remove_table_rcu` (pfn
+0x14050), and a **btrfs FILE page freed while still cached** by kswapd (pfn 0x5e92a, "non-NULL mapping").
+
+### The source fix (task #18): coalesce a folio's gather entries — `free_pages_and_swap_cache`
+
+Fold every encoded entry of the same cluster folio into ONE `folios_put_refs` slot with the summed
+count, so the folio is put **exactly once** no matter how gapped the cluster — the duplicate never
+reaches `free_unref_folios`, so no double-free, no freelist `list_del`/`list_add` corruption, no pcp-lock
+wedge. Freed once when ref-balanced; at worst a benign leak if under-referenced — never a double-free.
+Runs of one gapped cluster are adjacent in the gather so they share a `folio_batch`; a rare batch-boundary
+straddle is still backstopped by the #43 guard. `mm/swap_state.c` `free_pages_and_swap_cache`, `#if
+PAGE_MMUSHIFT`; compiles clean. Modeled: `DoubleFree.lean` (`entries_double_free` = the pre-fix
+per-entry free double-frees a ≥2-run cluster; `deduped_frees_once` / `deduped_never_double_frees` = the
+coalesced put frees exactly once, structurally, for any run count — axiom-clean).
+
+**Status:** migration psub fix + gather-dedupe both in `drive/143-spurcatch` working tree; building
+`-pgcl4-143dedup`. Expectation: the pcp-lock wedge and most shared-code crashes go with the double-free.
+Residual to watch if crashes persist: the over-defer that makes the double-freed folio under-referenced
+(refcount < present sub-PTEs) — which the dedupe converts from corruption into a leak, then chase — plus
+the `tlb_remove_table_rcu` PT-page double-free and the btrfs free-while-cached.
