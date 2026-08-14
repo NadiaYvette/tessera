@@ -147,6 +147,21 @@ Definition bc_broadcast : expr :=
     bc_fork_remotes ["go"; "ack"; "tlb"; #0; "n"] ;;
     bc_wait_all ["ack"; #0; "n"].
 
+(* Application helpers: the [ # ] literal notation does not survive the list
+   application (it binds to the head via the App coercion), so we write the
+   literal arguments explicitly. *)
+Definition bc_remote_at (go ack tlb : loc) (i : nat) : expr :=
+  App bc_remote [Lit (LitLoc go); Lit (LitLoc ack); Lit (LitLoc tlb); Lit (LitInt (Z.of_nat i))].
+Definition bc_init_acks_at (ack : loc) (n : nat) : expr :=
+  App bc_init_acks [Lit (LitLoc ack); Lit (LitInt 0); Lit (LitInt (Z.of_nat n))].
+Definition bc_fork_remotes_at (go ack tlb : loc) (i n : nat) : expr :=
+  App bc_fork_remotes [Lit (LitLoc go); Lit (LitLoc ack); Lit (LitLoc tlb);
+                       Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
+Definition bc_wait_all_at (ack : loc) (i n : nat) : expr :=
+  App bc_wait_all [Lit (LitLoc ack); Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
+Definition bc_broadcast_at (n : nat) : expr :=
+  App bc_broadcast [Lit (LitInt (Z.of_nat n))].
+
 (* ============================================================
    The ack cell (S2.2b's one-shot buffer, per remote) and the go flag.
    ============================================================ *)
@@ -233,6 +248,107 @@ Lemma bc_machine_step_None (n i : nat) :
   = None.
 Proof.
   cbn. case_decide as H; [exfalso; lia|done].
+Qed.
+
+(* ============================================================
+   The remote: acquire go, clear tlb, release ack.
+   ============================================================ *)
+
+(* A #0 singleton history cannot equal a released history: the latter has a
+   #1 write at a time strictly after its #0. *)
+Lemma singleton_ne_released (t_i ta0 t1 : positive) (V_i Va0 V1 : view) :
+  (ta0 < t1)%positive →
+  ({[t_i := (#0, V_i)]} : absHist) ≠ (<[t1 := (#1, V1)]>{[ta0 := (#0, Va0)]} : absHist).
+Proof.
+  intros Hlt Heq.
+  assert (Hlook : (<[t1 := (#1, V1)]>{[ta0 := (#0, Va0)]} : absHist) !! t1 = Some (#1, V1))
+    by (apply lookup_insert_eq).
+  rewrite <- Heq in Hlook.
+  apply lookup_singleton_Some in Hlook as [Hti Hv].
+  injection Hv as Hv'. congruence.
+Qed.
+
+Lemma bc_remote_spec (γgo : gname) (γtok γack : nat → gname) (go ack tlb : loc) (i n : nat) :
+  ∀ (ζgo : absHist) (t_i : positive) (Vgo V_i : view) tid,
+  {{{ ⌜i < n⌝ ∗ bc_inv_ctx γgo γtok γack go ack tlb n ∗
+      go sy⊒{γgo} ζgo ∗ ⊒Vgo ∗ ⊒V_i ∗
+      (ack >> i)%stdpp sw⊒{γack i} {[t_i := (#0, V_i)]} ∗ (tlb >> i)%stdpp ↦ #☠ }}}
+    bc_remote_at go ack tlb i @ tid; ⊤
+  {{{ RET #☠; True }}}.
+Proof.
+  iIntros (ζgo t_i Vgo V_i tid Φ) "(%Hi & #HI & #Sgo & #SVgo & #SVi & SWack & Htlb) HΦ".
+  rewrite /bc_remote_at /bc_remote.
+  wp_lam.
+  (* -------- acquire go (repeat until #1) -------- *)
+  wp_bind (repeat: !ᵃᶜ(#go))%E.
+  iLöb as "IH".
+  iApply wp_repeat; [done|].
+  iInv (bc_N go) as "INV" "Close". rewrite bc_inv_eq.
+  iDestruct "INV" as "[Hgo Hacks]".
+  rewrite go_released_eq.
+  iDestruct "Hgo" as (ζ t0 t1 V0 V1 Vx) "[>Pts Hpure]".
+  iApply (AtomicSeen_acquire_read with "[$Pts $SVgo]"); [solve_ndisj|..].
+  { by iApply (AtomicSync_AtomicSeen with "Sgo"). }
+  iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Pts)".
+  iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
+  case (decide (t' = t0)) => [Ht0|NEqt0].
+  - subst t'. (* read #0 — keep looping *)
+    iAssert (⌜v' = #0⌝)%I as %Eq0.
+    { iDestruct "Hpure" as "[%Lt1 %Hζ]".
+      iPureIntro.
+      rewrite Hζ in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+      rewrite lookup_insert_ne in Sub2.
+      + rewrite lookup_insert_eq in Sub2. by inversion Sub2.
+      + clear -Lt1. intros ?. subst. lia. }
+    iMod ("Close" with "[Pts Hpure Hacks]").
+    { iIntros "!>". rewrite /bc_inv_def. iFrame "Hacks".
+      rewrite go_released_eq. iExists ζ, t0, t1, V0, V1, _. by iFrame "Pts Hpure". }
+    iIntros "!>". iExists 0. iSplit; [done|].
+    iIntros "!> !>". by iApply ("IH" with "SWack Htlb HΦ").
+  - (* read #1 — proceed *)
+    iDestruct "Hpure" as "[%Lt1 %Hζ]".
+    rewrite Hζ in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+    have Ht1 : t' = t1.
+    { case (decide (t' = t1)) => [//|NEqt1].
+      exfalso. by rewrite !lookup_insert_ne // in Sub2. }
+    subst t'.
+    rewrite lookup_insert_eq in Sub2. inversion Sub2. subst v'.
+    iMod ("Close" with "[Pts Hacks]").
+    { iIntros "!>". rewrite /bc_inv_def. iFrame "Hacks".
+      rewrite go_released_eq. iExists ζ, t0, t1, V0, V1, _. iFrame "Pts".
+      iPureIntro. split; [exact Lt1|exact Hζ]. }
+    iIntros "!>". iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
+  (* -------- clear own TLB -------- *)
+  wp_op. rewrite Nat2Z.id. wp_write.
+  (* -------- release ack (deposit the cleared tlb) -------- *)
+  wp_op. rewrite Nat2Z.id.
+  iInv (bc_N go) as "INV" "Close". rewrite bc_inv_eq.
+  iDestruct "INV" as "[Hgo Hacks]".
+  iDestruct (big_sepS_delete _ (all_cores n) i with "Hacks") as "[Hack Hacks_rest]".
+  { rewrite elem_of_all_cores. exact Hi. }
+  rewrite ack_cell_eq.
+  iDestruct "Hack" as (ζa b ta0 Va0 Vax) "[>Ptsa >Own]".
+  iDestruct (AtomicPtsTo_AtomicSWriter_agree_1 with "Ptsa SWack") as %->.
+  destruct b.
+  + (* b = true: impossible — the released history has a #1 write, but the
+       concrete writer history is the #0 singleton. *)
+    iDestruct "Own" as (tb Vb [Ltb Hb]) "_".
+    exfalso. exact (singleton_ne_released t_i ta0 tb V_i Va0 Vb Ltb Hb).
+  + (* b = false: the ack cell is still the #0 singleton — release it. *)
+    iDestruct "Own" as %Hown0.
+    iApply (AtomicSWriter_release_write _ _ _ _ V_i Vax #1
+              ((tlb >> i)%stdpp ↦{1} #(encode_tlb None))%I
+              with "[$SWack $Ptsa $Htlb $SVi]"); [solve_ndisj|..].
+    iIntros "!>" (t1' V1') "(%MAX & SeenV1' & [Htlb SWack'] & Ptsa')".
+    iMod ("Close" with "[Hgo Hacks_rest Ptsa' Htlb]"); last first.
+    { iIntros "!>". by iApply "HΦ". }
+    iIntros "!>". rewrite /bc_inv_def. iSplitL "Hgo"; [done|].
+    iApply (big_sepS_delete _ (all_cores n) i).
+    { rewrite elem_of_all_cores. exact Hi. }
+    rewrite ack_cell_eq. iFrame "Hacks_rest".
+    iExists _, true, t_i, V_i, _. iFrame "Ptsa'". iExists t1', V1'. iSplit.
+    { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
+    iRight. by iFrame "Htlb".
 Qed.
 
 End bc_inv.
