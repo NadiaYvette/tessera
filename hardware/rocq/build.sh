@@ -21,6 +21,13 @@ sail --just-check "$SRC"
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
 
+# Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
+# to level 0, while Sail emits record-update notations
+# {[ r 'with' field := e ]} at level 1; the two then have an incompatible
+# prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
+# notations to level 0 to restore coexistence with stdpp's singletons.
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v"
+
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
 cd "$HERE"

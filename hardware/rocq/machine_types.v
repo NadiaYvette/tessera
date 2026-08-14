@@ -108,22 +108,22 @@ Defined.
 
 Notation "{[ r 'with' 'Pte_valid' := e ]}" :=
   match r with Build_Pte _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) =>
-    Build_Pte e f1 f2 f3 f4 f5 end (at level 1).
+    Build_Pte e f1 f2 f3 f4 f5 end (at level 0).
 Notation "{[ r 'with' 'Pte_read' := e ]}" :=
   match r with Build_Pte (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) =>
-    Build_Pte f0 e f2 f3 f4 f5 end (at level 1).
+    Build_Pte f0 e f2 f3 f4 f5 end (at level 0).
 Notation "{[ r 'with' 'Pte_write' := e ]}" :=
   match r with Build_Pte (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) =>
-    Build_Pte f0 f1 e f3 f4 f5 end (at level 1).
+    Build_Pte f0 f1 e f3 f4 f5 end (at level 0).
 Notation "{[ r 'with' 'Pte_exec' := e ]}" :=
   match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) =>
-    Build_Pte f0 f1 f2 e f4 f5 end (at level 1).
+    Build_Pte f0 f1 f2 e f4 f5 end (at level 0).
 Notation "{[ r 'with' 'Pte_user' := e ]}" :=
   match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) =>
-    Build_Pte f0 f1 f2 f3 e f5 end (at level 1).
+    Build_Pte f0 f1 f2 f3 e f5 end (at level 0).
 Notation "{[ r 'with' 'Pte_ppn' := e ]}" :=
   match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ =>
-    Build_Pte f0 f1 f2 f3 f4 e end (at level 1).
+    Build_Pte f0 f1 f2 f3 f4 e end (at level 0).
 #[export]
 Instance dummy_Pte : Inhabited (Pte) := {
   inhabitant := {|
@@ -165,11 +165,11 @@ abstract (
 Defined.
 
 Notation "{[ r 'with' 'TlbEntry_vpn' := e ]}" :=
-  match r with Build_TlbEntry _ (_ as f1) (_ as f2) => Build_TlbEntry e f1 f2 end (at level 1).
+  match r with Build_TlbEntry _ (_ as f1) (_ as f2) => Build_TlbEntry e f1 f2 end (at level 0).
 Notation "{[ r 'with' 'TlbEntry_ppn' := e ]}" :=
-  match r with Build_TlbEntry (_ as f0) _ (_ as f2) => Build_TlbEntry f0 e f2 end (at level 1).
+  match r with Build_TlbEntry (_ as f0) _ (_ as f2) => Build_TlbEntry f0 e f2 end (at level 0).
 Notation "{[ r 'with' 'TlbEntry_perm' := e ]}" :=
-  match r with Build_TlbEntry (_ as f0) (_ as f1) _ => Build_TlbEntry f0 f1 e end (at level 1).
+  match r with Build_TlbEntry (_ as f0) (_ as f1) _ => Build_TlbEntry f0 f1 e end (at level 0).
 #[export]
 Instance dummy_TlbEntry : Inhabited (TlbEntry) := {
   inhabitant := {|
@@ -206,9 +206,9 @@ abstract (
 Defined.
 
 Notation "{[ r 'with' 'Core_satp_ppn' := e ]}" :=
-  match r with Build_Core _ (_ as f1) => Build_Core e f1 end (at level 1).
+  match r with Build_Core _ (_ as f1) => Build_Core e f1 end (at level 0).
 Notation "{[ r 'with' 'Core_tlb' := e ]}" :=
-  match r with Build_Core (_ as f0) _ => Build_Core f0 e end (at level 1).
+  match r with Build_Core (_ as f0) _ => Build_Core f0 e end (at level 0).
 #[export]
 Instance dummy_Core : Inhabited (Core) := {
   inhabitant := {| Core_satp_ppn := inhabitant; Core_tlb := inhabitant
@@ -242,9 +242,9 @@ abstract (
 Defined.
 
 Notation "{[ r 'with' 'MemEntry_addr' := e ]}" :=
-  match r with Build_MemEntry _ (_ as f1) => Build_MemEntry e f1 end (at level 1).
+  match r with Build_MemEntry _ (_ as f1) => Build_MemEntry e f1 end (at level 0).
 Notation "{[ r 'with' 'MemEntry_pte' := e ]}" :=
-  match r with Build_MemEntry (_ as f0) _ => Build_MemEntry f0 e end (at level 1).
+  match r with Build_MemEntry (_ as f0) _ => Build_MemEntry f0 e end (at level 0).
 #[export]
 Instance dummy_MemEntry : Inhabited (MemEntry) := {
   inhabitant := {| MemEntry_addr := inhabitant; MemEntry_pte := inhabitant
@@ -280,9 +280,9 @@ abstract (
 Defined.
 
 Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
-  match r with Build_Machine _ (_ as f1) => Build_Machine e f1 end (at level 1).
+  match r with Build_Machine _ (_ as f1) => Build_Machine e f1 end (at level 0).
 Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
-  match r with Build_Machine (_ as f0) _ => Build_Machine f0 e end (at level 1).
+  match r with Build_Machine (_ as f0) _ => Build_Machine f0 e end (at level 0).
 #[export]
 Instance dummy_Machine : Inhabited (Machine) := {
   inhabitant := {| Machine_cores := inhabitant; Machine_mem := inhabitant

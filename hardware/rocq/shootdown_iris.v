@@ -224,7 +224,7 @@ Local Existing Instances machine_inG.
 Definition machineΣ : gFunctors := #[ghost_varΣ Machine].
 Global Instance subG_machineΣ {Σ} : subG machineΣ Σ → machineG Σ.
 Proof. solve_inG. Qed.
-Definition machine_ctx `{!machineG Σ} (γm : gname) (m : Machine) : iProp Σ := ghost_var γm 1 m.
+Definition machine_ctx `{!machineG Σ} (γm : gname) (m : Machine) : iProp Σ := ghost_var γm (DfracOwn 1) m.
 
 (* A core whose TLB is the reification of an [option TlbEntry]: [None] is an
    empty TLB, [Some e] is the singleton [e]. *)
