@@ -181,14 +181,17 @@ proof-side twin of the litmus `Sometimes` cases and of
 
 ### Pacing
 
-- **S2.2a — two-core over the machine.** Leader + one remote; the data is the concrete
-  `encode_pte invalid_pte` (leader→remote) and `encode_tlb None` (remote→leader).
-  Mirrors `property2/coq/weak/mp_weak.v` but over machine types, citing
-  `invalidate_leaf_*`/`shootdown_correct` for the machine conclusion. Establishes the
-  gpfsl+Machine link end-to-end.
-- **S2.2b — N-core broadcast.** Generalise to N−1 remotes + the ack barrier (the
-  `wait_all_acks` acquire loop); conclude `Forall (translate = None ∧ tlb_lookup =
-  None)` over every core, reifying to `invalidate_shootdown`.
+- **S2.2a — two-core over the machine.** ✅ `hardware/rocq/shootdown_weak.v`
+  (`shootdown_weak_gen_inv`, axiom-free): the leader's `pte <- #(encode_pte invalid_pte)
+  ;; go <-ʳᵉˡ #1` is observed by the remote's `repeat !ᵃᶜ go ;; !pte` — the release/acquire
+  happens-before carries the *machine* PTE value (the gpfsl value model is
+  `LitPoison | LitLoc | LitInt`, so the PTE is bit-packed into a `Z` here).  Combined
+  with `invalid_pte_not_valid` this is "the remote sees the invalid entry".  The
+  remote→leader direction (`tlb <- encode_tlb None ;; ack <-ʳᵉˡ #1`, leader `!ᵃᶜ ack`) is
+  the remaining half, folded into S2.2b.
+- **S2.2b — N-core broadcast.** Add the remote→leader ack round-trip, then generalise to
+  N−1 remotes + the `wait_all_acks` acquire loop; conclude `Forall (translate = None ∧
+  tlb_lookup = None)` over every core, reifying to `invalidate_shootdown`.
 
 ### Trust line (S2.2)
 

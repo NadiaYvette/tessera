@@ -42,13 +42,13 @@ rocq compile $FLAGS shootdown_iris.v
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
 # context (no Axiom / Parameter / Admitted / admit). This is the machine-checked
 # "axiom-free" claim, enforced on every build rather than by hand. ---
-axiom_free() { # $1 = module (no .v), $2 = theorem
-  local mod="$1" thm="$2" out
+axiom_free() { # $1 = module (no .v), $2 = theorem, $3 = optional flags
+  local mod="$1" thm="$2" flags="${3:-$FLAGS}" out
   cat > _axioms.v <<EOF
 Require Import $mod.
 Print Assumptions $thm.
 EOF
-  if ! out="$(rocq compile $FLAGS _axioms.v 2>&1)"; then
+  if ! out="$(rocq compile $flags _axioms.v 2>&1)"; then
     echo "CHECK FAILED: $mod.$thm did not compile:" >&2
     printf '%s\n' "$out" >&2
     rm -f _axioms.v _axioms.vo _axioms.vos _axioms.vok _axioms.glob ._axioms.aux
@@ -90,5 +90,18 @@ axiom_free shootdown_iris  wait_cnt_spec
 axiom_free shootdown_iris  fork_remotes_spec
 axiom_free shootdown_iris  broadcast_spec
 axiom_free shootdown_iris  broadcast_reifies_machine
+
+# --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
+# Requires the vendored gpfsl to be built first: third_party/build.sh.
+REPO="$(dirname "$HW")"
+GP="${GPFSL:-$REPO/third_party/gpfsl/gpfsl}"
+if [ -d "$GP" ]; then
+  WFLAGS="-Q $GP gpfsl $FLAGS"
+  rocq compile $WFLAGS shootdown_weak.v
+  axiom_free shootdown_weak shootdown_weak_gen_inv "$WFLAGS"
+  axiom_free shootdown_weak invalid_pte_not_valid "$WFLAGS"
+else
+  echo "(skip S2.2: gpfsl not found at $GP — run third_party/build.sh first)" >&2
+fi
 
 echo "OK: hardware model generated and checked (axiom-free)."
