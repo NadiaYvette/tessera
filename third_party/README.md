@@ -17,9 +17,16 @@ upstream commits. Clone with:
 | `isla` | https://github.com/rems-project/isla | `f189d5c` | Symbolic execution over Sail models |
 | `islaris` | https://github.com/rems-project/islaris | `c978e10` | Sail→Iris bridge (verified assembly) |
 | `iris` | https://gitlab.mpi-sws.org/iris/iris | `fdc7d5868` | Higher-order concurrent separation logic |
+| `stdpp` | https://gitlab.mpi-sws.org/iris/stdpp | `9c7afbb6` | Dev std++ pinned by the dev Iris above (and by gpfsl) |
+| `gpfsl` | https://gitlab.mpi-sws.org/iris/gpfsl | `907eac66` | iRC11/ORC11 weak-memory separation logic (S2.2) |
 
 Notes:
 - `sail`, `sail-riscv`, and `coq-sail` are pinned at release tags; the rest at the
   upstream HEAD captured at the time of vendoring (2026-08-13).
 - The `SailStdpp` library actually consumed by `hardware/rocq/build.sh` is the opam
   `rocq-sail-stdpp` package; `coq-sail` is vendored here as its source of truth.
+- `stdpp` and `gpfsl` were vendored 2026-08-14 for S2.2 (weak memory). `stdpp` is the
+  exact dev commit `third_party/iris/rocq-iris.opam` pins; `gpfsl` is the rocq-9.2
+  master that compiles against that Iris.
+- Re-point a submodule's `url` in `.gitmodules` at a fork to slide in local patches
+  at no cost when no modification is needed.
