@@ -61,6 +61,17 @@ Definition machine_ctx `{!bcG Σ} (γm : gname) (m : Machine) : vProp Σ :=
 #[global] Instance machine_ctx_objective `{!bcG Σ} γm m : Objective (machine_ctx γm m).
 Proof. rewrite /machine_ctx. apply _. Qed.
 
+(* The leader owns the machine ghost exclusively, so it may step it to any value;
+   faithfulness (the ghost always matches the constrained physical state) is by
+   construction of the proof, exactly as in S2.1's Honesty note. *)
+Lemma machine_ctx_update `{!bcG Σ} (γm : gname) (m m' : Machine) :
+  machine_ctx γm m ⊢ |==> machine_ctx γm m' : vProp Σ.
+Proof.
+  rewrite /machine_ctx. iIntros "Hm".
+  iMod (ghost_var_update m' γm m with "Hm") as "Hm'".
+  iIntros "!>". by iFrame.
+Qed.
+
 (* ============================================================
    Pure helpers: the core set and the machine-at-step-i reification.
    ============================================================ *)
@@ -96,6 +107,13 @@ Proof.
   setoid_rewrite elem_of_difference. setoid_rewrite elem_of_union.
   setoid_rewrite elem_of_singleton. setoid_rewrite elem_of_difference.
   setoid_rewrite elem_of_all_cores. intuition lia.
+Qed.
+
+Lemma all_cores_succ (i : nat) : all_cores (i + 1) = all_cores i ∪ {[i]}.
+Proof.
+  apply set_eq. intro x.
+  rewrite elem_of_union elem_of_singleton !elem_of_all_cores Nat.add_1_r.
+  lia.
 Qed.
 
 (* The machine the leader models at wait-step i: cores 0..i-1 have cleared their
@@ -230,6 +248,15 @@ Definition bc_N (n : loc) := nroot .@ "bcN" .@ n.
 Definition bc_inv_ctx γgo γtok γack go ack tlb n :=
   inv (bc_N go) (bc_inv γgo γtok γack go ack tlb n).
 
+(* The leader's persistent reader context: the SyncSeen view of each ack cell
+   (a #0 singleton at [t j]) plus the SeenView of its allocation view [V j].
+   Derived once from AtomicPtsTo_from_na in the broadcast setup and shared with
+   every wait/read. *)
+Definition bc_sync_ctx (γack : nat → gname) (ack : loc)
+                       (t : nat → positive) (V : nat → view) (n : nat) : vProp :=
+  [∗ set] j ∈ all_cores n,
+    ((ack >> j)%stdpp sy⊒{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j))%I.
+
 (* ============================================================
    Pure reification step.
    ============================================================ *)
@@ -248,6 +275,15 @@ Lemma bc_machine_step_None (n i : nat) :
   = None.
 Proof.
   cbn. case_decide as H; [exfalso; lia|done].
+Qed.
+
+Lemma bc_machine_done_ge (n i : nat) :
+  n ≤ i → bc_machine root va mem n i = broadcast_post_machine root va mem n.
+Proof.
+  intros Hni. rewrite /bc_machine /broadcast_post_machine /reify_machine.
+  f_equal. apply List.map_ext_in. intros j Hj.
+  apply list_elem_of_In in Hj. apply elem_of_seq in Hj.
+  rewrite decide_False; [done|]. lia.
 Qed.
 
 (* ============================================================
@@ -349,6 +385,101 @@ Proof.
     iExists _, true, t_i, V_i, _. iFrame "Ptsa'". iExists t1', V1'. iSplit.
     { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
     iRight. by iFrame "Htlb".
+Qed.
+
+(* ============================================================
+   The leader's ack wait: acquire each ack, advance the machine ghost.
+   ============================================================ *)
+
+Lemma bc_wait_all_spec (γgo : gname) (γtok γack : nat → gname) (go ack tlb : loc) :
+  ∀ (t : nat → positive) (V : nat → view) (i n : nat) tid,
+  {{{ machine_ctx γm (bc_machine root va mem n i) ∗
+      bc_inv_ctx γgo γtok γack go ack tlb n ∗
+      bc_sync_ctx γack ack t V n }}}
+    bc_wait_all_at ack i n @ tid; ⊤
+  {{{ RET #☠; machine_ctx γm (broadcast_post_machine root va mem n) }}}.
+Proof.
+  iIntros (t V i n tid Φ) "(Hmach & #HI & #Sctx) HΦ".
+  rewrite /bc_wait_all_at /bc_wait_all.
+  iLöb as "IH" forall (i Φ).
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - (* i < n: acquire ack[i], then recurse *)
+    wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    (* the persistent sync-view of ack[i] *)
+    iDestruct (big_sepS_elem_of _ (all_cores n) i with "Sctx") as "#[S_i SV_i]".
+    { rewrite elem_of_all_cores. exact Hin. }
+    (* -------- acquire ack[i] (repeat until #1) -------- *)
+    wp_bind (repeat: !ᵃᶜ(#ack +ₗ #i))%E.
+    iLöb as "IHack".
+    iApply wp_repeat; [done|].
+    wp_op. rewrite Nat2Z.id.
+    iInv (bc_N go) as "INV" "Close". rewrite bc_inv_eq.
+    iDestruct "INV" as "[Hgo Hacks]".
+    iDestruct (big_sepS_delete _ (all_cores n) i with "Hacks") as "[Hack Hacks_rest]".
+    { rewrite elem_of_all_cores. exact Hin. }
+    rewrite ack_cell_eq.
+    iDestruct "Hack" as (ζa b ta0 Va0 Vax) "[>Ptsa Own]".
+    iApply (AtomicSeen_acquire_read with "[$Ptsa $SV_i]"); [solve_ndisj|..].
+    { by iApply (AtomicSync_AtomicSeen with "S_i"). }
+    iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Ptsa)".
+    iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
+    case (decide (t' = ta0)) => [Hta0 | NEqta0].
+    + (* read #0 — keep looping *)
+      subst t'.
+      iAssert (⌜v' = #0⌝)%I as %Eq0.
+      { destruct b.
+        - iDestruct "Own" as (t1 V1 [Lt1 Eqζ']) "_".
+          iPureIntro.
+          rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_ne in Sub2.
+          + rewrite lookup_insert_eq in Sub2. by inversion Sub2.
+          + clear -Lt1. intros ?. subst. lia.
+        - iDestruct "Own" as %Eqζ'. iPureIntro.
+          rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_eq in Sub2. by inversion Sub2. }
+      iMod ("Close" with "[Hgo Hacks_rest Ptsa Own]").
+      { iIntros "!>". rewrite /bc_inv_def. iSplitL "Hgo"; [done|].
+        iApply (big_sepS_delete _ (all_cores n) i).
+        { rewrite elem_of_all_cores. exact Hin. }
+        rewrite ack_cell_eq. iFrame "Hacks_rest".
+        iExists _, b, ta0, Va0, _. iFrame "Ptsa Own". }
+      iIntros "!>". iExists 0. iSplit; [done|].
+      iIntros "!> !>". by iApply ("IHack" with "Hmach HΦ").
+    + (* read #1 — proceed *)
+      destruct b; last first.
+      { iDestruct "Own" as %Eqζ'. exfalso.
+        rewrite Eqζ' in Sub2.
+        apply (lookup_weaken _ _ _ _ Eqt'), lookup_singleton_Some in Sub2 as [].
+        by apply NEqta0. }
+      iClear "IHack".
+      iDestruct "Own" as (t1 V1 [Lt1 Eqζ']) "Own".
+      rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+      have ? : t' = t1.
+      { case (decide (t' = t1)) => [//|NEqt1].
+        exfalso. by rewrite !lookup_insert_ne // in Sub2. }
+      subst t'. rewrite lookup_insert_eq in Sub2. inversion Sub2. subst v' V'.
+      (* close the invariant, leaving the released ack cell (and its data) as-is *)
+      iMod ("Close" with "[Hgo Hacks_rest Ptsa Own]").
+      { iIntros "!>". rewrite /bc_inv_def. iSplitL "Hgo"; [done|].
+        iApply (big_sepS_delete _ (all_cores n) i).
+        { rewrite elem_of_all_cores. exact Hin. }
+        rewrite ack_cell_eq. iFrame "Hacks_rest".
+        iExists _, true, ta0, Va0, _. iFrame "Ptsa".
+        iExists t1, V1. iSplit.
+        { iPureIntro. split; [exact Lt1 | exact Eqζ']. }
+        iFrame "Own". }
+      iIntros "!>". iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
+      (* core i has acked (cleared its TLB): advance the machine ghost *)
+      iMod (machine_ctx_update γm (bc_machine root va mem n i) (bc_machine root va mem n (i + 1))
+              with "Hmach") as "Hmach'".
+      wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+      iApply ("IH" $! (i + 1)%nat Φ with "Hmach' HΦ").
+  - (* i ≥ n: return *)
+    iMod (machine_ctx_update γm (bc_machine root va mem n i) (broadcast_post_machine root va mem n)
+            with "Hmach") as "Hmach'".
+    wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    by iApply ("HΦ" with "Hmach'").
 Qed.
 
 End bc_inv.
