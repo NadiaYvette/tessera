@@ -5,13 +5,25 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # hardware/rocq
 HW="$(dirname "$HERE")"                                 # hardware
+REPO="$(dirname "$HW")"                                 # repo root
 SRC="$HW/src/machine.sail"
 
-# --- 1. locate the Rocq user-contrib libraries (SailStdpp, stdpp, iris) ---
+# --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
+# When the third_party submodules are checked out, delegate the whole stack to
+# third_party/build.sh, which is the single source of truth for the dev stdpp/iris
+# the S2.2 proofs need and installs them into user-contrib.  It is idempotent
+# (make/dune are incremental), so on a warmed tree this is a fast no-op; on a clean
+# checkout it does the one full build.  If the submodules are absent, fall back to
+# whatever opam has installed.
 UC="${ROCQ_UC:-$HOME/.opam/rocq-9.2/lib/coq/user-contrib}"
+export ROCQ_UC="$UC"
+if [ -d "$REPO/third_party/stdpp" ] && [ -d "$REPO/third_party/iris" ]; then
+  bash "$REPO/third_party/build.sh"
+fi
 if [ ! -d "$UC/SailStdpp" ]; then
   echo "SailStdpp support library not found at $UC/SailStdpp" >&2
   echo "Install it with:  opam install rocq-sail-stdpp" >&2
+  echo "(or check out the third_party submodules so third_party/build.sh provides it)" >&2
   exit 1
 fi
 
@@ -94,8 +106,7 @@ axiom_free shootdown_iris  broadcast_reifies_machine
 axiom_free machine_encoding invalid_pte_not_valid
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
-# Requires the vendored gpfsl to be built first: third_party/build.sh.
-REPO="$(dirname "$HW")"
+# gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.
 GP="${GPFSL:-$REPO/third_party/gpfsl/gpfsl}"
 if [ -d "$GP" ]; then
   WFLAGS="-Q $GP gpfsl $FLAGS"
@@ -103,7 +114,7 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak shootdown_weak_gen_inv "$WFLAGS"
   axiom_free shootdown_weak shootdown_weak_ack_gen_inv "$WFLAGS"
 else
-  echo "(skip S2.2: gpfsl not found at $GP — run third_party/build.sh first)" >&2
+  echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi
 
 echo "OK: hardware model generated and checked (axiom-free)."

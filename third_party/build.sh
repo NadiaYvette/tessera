@@ -33,10 +33,13 @@ install_theory() {
     echo "  backed up $dest -> $dest.bak.*"
   fi
   mkdir -p "$dest"
-  find "$src" -maxdepth 1 -type f \
-    \( -name '*.v' -o -name '*.vo' -o -name '*.vos' -o -name '*.vok' -o -name '*.glob' \) \
-    -exec cp -a {} "$dest"/ \;
-  echo "  installed $(find "$dest" -maxdepth 1 -name '*.vo' | wc -l) .vo -> $dest"
+  # Recursive copy, preserving subdirectories: iris nests base_logic/, proofmode/, …
+  # under its theory root, so a flat maxdepth-1 copy would drop them and leave a
+  # broken install on a clean checkout.
+  ( cd "$src" && find . -type f \
+      \( -name '*.v' -o -name '*.vo' -o -name '*.vos' -o -name '*.vok' -o -name '*.glob' \) \
+      -exec cp -a --parents {} "$dest"/ \; )
+  echo "  installed $(find "$dest" -name '*.vo' | wc -l) .vo -> $dest"
 }
 
 echo "==> [1/4] stdpp @ $(git -C "$REPO/stdpp" rev-parse --short HEAD)"
@@ -53,7 +56,10 @@ install_theory "$REPO/iris/iris_unstable"   "$UC/iris/unstable"
 install_theory "$REPO/iris/iris_deprecated" "$UC/iris/deprecated"
 
 echo "==> [3/4] SailStdpp (coq-sail @ $(git -C "$REPO/coq-sail" rev-parse --short HEAD))"
-( cd "$REPO/coq-sail" && dune build )
+# Build ONLY the src-stdpp theory: the sibling src/ theory (`Sail`) depends on the
+# `bbv` package, which is not part of our vendored stack and is not needed by the
+# machine model (that uses the SailStdpp backend).
+( cd "$REPO/coq-sail" && dune build src-stdpp )
 install_theory "$REPO/coq-sail/_build/default/src-stdpp" "$UC/SailStdpp"
 
 echo "==> [4/4] gpfsl @ $(git -C "$REPO/gpfsl" rev-parse --short HEAD)"

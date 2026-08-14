@@ -58,7 +58,7 @@ Proof. solve_inG. Qed.
 
 Section Tok.
 Context `{!uniqTokG Σ}.
-Notation vProp := (vProp Σ).
+Abbreviation vProp := (vProp Σ).
 Implicit Type (γ : gname).
 Definition UTok_def γ : vProp := ⎡ own γ (Excl ()) ⎤%I.
 Definition UTok_aux : seal (@UTok_def). Proof. by eexists. Qed.
@@ -87,8 +87,8 @@ End Tok.
 
 (* ===== the program: the shootdown ordering core, two cores =====
    cell 0 = go (the completion flag); cell 1 = pte (the page-table write). *)
-Notation go := 0 (only parsing).
-Notation pte := 1 (only parsing).
+Abbreviation go := 0%Z.
+Abbreviation pte := 1%Z.
 
 Definition shootdown_weak : expr :=
   let: "m" := new [ #2] in
@@ -109,7 +109,7 @@ Implicit Types (x : loc) (γ : gname) (ζ : absHist) (t : time) (V : view).
 
 Section inv.
 Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ}.
-#[local] Notation vProp := (vProp Σ).
+#[local] Abbreviation vProp := (vProp Σ).
 
 Definition sd_inv'_def (x y : loc) γ γx : vProp :=
   (∃ ζ (b : bool) t0 V0 Vx,
@@ -260,8 +260,8 @@ Lemma encode_tlb_None_ne_Some (e : TlbEntry) : encode_tlb None ≠ encode_tlb (S
 Proof. cbn. lia. Qed.
 
 (* cell 0 = ack (the completion flag); cell 1 = tlb (the cleared entry). *)
-Notation ack := 0 (only parsing).
-Notation tlb := 1 (only parsing).
+Abbreviation ack := 0%Z.
+Abbreviation tlb := 1%Z.
 
 Definition shootdown_weak_ack : expr :=
   let: "m" := new [ #2] in
@@ -279,7 +279,7 @@ Definition sdN_ack (n : loc) := nroot .@ "sdNack" .@ n.
 
 Section inv_ack.
 Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ}.
-#[local] Notation vProp := (vProp Σ).
+#[local] Abbreviation vProp := (vProp Σ).
 
 Definition sd_ack_inv'_def (x y : loc) γ γx : vProp :=
   (∃ ζ (b : bool) t0 V0 Vx,
