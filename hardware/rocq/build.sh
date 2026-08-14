@@ -34,6 +34,7 @@ cd "$HERE"
 FLAGS="-Q $UC/stdpp stdpp -Q $UC/SailStdpp SailStdpp -Q $UC/iris iris"
 rocq compile $FLAGS machine_types.v
 rocq compile $FLAGS machine.v
+rocq compile $FLAGS machine_encoding.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
 rocq compile $FLAGS shootdown.v
@@ -90,6 +91,7 @@ axiom_free shootdown_iris  wait_cnt_spec
 axiom_free shootdown_iris  fork_remotes_spec
 axiom_free shootdown_iris  broadcast_spec
 axiom_free shootdown_iris  broadcast_reifies_machine
+axiom_free machine_encoding invalid_pte_not_valid
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # Requires the vendored gpfsl to be built first: third_party/build.sh.
@@ -99,7 +101,7 @@ if [ -d "$GP" ]; then
   WFLAGS="-Q $GP gpfsl $FLAGS"
   rocq compile $WFLAGS shootdown_weak.v
   axiom_free shootdown_weak shootdown_weak_gen_inv "$WFLAGS"
-  axiom_free shootdown_weak invalid_pte_not_valid "$WFLAGS"
+  axiom_free shootdown_weak shootdown_weak_ack_gen_inv "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — run third_party/build.sh first)" >&2
 fi

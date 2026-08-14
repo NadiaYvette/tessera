@@ -13,6 +13,7 @@ Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import machine_types.
 Require Import machine.
+Require Import machine_encoding. (* b2z/z2b, invalid_pte/valid_pte, leaf_entry, mword roundtrip *)
 Require Import coherence_leaf. (* invalidate_leaf_mem / leaf_addr *)
 Require Import shootdown. (* core_with_root / invalidate_shootdown / invalidate_shootdown_correct *)
 Import ListNotations.
@@ -20,25 +21,6 @@ Import ListNotations.
 (* ============================================================
    Concrete-value encoding.
    ============================================================ *)
-
-Definition b2z (b : bool) : Z := if b then 1 else 0.
-Definition z2b (z : Z) : bool := Z.eqb z 1.
-
-Lemma z2b_b2z (b : bool) : z2b (b2z b) = b.
-Proof. destruct b; reflexivity. Qed.
-
-(* The bitvector fields travel as their unsigned value (int_of_mword false),
-   rebuilt with mword_of_int.  The roundtrip needs no bit arithmetic beyond
-   stdpp's Z_to_bv_bv_unsigned (and bv_unsigned_in_range for positivity). *)
-Lemma mword_of_int_int_of_mword {n : Z} (w : mword n) :
-  mword_of_int (int_of_mword false w) = w.
-Proof.
-  unfold mword_of_int, int_of_mword, get_word.
-  unfold MachineWord.Z_to_word, MachineWord.word_to_N.
-  rewrite Z2N.id.
-  { apply Z_to_bv_bv_unsigned. }
-  { destruct (bv_unsigned_in_range _ w) as [H0 _]; exact H0. }
-Qed.
 
 (* Pte -> val: nested pairs (valid, read, write, exec, user, ppn-as-Z). *)
 Definition encode_pte (p : Pte) : val :=
@@ -100,25 +82,6 @@ From iris.algebra Require Import auth gset gmap excl.
 From iris.base_logic.lib Require Import invariants ghost_var.
 From iris.heap_lang Require Import proofmode.
 From iris.heap_lang.lib Require Import par.
-
-Definition invalid_pte : Pte :=
-  {| Pte_valid := false; Pte_read := true; Pte_write := true;
-     Pte_exec := true; Pte_user := true; Pte_ppn := mword_of_int 0 |}.
-
-Lemma invalid_pte_not_valid : invalid_pte.(Pte_valid) = false.
-Proof. reflexivity. Qed.
-
-Definition valid_pte : Pte :=
-  {| Pte_valid := true; Pte_read := true; Pte_write := true;
-     Pte_exec := true; Pte_user := true; Pte_ppn := mword_of_int 0 |}.
-
-(* The stale TLB entry the broadcast models a core as caching for `va`: its VPN
-   is `vpn_of va` (VA[38:12] under Sv39), so `tlb_lookup`/`sfence_vma_va` actually
-   match it. Threading `va` here — rather than hardcoding VPN 0 — is what lets
-   non-RISC-V TLB models (VIPT/VIVT, Svnapot, …) reuse the reification. *)
-Definition leaf_entry (va : mword 64) : TlbEntry :=
-  {| TlbEntry_vpn := vpn_of va; TlbEntry_ppn := mword_of_int 0;
-     TlbEntry_perm := ReadWrite |}.
 
 Lemma encode_tlb_Some_ne_None (e : TlbEntry) :
   encode_tlb (Some e) ≠ encode_tlb None.

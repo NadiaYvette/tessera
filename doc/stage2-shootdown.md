@@ -186,12 +186,14 @@ proof-side twin of the litmus `Sometimes` cases and of
   ;; go <-ʳᵉˡ #1` is observed by the remote's `repeat !ᵃᶜ go ;; !pte` — the release/acquire
   happens-before carries the *machine* PTE value (the gpfsl value model is
   `LitPoison | LitLoc | LitInt`, so the PTE is bit-packed into a `Z` here).  Combined
-  with `invalid_pte_not_valid` this is "the remote sees the invalid entry".  The
-  remote→leader direction (`tlb <- encode_tlb None ;; ack <-ʳᵉˡ #1`, leader `!ᵃᶜ ack`) is
-  the remaining half, folded into S2.2b.
-- **S2.2b — N-core broadcast.** Add the remote→leader ack round-trip, then generalise to
-  N−1 remotes + the `wait_all_acks` acquire loop; conclude `Forall (translate = None ∧
-  tlb_lookup = None)` over every core, reifying to `invalidate_shootdown`.
+  with `invalid_pte_not_valid` this is "the remote sees the invalid entry".
+- **S2.2b — remote→leader ack round-trip.** ✅ `hardware/rocq/shootdown_weak.v`
+  (`shootdown_weak_ack_gen_inv`, axiom-free): the remote's `tlb <- #(encode_tlb None) ;;
+  ack <-ʳᵉˡ #1` is observed by the leader's `repeat !ᵃᶜ ack ;; !tlb`, which returns
+  `encode_tlb None` — i.e. the release/acquire carries "the TLB entry is cleared" back to
+  the waiting leader.  This closes the remote→leader half of the S2.1 broadcast; the
+  remaining step is to compose S2.2a + S2.2b into the N-core `wait_all_acks` barrier and
+  reify to `invalidate_shootdown` (folded into S2.2c).
 
 ### Trust line (S2.2)
 
