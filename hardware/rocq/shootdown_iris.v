@@ -112,8 +112,12 @@ Definition valid_pte : Pte :=
   {| Pte_valid := true; Pte_read := true; Pte_write := true;
      Pte_exec := true; Pte_user := true; Pte_ppn := mword_of_int 0 |}.
 
-Definition leaf_entry : TlbEntry :=
-  {| TlbEntry_vpn := mword_of_int 0; TlbEntry_ppn := mword_of_int 0;
+(* The stale TLB entry the broadcast models a core as caching for `va`: its VPN
+   is `vpn_of va` (VA[38:12] under Sv39), so `tlb_lookup`/`sfence_vma_va` actually
+   match it. Threading `va` here — rather than hardcoding VPN 0 — is what lets
+   non-RISC-V TLB models (VIPT/VIVT, Svnapot, …) reuse the reification. *)
+Definition leaf_entry (va : mword 64) : TlbEntry :=
+  {| TlbEntry_vpn := vpn_of va; TlbEntry_ppn := mword_of_int 0;
      TlbEntry_perm := ReadWrite |}.
 
 Lemma encode_tlb_Some_ne_None (e : TlbEntry) :
@@ -145,9 +149,9 @@ Definition fork_remotes : val :=
     else #().
 
 Definition broadcast : val :=
-  λ: "n",
+  λ: "leaf" "n",
     let: "pte" := ref (encode_pte valid_pte) in
-    let: "tlb" := AllocN "n" (encode_tlb (Some leaf_entry)) in
+    let: "tlb" := AllocN "n" "leaf" in
     let: "go"  := ref #false in
     let: "cnt" := ref #0 in
     "pte" <- encode_pte invalid_pte ;;
@@ -235,22 +239,22 @@ Definition reify_machine (root : mword 44) (va : mword 64) (mem : list MemEntry)
   {| Machine_mem := invalidate_leaf_mem (core_with_root root) mem va p;
      Machine_cores := List.map (fun j => reify_core root (tls j)) (seq 0 n) |}.
 
-(* Core [j] still caches the stale [leaf_entry] exactly while it is pending
+(* Core [j] still caches the stale [leaf_entry va] exactly while it is pending
    (in the domain of the auth map [m]); once it has acked its TLB is empty. *)
-Definition tls_of (m : gmap nat (exclR unitO)) (j : nat) : option TlbEntry :=
-  if decide (j ∈ dom m) then Some leaf_entry else None.
+Definition tls_of (va : mword 64) (m : gmap nat (exclR unitO)) (j : nat) : option TlbEntry :=
+  if decide (j ∈ dom m) then Some (leaf_entry va) else None.
 
 (* The machine the broadcast program models before/after the shootdown. *)
 Definition broadcast_pre_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
-  reify_machine root va mem valid_pte (fun _ => Some leaf_entry) n.
+  reify_machine root va mem valid_pte (fun _ => Some (leaf_entry va)) n.
 
 Definition broadcast_post_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
   reify_machine root va mem invalid_pte (fun _ => None) n.
 
-(* [tls_of (pending_map n)] agrees with the constant [Some leaf_entry] on the
-   core range [0..n), so the invariant's machine coincides with the pre-machine. *)
-Lemma tls_of_pending_map (n j : nat) :
-  j < n → tls_of (pending_map n) j = Some leaf_entry.
+(* [tls_of va (pending_map n)] agrees with the constant [Some (leaf_entry va)] on
+   the core range [0..n), so the invariant's machine coincides with the pre-machine. *)
+Lemma tls_of_pending_map (va : mword 64) (n j : nat) :
+  j < n → tls_of va (pending_map n) j = Some (leaf_entry va).
 Proof.
   intros Hj. rewrite /tls_of. apply decide_True.
   rewrite dom_pending_map. apply elem_of_all_cores. done.
@@ -258,13 +262,13 @@ Qed.
 
 Lemma reify_machine_tls_of_pending (root : mword 44) (va : mword 64) (mem : list MemEntry)
                                    (p : Pte) (n : nat) :
-  reify_machine root va mem p (tls_of (pending_map n)) n =
-  reify_machine root va mem p (fun _ => Some leaf_entry) n.
+  reify_machine root va mem p (tls_of va (pending_map n)) n =
+  reify_machine root va mem p (fun _ => Some (leaf_entry va)) n.
 Proof.
   unfold reify_machine. f_equal.
   apply List.map_ext_in. intros j Hj.
   apply list_elem_of_In in Hj. apply elem_of_seq in Hj.
-  rewrite (tls_of_pending_map n j); [reflexivity | lia].
+  rewrite (tls_of_pending_map va n j); [reflexivity | lia].
 Qed.
 
 (* The reified post-machine (every TLB cleared, leaf PTE invalid) satisfies the
@@ -297,15 +301,15 @@ Section proof.
   (* Single-phase invariant: it is only ever established AFTER the leader sets
      go := true (before that the leader holds everything locally), so `go ↦ #true`
      is fixed and there is no `b` case-split to reason about. The machine ghost is
-     derived from the pending map [m]: a core caches [leaf_entry] exactly while it
-     is pending, and the leaf PTE is fixed invalid from the break-before-make
+     derived from the pending map [m]: a core caches [leaf_entry va] exactly while
+     it is pending, and the leaf PTE is fixed invalid from the break-before-make
      write onward — so the ghost tracks the heap faithfully. *)
   Definition sd_inv (γ γtok : gname) (tlb go cnt : loc) (n : nat) : iProp Σ :=
     (∃ (m : gmap nat (exclR unitO)) (k : nat),
        go ↦ #true ∗
        cnt ↦ #k ∗
        own γ (● m) ∗
-       ((machine_ctx γm (reify_machine root va mem invalid_pte (tls_of m) n) ∗
+       ((machine_ctx γm (reify_machine root va mem invalid_pte (tls_of va m) n) ∗
          ([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None))
         ∨ (own γtok (Excl ()) ∗ ⌜ m = ∅ ⌝)) ∗
        ⌜ sd_pure n k m ⌝)%I.
@@ -400,20 +404,20 @@ Qed.
 
   Lemma remote_ack γ (tlb : loc) (n i : nat) (m : gmap nat (exclR unitO)) :
     i ∈ dom m → i ∈ all_cores n →
-    machine_ctx γm (reify_machine root va mem invalid_pte (tls_of m) n) -∗
+    machine_ctx γm (reify_machine root va mem invalid_pte (tls_of va m) n) -∗
     own γ (● m) -∗ own γ (◯ {[i := Excl ()]}) -∗
     (tlb +ₗ Z.of_nat i) ↦ encode_tlb None -∗
     ([∗ set] j ∈ (all_cores n ∖ dom m), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None) ==∗
-    machine_ctx γm (reify_machine root va mem invalid_pte (tls_of (delete i m)) n) ∗
+    machine_ctx γm (reify_machine root va mem invalid_pte (tls_of va (delete i m)) n) ∗
     own γ (● (delete i m)) ∗
     ([∗ set] j ∈ (all_cores n ∖ dom (delete i m)), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None).
   Proof.
     iIntros (Him Hall) "Hmach Hauth Hi Htlb Hacked".
     iMod (pending_token_delete γ m i with "Hauth Hi") as "Hauth'".
-    (* Core i just cleared its TLB: [tls_of] maps it from [Some leaf_entry] to
-       [None], so the machine advances to [tls_of (delete i m)]. *)
-    iMod (ghost_var_update (reify_machine root va mem invalid_pte (tls_of (delete i m)) n)
-                            γm (reify_machine root va mem invalid_pte (tls_of m) n)
+    (* Core i just cleared its TLB: [tls_of va] maps it from [Some (leaf_entry va)]
+       to [None], so the machine advances to [tls_of va (delete i m)]. *)
+    iMod (ghost_var_update (reify_machine root va mem invalid_pte (tls_of va (delete i m)) n)
+                            γm (reify_machine root va mem invalid_pte (tls_of va m) n)
             with "Hmach") as "Hmach'".
     iAssert ([∗ set] j ∈ (all_cores n ∖ dom (delete i m)), (tlb +ₗ Z.of_nat j) ↦ encode_tlb None)%I
       with "[Htlb Hacked]" as "Hacked'".
@@ -425,7 +429,7 @@ Qed.
 
   Lemma remote_spec (γ γtok : gname) (tlb go cnt : loc) (n i : nat) :
     {{{ inv N (sd_inv γ γtok tlb go cnt n) ∗
-        own γ (◯ {[i := Excl ()]}) ∗ (tlb +ₗ Z.of_nat i) ↦ encode_tlb (Some leaf_entry) }}}
+        own γ (◯ {[i := Excl ()]}) ∗ (tlb +ₗ Z.of_nat i) ↦ encode_tlb (Some (leaf_entry va)) }}}
       remote #tlb #go #cnt #i
     {{{ RET #(); True }}}.
   Proof.
@@ -480,12 +484,12 @@ Qed.
     wp_load.
     destruct (decide (k = n)) as [-> | Hne].
     - (* final iteration: k = n, so all cores have acked (m = ∅). Extract the
-         cleared TLBs and the machine ([tls_of ∅] is all-[None], i.e.
+         cleared TLBs and the machine ([tls_of va ∅] is all-[None], i.e.
          [broadcast_post_machine]), deposit the token (branch b), and return. *)
       iDestruct "Htlbor" as "[Htlbor_a | Hfin]".
       + iDestruct "Htlbor_a" as "[Hmach Hacked]".
         iMod (ghost_var_update (broadcast_post_machine root va mem n)
-                                γm (reify_machine root va mem invalid_pte (tls_of m) n)
+                                γm (reify_machine root va mem invalid_pte (tls_of va m) n)
                 with "Hmach") as "Hmach'".
         iMod ("Hclose" with "[Hgo Hcnt Hauth Htok]") as "_".
         { iNext. iExists m, n. iFrame "Hgo Hcnt Hauth". iSplitL.
@@ -532,7 +536,7 @@ Qed.
   Lemma fork_remotes_spec (γ γtok : gname) (tlb go cnt : loc) (i n : nat) :
     {{{ inv N (sd_inv γ γtok tlb go cnt n) ∗
         [∗ set] j ∈ (all_cores n ∖ all_cores i),
-          own γ (◯ {[j := Excl ()]}) ∗ (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some leaf_entry) }}}
+          own γ (◯ {[j := Excl ()]}) ∗ (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some (leaf_entry va)) }}}
       fork_remotes #tlb #go #cnt #i #n
     {{{ RET #(); True }}}.
   Proof.
@@ -615,16 +619,16 @@ Qed.
 
      Reification invariant (HeapLang -> Machine). The machine ghost lives *inside*
      [sd_inv], derived from the pending map [m]:
-       machine_ctx γm (reify_machine root va mem invalid_pte (tls_of m) n)
-     so a core caches [leaf_entry] exactly while it is pending (j ∈ dom m) and has
-     an empty TLB once it has acked. The leaf PTE is fixed invalid from the
+       machine_ctx γm (reify_machine root va mem invalid_pte (tls_of va m) n)
+     so a core caches [leaf_entry va] exactly while it is pending (j ∈ dom m) and
+     has an empty TLB once it has acked. The leaf PTE is fixed invalid from the
      break-before-make write onward, matching the program's `pte <- invalid_pte`
      before the fork.
 
-       - setup:     m = pending_map n, so [tls_of m = fun _ => Some leaf_entry] and
-                    the machine is [reify_machine ... invalid_pte ...] (PTE already
-                    invalid; every core stale).
-       - remote ack: remote_ack advances the machine to [tls_of (delete i m)] in
+       - setup:     m = pending_map n, so [tls_of va m = fun _ => Some (leaf_entry va)]
+                    and the machine is [reify_machine ... invalid_pte ...] (PTE
+                    already invalid; every core stale).
+       - remote ack: remote_ack advances the machine to [tls_of va (delete i m)] in
                     lockstep with the auth-map update [m -> delete i m].
        - leader wait: at k = n, m = ∅, so the machine is [broadcast_post_machine].
 
@@ -635,13 +639,13 @@ Qed.
      Honesty note: each step uses [ghost_var_update], which is logically valid for
      any a -> b, so the *logic* does not force the machine to track [m]; the
      faithfulness is by construction of the proof (the ghost is only ever advanced
-     to the canonical [tls_of]-reified value implied by the constrained auth-map
-     update). Enforcing the coupling in the logic (per-cell ghost state with
-     store-transfer) is a larger follow-up. *)
+     to the canonical [tls_of va]-reified value implied by the constrained
+     auth-map update). Enforcing the coupling in the logic (per-cell ghost state
+     with store-transfer) is a larger follow-up. *)
 
   Lemma broadcast_spec (n : nat) :
     {{{ ⌜0 < n⌝ ∗ machine_ctx γm (broadcast_pre_machine root va mem n) }}}
-      broadcast #n
+      broadcast (encode_tlb (Some (leaf_entry va))) #n
     {{{ RET #(); ∃ (γ γtok : gname) (pte tlb go cnt : loc),
         inv N (sd_inv γ γtok tlb go cnt n) ∗
         ([∗ set] j ∈ all_cores n, (tlb +ₗ Z.of_nat j) ↦ encode_tlb None) ∗
@@ -656,9 +660,10 @@ Qed.
     wp_alloc cnt as "Hcnt".
     (* break-before-make: the leaf PTE is written invalid before the fork. The
        machine ghost advances from the pre-machine to the invariant's machine
-       (PTE invalid, every core still caching [leaf_entry] = [tls_of (pending_map n)]). *)
+       (PTE invalid, every core still caching [leaf_entry va] =
+       [tls_of va (pending_map n)]). *)
     wp_store. wp_store.
-    iMod (ghost_var_update (reify_machine root va mem invalid_pte (tls_of (pending_map n)) n)
+    iMod (ghost_var_update (reify_machine root va mem invalid_pte (tls_of va (pending_map n)) n)
                             γm (broadcast_pre_machine root va mem n) with "Hm0") as "Hm1".
     iMod (own_alloc (● (pending_map n) ⋅ ◯ (pending_map n))) as (γ) "[Hauth Hfrag]";
       first by apply auth_both_valid_2; [apply pending_map_valid | reflexivity].
@@ -671,13 +676,13 @@ Qed.
         + rewrite dom_pending_map size_all_cores. lia.
         + rewrite dom_pending_map. set_solver. }
     iDestruct (pending_tokens_split γ n with "Hfrag") as "Htoks".
-    iDestruct (array_replicate_all_cores tlb n (encode_tlb (Some leaf_entry))
+    iDestruct (array_replicate_all_cores tlb n (encode_tlb (Some (leaf_entry va)))
                  with "Htlb") as "HtlbS".
     iDestruct (big_sepS_sep_2 (λ j, own γ (◯ {[j := Excl ()]}))
-                    (λ j, (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some leaf_entry))%I (all_cores n)
+                    (λ j, (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some (leaf_entry va)))%I (all_cores n)
                with "Htoks HtlbS") as "Hrest".
     iAssert (([∗ set] j ∈ (all_cores n ∖ all_cores 0),
-                own γ (◯ {[j := Excl ()]}) ∗ (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some leaf_entry)))%I
+                own γ (◯ {[j := Excl ()]}) ∗ (tlb +ₗ Z.of_nat j) ↦ encode_tlb (Some (leaf_entry va))))%I
       with "[Hrest]" as "Hrest0".
     { rewrite all_cores_0 difference_empty_L. done. }
     wp_apply (fork_remotes_spec γ γtok tlb go cnt 0 n with "[$HI $Hrest0]"); [iIntros "_"].
