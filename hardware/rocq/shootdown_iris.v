@@ -16,6 +16,7 @@ Require Import machine.
 Require Import machine_encoding. (* b2z/z2b, invalid_pte/valid_pte, leaf_entry, mword roundtrip *)
 Require Import coherence_leaf. (* invalidate_leaf_mem / leaf_addr *)
 Require Import shootdown. (* core_with_root / invalidate_shootdown / invalidate_shootdown_correct *)
+Require Import machine_reify. (* reify_core/reify_machine/tls_of/broadcast_*_machine/reifies *)
 Import ListNotations.
 
 (* ============================================================
@@ -189,31 +190,6 @@ Global Instance subG_machineΣ {Σ} : subG machineΣ Σ → machineG Σ.
 Proof. solve_inG. Qed.
 Definition machine_ctx `{!machineG Σ} (γm : gname) (m : Machine) : iProp Σ := ghost_var γm (DfracOwn 1) m.
 
-(* A core whose TLB is the reification of an [option TlbEntry]: [None] is an
-   empty TLB, [Some e] is the singleton [e]. *)
-Definition reify_core (root : mword 44) (o : option TlbEntry) : Core :=
-  {| Core_satp_ppn := root; Core_tlb := match o with None => [] | Some e => [e] end |}.
-
-(* Reconstructs the machine the broadcast program models: memory whose leaf PTE
-   for `va` is `p` (written via the data-dependent walk), and n cores sharing
-   `root` whose TLBs are reified from `tls`. *)
-Definition reify_machine (root : mword 44) (va : mword 64) (mem : list MemEntry)
-                        (p : Pte) (tls : nat → option TlbEntry) (n : nat) : Machine :=
-  {| Machine_mem := invalidate_leaf_mem (core_with_root root) mem va p;
-     Machine_cores := List.map (fun j => reify_core root (tls j)) (seq 0 n) |}.
-
-(* Core [j] still caches the stale [leaf_entry va] exactly while it is pending
-   (in the domain of the auth map [m]); once it has acked its TLB is empty. *)
-Definition tls_of (va : mword 64) (m : gmap nat (exclR unitO)) (j : nat) : option TlbEntry :=
-  if decide (j ∈ dom m) then Some (leaf_entry va) else None.
-
-(* The machine the broadcast program models before/after the shootdown. *)
-Definition broadcast_pre_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
-  reify_machine root va mem valid_pte (fun _ => Some (leaf_entry va)) n.
-
-Definition broadcast_post_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
-  reify_machine root va mem invalid_pte (fun _ => None) n.
-
 (* [tls_of va (pending_map n)] agrees with the constant [Some (leaf_entry va)] on
    the core range [0..n), so the invariant's machine coincides with the pre-machine. *)
 Lemma tls_of_pending_map (va : mword 64) (n j : nat) :
@@ -232,16 +208,6 @@ Proof.
   apply List.map_ext_in. intros j Hj.
   apply list_elem_of_In in Hj. apply elem_of_seq in Hj.
   rewrite (tls_of_pending_map va n j); [reflexivity | lia].
-Qed.
-
-(* The reified post-machine (every TLB cleared, leaf PTE invalid) satisfies the
-   machine-level conclusion, citing `invalidate_shootdown_empty_cores`. *)
-Lemma broadcast_reifies_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) :
-  Forall (fun c => translate c (broadcast_post_machine root va mem n).(Machine_mem) va = None /\
-                   tlb_lookup c va = None)
-         (broadcast_post_machine root va mem n).(Machine_cores).
-Proof.
-  apply (invalidate_shootdown_empty_cores root va mem n invalid_pte invalid_pte_not_valid).
 Qed.
 
 (* ============================================================

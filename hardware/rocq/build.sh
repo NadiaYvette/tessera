@@ -50,6 +50,7 @@ rocq compile $FLAGS machine_encoding.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
 rocq compile $FLAGS shootdown.v
+rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS shootdown_iris.v
 
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
@@ -102,7 +103,7 @@ axiom_free shootdown_iris  remote_spec
 axiom_free shootdown_iris  wait_cnt_spec
 axiom_free shootdown_iris  fork_remotes_spec
 axiom_free shootdown_iris  broadcast_spec
-axiom_free shootdown_iris  broadcast_reifies_machine
+axiom_free machine_reify    broadcast_reifies_machine
 axiom_free machine_encoding invalid_pte_not_valid
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
