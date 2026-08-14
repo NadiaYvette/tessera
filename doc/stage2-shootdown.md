@@ -45,8 +45,10 @@ Soundness: no core translates through `va` after the protocol completes.
   bool`); a broadcast-barrier invariant (phase + ack counter via ghost `gset`);
   `broadcast_spec` reifies the post-state to the pure machine and cites
   `shootdown_correct`.
-- **S2.2 — weak memory (gpfsl/ORC11).** The release/acquire lift, in the separate `wm`
-  switch, mirroring P2.4a/b. Deferred.
+- **S2.2 — weak memory (gpfsl/ORC11).** The release/acquire lift of the S2.1 broadcast
+  onto a genuine relaxed-memory base, *over the generated `machine.v`* (not gpfsl's toy
+  `mp` example). Now reconciled into the **rocq-9.2 switch** with the vendored dev stack
+  (`third_party/{stdpp,iris,gpfsl}` — no separate `wm` switch). Design below.
 
 ## Concrete-value encoding (S2.1)
 
@@ -136,3 +138,61 @@ Reify the post-state to a `Machine` (`mem = [leaf PTE invalid]`, `cores = map (�
 2. `wait` spec + `wait_all_acks` spec (loop + counter).
 3. The barrier invariant, then the unmapper and remote `wp_par`/`wp_fork` proofs.
 4. Reification lemma (post-heap ⟶ `shootdown m root va`) → conclude via `shootdown_correct`.
+
+## S2.2 — weak memory (gpfsl/ORC11)
+
+### Toolchain (reconciled 2026-08-14)
+
+The P2.4a/b weak proofs lived in a separate `wm` switch (coq 8.20.1 + gpfsl dev).
+That split is gone: S2.2 runs in the **rocq-9.2** switch against vendored dev source,
+all committed as submodules:
+
+    third_party/stdpp  @ 9c7afbb6   (the exact dev commit dev iris pins)
+    third_party/iris   @ fdc7d5868  (iris 4.5.0-237-g, the dev iris gpfsl master needs)
+    third_party/gpfsl  @ 907eac66   (gpfsl master, rocq-9.2)
+
+built in-tree and installed into `~/.opam/rocq-9.2/lib/coq/user-contrib` (originals
+backed up to `*.bak.*`). Two drift fixes were required, committed in `02ce71b`:
+
+- dev iris: `ghost_var`'s fraction is now `dfrac` (`DfracOwn 1`, not `1`).
+- dev stdpp lowered `{[ x ]}` / `{[ k := a ]}` to level 0, clashing with Sail's
+  level-1 `{[ r 'with' f := e ]}` record-update notation; `build.sh` moves the
+  (unused) record-update notations to level 0 after Sail generation.
+
+Smoke test `hardware/rocq/s2_smoke.v` confirms gpfsl and `machine_types.v`/`machine.v`
+import side by side with no notation/instance clash — the reconciliation frontier.
+
+### The release/acquire structure (weak-memory lift of S2.1)
+
+Under ORC11, the S2.1 SC heap accesses become access-annotated. The barrier decomposes
+into 2(N−1) message-passing instances — the same ordering core P2.4a/b proved for
+`#42`, here carried by the *machine* values `encode_pte invalid_pte` / `encode_tlb None`:
+
+    leader:  pte <- encode invalid_pte ;; go <-ʳᵉˡ true         (* release the PTE write *)
+    remote i: repeat !ᵃᶜ go ;; tlb[i] <- encode None ;;
+              ack[i] <-ʳᵉˡ true                                (* release the TLB clear *)
+    leader:  !ᵃᶜ ack[i]  (for each i)                          (* acquire each ack *)
+
+Each release/acquire pair creates the happens-before edge that makes the data write
+visible; the leader's final `!ᵃᶜ ack[i]` for every `i` is the "free is safe" point.
+Dropping any `ʳᵉˡ`/`ᵃᶜ` makes the corresponding happens-before edge underivable — the
+proof-side twin of the litmus `Sometimes` cases and of
+`unmap_without_flush_breaks_coherence`.
+
+### Pacing
+
+- **S2.2a — two-core over the machine.** Leader + one remote; the data is the concrete
+  `encode_pte invalid_pte` (leader→remote) and `encode_tlb None` (remote→leader).
+  Mirrors `property2/coq/weak/mp_weak.v` but over machine types, citing
+  `invalidate_leaf_*`/`shootdown_correct` for the machine conclusion. Establishes the
+  gpfsl+Machine link end-to-end.
+- **S2.2b — N-core broadcast.** Generalise to N−1 remotes + the ack barrier (the
+  `wait_all_acks` acquire loop); conclude `Forall (translate = None ∧ tlb_lookup =
+  None)` over every core, reifying to `invalidate_shootdown`.
+
+### Trust line (S2.2)
+
+Drops the SC assumption for the concurrent proof. Still trusted: ORC11's faithfulness
+to the hardware model (the `rel`/`acq` modes being discharged by the arch's
+`DSB`/`ISB`, which Route A checks on the Arm side), and the `mword` encode/decode
+(SailStdpp) as in S2.1.
