@@ -587,4 +587,46 @@ Proof.
     rewrite big_sepS_empty. by iApply "HΦ".
 Qed.
 
+(* ============================================================
+   The forking loop: spawn remote j for j = i .. n-1.
+   ============================================================ *)
+
+Lemma bc_fork_remotes_spec (γgo : gname) (γtok γack : nat → gname) (go ack tlb : loc) :
+  ∀ (t : nat → positive) (V : nat → view) (ζgo : absHist) (Vgo : view) (i n : nat) tid,
+  {{{ bc_inv_ctx γgo γtok γack go ack tlb n ∗
+      bc_sync_ctx γack ack t V n ∗
+      go sy⊒{γgo} ζgo ∗ ⊒Vgo ∗
+      [∗ set] j ∈ (all_cores n ∖ all_cores i),
+        (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠ }}}
+    bc_fork_remotes_at go ack tlb i n @ tid; ⊤
+  {{{ RET #☠; True }}}.
+Proof.
+  iIntros (t V ζgo Vgo i n tid Φ) "(#HI & #Sctx & #Sgo & #SVgo & Hrest) HΦ".
+  rewrite /bc_fork_remotes_at /bc_fork_remotes /bc_remote.
+  iLöb as "IH" forall (i Φ).
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    rewrite (all_cores_step n i Hin).
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton.
+    iDestruct "Hrest" as "[Hrest_i Hrest']".
+    iDestruct "Hrest_i" as "[SWack_i Htlb_i]".
+    iDestruct (big_sepS_elem_of _ (all_cores n) i with "Sctx") as "#[_ SV_i]".
+    { rewrite elem_of_all_cores. exact Hin. }
+    wp_apply (wp_fork with "[SWack_i Htlb_i]"); [done|..].
+    + iIntros "!>" (tid').
+      iApply (bc_remote_spec γgo γtok γack go ack tlb i n ζgo (t i) Vgo (V i) tid'
+                with "[$HI $Sgo $SVgo $SV_i $SWack_i $Htlb_i]").
+      { iPureIntro. exact Hin. }
+      iIntros "!> _". done.
+    + iIntros "_". wp_seq.
+      wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+      iApply ("IH" $! (i + 1)%nat Φ with "Hrest'").
+      iIntros "!> _". by iApply "HΦ".
+  - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    by iApply "HΦ".
+Qed.
+
 End bc_inv.
