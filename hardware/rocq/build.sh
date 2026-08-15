@@ -109,6 +109,9 @@ axiom_free machine_encoding invalid_pte_not_valid
 axiom_free data_ram         read_byte_after_write
 axiom_free data_ram         read_byte_after_write_other
 axiom_free data_ram         invalidate_shootdown_load_faults
+axiom_free data_ram         load_byte_mmio_faults
+axiom_free data_ram         store_byte_mmio_noop
+axiom_free data_ram         load_byte_after_store_byte
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

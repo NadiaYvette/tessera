@@ -64,8 +64,11 @@ assumption, and it is the single largest rigour gap in this development.
 - No register file (the plan mentions one; the model has none).
 - No instruction/ISA execution semantics — only the address-translation fragment.
 - **Data RAM now modeled** (byte-addressable `Ram = list Byte` + `read_byte`/`write_byte`,
-  and `data_ram.v`'s `load_virtual` + `invalidate_shootdown_load_faults`); still no
-  address decoding, bus, or cache model.
+  and `data_ram.v`'s `load_virtual` + `invalidate_shootdown_load_faults`); **address
+  decode now modeled** (`Region = RAM | MMIO` + `decode_addr`, decode-routed
+  `load_byte`/`store_byte`/`store_virtual`, with `load_byte_mmio_faults` /
+  `store_byte_mmio_noop` / `load_byte_after_store_byte`); still no device (MMIO)
+  model, bus, or cache model.
 - No weak/relaxed memory ordering (deferred to S2.2 / gpfsl).
 - No devices: interrupt controller, timer, UART, DMA/IOMMU, disk, NIC
   (see `system-state-goals.md` SSG-1..9).
@@ -90,7 +93,7 @@ assumption, and it is the single largest rigour gap in this development.
 |---|---|---|---|
 | G1 | `machine.sail` is **not validated** against `sail-riscv`/`sail-cheri-mips`/etc. | The whole hardware layer rests on an unverified hand-written walk | Cross-check `translate` against the upstream Sv39 walker (extraction/conformance tests), or derive the model from the upstream Sail |
 | G2 | No register file / ISA semantics | The model cannot express *any* code execution, only translation | Add a register/ISA fragment once a property needs execution |
-| G3 | Memory = PTE association list | **Data RAM added** (`Machine.ram`, `read_byte`/`write_byte`, `data_ram.v` `invalidate_shootdown_load_faults`); still no address decode, bus, or cache | decode/bus/cache, later increment |
+| G3 | Memory = PTE association list | **Data RAM added** (`Machine.ram`, `read_byte`/`write_byte`) **+ address decode added** (`Region`/`decode_addr`, decode-routed `load_byte`/`store_byte` in `data_ram.v`); still no device (MMIO) model, bus, or cache | device model / bus / cache, later increment |
 | G4 | No weak-memory ordering | TLB-shootdown soundness under relaxed memory (Property 2) is un-modeled | S2.2: gpfsl/ORC11 lift (toolchain reconciliation pending — see below) |
 | G5 | No devices | IPI/interrupt delivery, DMA, timers, I/O are outside the model | Per `system-state-goals.md` SSG-1..9, add as properties demand them |
 | G6 | ~~Axiom hygiene was manual~~ | — | **Closed 2026-08-13**: `build.sh` now enforces `Print Assumptions` |

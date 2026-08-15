@@ -143,6 +143,23 @@ function write_byte(ram, addr, v) = match ram {
     else b :: write_byte(rest, addr, v)
 }
 
+// ---- address decode (the "decode" half of the G3 gap) ----
+//
+// A physical address is decoded to the region that serves it before any data
+// access (the data-side twin of the MMU walk's PTE interpretation).  RAM is
+// served by `read_byte`/`write_byte`; MMIO is served by a device, which the
+// model does not yet have (SSG-5..8), so a device access faults.  Illustrative
+// one-bit split — PA[55] = 0 is RAM (the low 2^55 bytes), PA[55] = 1 is the
+// device window.  The real per-platform map (QEMU virt PLIC/UART windows etc.)
+// replaces this constant once devices land; what the proofs rely on is only
+// that the decode step exists and is respected by loads/stores.
+
+enum Region = { RAM, MMIO }
+
+val decode_addr : paddr -> Region
+function decode_addr(pa) =
+  if pa[55] == 0b0 then RAM else MMIO
+
 // ---- hardware page-table walk (3 levels, Sv39) ----
 
 val translate : (Core, PageTable, vaddr) -> option((paddr, Perm))

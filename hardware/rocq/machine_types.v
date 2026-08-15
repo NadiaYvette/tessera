@@ -340,6 +340,58 @@ Instance dummy_Machine : Inhabited (Machine) := {
 |} }.
 
 
+Inductive Region := RAM | MMIO.
+Definition num_of_Region (arg_ : Region) : Z := match arg_ with | RAM => 0 | MMIO => 1 end.
+
+Definition Region_of_num (arg_ : Z) (*(0 <=? arg_) && (arg_ <=? 1)*) : Region :=
+   let l__0 := arg_ in
+   if Z.eqb (l__0) (0) then RAM
+   else MMIO.
+
+Lemma Region_num_of_roundtrip (x : Region) : Region_of_num (num_of_Region x) = x.
+  destruct x; reflexivity.
+Qed.
+Lemma num_of_Region_injective (x y : Region) : num_of_Region x = num_of_Region y -> x = y.
+  intro.
+  rewrite <- (Region_num_of_roundtrip x).
+  rewrite <- (Region_num_of_roundtrip y).
+  congruence.
+Qed.
+Definition Region_eq_dec (x y : Region) : {x = y} + {x <> y}.
+  refine (match Z.eq_dec (num_of_Region x) (num_of_Region y) with
+  | left e => left (num_of_Region_injective x y e)
+  | right ne => right _
+  end).
+  congruence.
+Defined.
+Definition Region_beq (x y : Region) : bool :=
+  Z.eqb (num_of_Region x) (num_of_Region y).
+Lemma Region_beq_iff x y : Region_beq x y = true <-> x = y.
+  unfold Region_beq.
+  rewrite Z.eqb_eq.
+  split; [apply num_of_Region_injective | congruence].
+Qed.
+Lemma Region_beq_refl x : Region_beq x x = true.
+apply Region_beq_iff; reflexivity.
+Qed.
+#[export]
+Instance Decidable_eq_Region : EqDecision Region := Region_eq_dec.
+#[export]
+Instance Countable_Region : Countable Region.
+refine {|
+  encode x := encode (num_of_Region x);
+  decode x := z ← decode x; mret (Region_of_num z);
+|}.
+abstract (
+  intro s; rewrite decode_encode;
+  simpl;
+  rewrite Region_num_of_roundtrip;
+  reflexivity).
+Defined.
+#[export]
+Instance dummy_Region : Inhabited Region := { inhabitant := RAM }.
+
+
 
 
 

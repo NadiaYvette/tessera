@@ -58,19 +58,86 @@ Proof.
 Qed.
 
 (* ============================================================
-   The data load through the virtual mapping.
+   Address decode: route a data access to the serving region.
+   ============================================================ *)
+
+(* A byte load through the decoded address: RAM reads the byte RAM; MMIO (a
+   device) has no model yet, so it faults (None).  This is the "decode" half of
+   the G3 gap — an access is routed by `decode_addr` to exactly one region. *)
+Definition load_byte (m : Machine) (pa : paddr) : option (mword 8) :=
+  match decode_addr pa with
+  | RAM  => read_byte (Machine_ram m) pa
+  | MMIO => None
+  end.
+
+(* A byte store through the decoded address: RAM writes the byte RAM; MMIO is a
+   no-op (no device model yet). *)
+Definition store_byte (m : Machine) (pa : paddr) (v : mword 8) : Machine :=
+  match decode_addr pa with
+  | RAM  => {| Machine_cores := m.(Machine_cores);
+               Machine_mem   := m.(Machine_mem);
+               Machine_ram   := write_byte (Machine_ram m) pa v |}
+  | MMIO => m
+  end.
+
+(* ============================================================
+   Decode is respected: MMIO is never RAM, RAM is RAM.
+   ============================================================ *)
+
+Lemma load_byte_mmio_faults (m : Machine) (pa : paddr) :
+  decode_addr pa = MMIO -> load_byte m pa = None.
+Proof. intros H. unfold load_byte. rewrite H. reflexivity. Qed.
+
+Lemma load_byte_ram_reads (m : Machine) (pa : paddr) :
+  decode_addr pa = RAM -> load_byte m pa = read_byte (Machine_ram m) pa.
+Proof. intros H. unfold load_byte. rewrite H. reflexivity. Qed.
+
+Lemma store_byte_mmio_noop (m : Machine) (pa : paddr) (v : mword 8) :
+  decode_addr pa = MMIO -> store_byte m pa v = m.
+Proof. intros H. unfold store_byte. rewrite H. reflexivity. Qed.
+
+Lemma store_byte_ram_writes (m : Machine) (pa : paddr) (v : mword 8) :
+  decode_addr pa = RAM ->
+  store_byte m pa v = {| Machine_cores := m.(Machine_cores);
+                         Machine_mem   := m.(Machine_mem);
+                         Machine_ram   := write_byte (Machine_ram m) pa v |}.
+Proof. intros H. unfold store_byte. rewrite H. reflexivity. Qed.
+
+(* Load-after-store through the decode (RAM window): the byte is visible. *)
+Lemma load_byte_after_store_byte (m : Machine) (pa : paddr) (v : mword 8) :
+  decode_addr pa = RAM -> load_byte (store_byte m pa v) pa = Some v.
+Proof.
+  intros H.
+  rewrite (load_byte_ram_reads (store_byte m pa v) pa H).
+  rewrite (store_byte_ram_writes m pa v H).
+  cbn. apply read_byte_after_write.
+Qed.
+
+(* ============================================================
+   The data load/store through the virtual mapping.
    ============================================================ *)
 
 (* A byte load through the virtual mapping: consult the TLB first, fall back to
-   the page-table walk, then read the byte at the physical address.  The
+   the page-table walk, then decode the physical address and read the byte.  The
    data-side twin of `translate`/`tlb_lookup`. *)
 Definition load_virtual (c : Core) (m : Machine) (va : mword 64) : option (mword 8) :=
   match tlb_lookup c va with
-  | Some (pa, _) => read_byte (Machine_ram m) pa
+  | Some (pa, _) => load_byte m pa
   | None =>
       match translate c (Machine_mem m) va with
       | None => None
-      | Some (pa, _) => read_byte (Machine_ram m) pa
+      | Some (pa, _) => load_byte m pa
+      end
+  end.
+
+(* A byte store through the virtual mapping (decode-routed). *)
+Definition store_virtual (c : Core) (m : Machine) (va : mword 64) (v : mword 8) : Machine :=
+  match tlb_lookup c va with
+  | Some (pa, _) => store_byte m pa v
+  | None =>
+      match translate c (Machine_mem m) va with
+      | None => m
+      | Some (pa, _) => store_byte m pa v
       end
   end.
 

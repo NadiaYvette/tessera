@@ -154,6 +154,12 @@ Fixpoint write_byte (ram : list Byte) (addr : mword 56) (v : mword 8) : list Byt
       else b :: (write_byte (rest) (addr) (v))
    end.
 
+Definition undefined_Region '(tt : unit) : M (Region) :=
+   (internal_pick ([RAM; MMIO]))  : M (Region).
+
+Definition decode_addr (pa : mword 56) : Region :=
+   if eq_vec ((access_vec_dec (pa) (55))) (('b"0")) then RAM else MMIO.
+
 Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
 : option ((mword 56 * Perm)) :=
    let l2 : option Pte := read_pte (mem) ((pte_address (core.(Core_satp_ppn)) ((vpn2 (va))))) in
