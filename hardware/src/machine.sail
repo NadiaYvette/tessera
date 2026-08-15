@@ -66,11 +66,12 @@ struct Byte = {
 type Ram = list(Byte)
 
 // The machine: a set of cores sharing one physical memory (page-table
-// descriptors plus data RAM).
+// descriptors plus data RAM), and a per-core IPI mailbox (SSG-3 / S2.3).
 struct Machine = {
   cores : list(Core),
   mem   : PageTable,
-  ram   : Ram
+  ram   : Ram,
+  ipi   : list(bool)
 }
 
 // ---- VPN / offset extraction (Sv39) ----
@@ -228,4 +229,59 @@ val sfence_vma_va : (Core, vaddr) -> Core
 function sfence_vma_va(core, va) = struct {
   satp_ppn = core.satp_ppn,
   tlb      = filter_tlb(core.tlb, vpn_of(va))
+}
+
+// ---- IPI delivery (SSG-3 / S2.3) ----
+//
+// The shootdown so far is a functional broadcast (map sfence_vma_va over the
+// cores); there is no IPI-delivery transition.  SSG-3 adds one: the leader marks
+// core i's shootdown IPI delivered (deliver_ipi), and the remote only clears its
+// TLB once the IPI has been delivered (receive_ipi).  The delivered bits live in
+// Machine.ipi, parallel to Machine.cores.  receive_ipi's guard is the pure-model
+// form of "delivery precedes ack": a remote cannot flush (ack) before delivery.
+
+// Update list element i (recursive; out-of-range index leaves the list alone).
+val list_update_bool : (list(bool), int, bool) -> list(bool)
+function list_update_bool(l, i, v) = match (l, i) {
+  (_ :: rest, 0) => v :: rest,
+  (x :: rest, n) => x :: list_update_bool(rest, n - 1, v),
+  ([||], _) => [||]
+}
+
+// Read list element i, with a default for out-of-range.
+val list_nth_bool : (list(bool), int, bool) -> bool
+function list_nth_bool(l, i, d) = match (l, i) {
+  (x :: _, 0) => x,
+  (_ :: rest, n) => list_nth_bool(rest, n - 1, d),
+  ([||], _) => d
+}
+
+// deliver_ipi: the leader marks core i's shootdown IPI delivered.
+val deliver_ipi : (Machine, int) -> Machine
+function deliver_ipi(m, i) = struct {
+  cores = m.cores,
+  mem   = m.mem,
+  ram   = m.ram,
+  ipi   = list_update_bool(m.ipi, i, true)
+}
+
+// Walk the cores, flushing `va` from core i's TLB iff `delivered` holds (the
+// delivered bit is read once by receive_ipi and carried down as a parameter).
+// (The VA being flushed is the shootdown's VA; the IPI delivers the signal, the
+// VA is communicated out-of-band.)
+val receive_ipi_cores : (list(Core), int, bool, vaddr) -> list(Core)
+function receive_ipi_cores(cores, i, delivered, va) = match (cores, i) {
+  (c :: cs, 0) => (if delivered then sfence_vma_va(c, va) else c) :: cs,
+  (c :: cs, n) => c :: receive_ipi_cores(cs, n - 1, delivered, va),
+  ([||], _) => [||]
+}
+
+// receive_ipi: core i takes its IPI and flushes `va` from its TLB — but only if
+// the IPI was delivered first (ipi[i] = true).
+val receive_ipi : (Machine, int, vaddr) -> Machine
+function receive_ipi(m, i, va) = struct {
+  cores = receive_ipi_cores(m.cores, i, list_nth_bool(m.ipi, i, false), va),
+  mem   = m.mem,
+  ram   = m.ram,
+  ipi   = m.ipi
 }

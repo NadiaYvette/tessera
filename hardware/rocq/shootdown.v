@@ -30,7 +30,8 @@ Definition core_with_root (root : mword 44) : Core :=
 Definition shootdown (m : Machine) (root : mword 44) (va : mword 64) : Machine :=
   {| Machine_mem := unmap_leaf_mem (core_with_root root) m.(Machine_mem) va;
      Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
-     Machine_ram := m.(Machine_ram) |}.
+     Machine_ram := m.(Machine_ram);
+     Machine_ipi := m.(Machine_ipi) |}.
 
 (* ============================================================
    Lemmas.
@@ -126,7 +127,8 @@ Proof.
   specialize (shootdown_correct
     {| Machine_mem := mem;
        Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
-       Machine_ram := [] |}
+       Machine_ram := [];
+       Machine_ipi := [] |}
     root va Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.
@@ -159,7 +161,8 @@ Qed.
 Definition invalidate_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) : Machine :=
   {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
      Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
-     Machine_ram := m.(Machine_ram) |}.
+     Machine_ram := m.(Machine_ram);
+     Machine_ipi := m.(Machine_ipi) |}.
 
 Theorem invalidate_shootdown_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
   p.(Pte_valid) = false ->
@@ -194,7 +197,8 @@ Proof.
   specialize (invalidate_shootdown_correct
     {| Machine_mem := mem;
        Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
-       Machine_ram := [] |}
+       Machine_ram := [];
+       Machine_ipi := [] |}
     root va p Hinv Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.

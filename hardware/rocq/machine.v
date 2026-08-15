@@ -219,6 +219,44 @@ Definition sfence_vma_va (core : Core) (va : mword 64) : Core :=
    {| Core_satp_ppn := core.(Core_satp_ppn);
       Core_tlb := filter_tlb (core.(Core_tlb)) ((vpn_of (va))) |}.
 
+Fixpoint list_update_bool (l : list bool) (i : Z) (v : bool) : list bool :=
+   match (l, i) with
+   | (g__1 :: rest, l__0) =>
+      if Z.eqb (l__0) (0) then v :: rest
+      else g__1 :: (list_update_bool (rest) ((Z.sub (l__0) (1))) (v))
+   | ([], _) => []
+   end.
+
+Fixpoint list_nth_bool (l : list bool) (i : Z) (d : bool) : bool :=
+   match (l, i) with
+   | (x :: g__0, l__0) =>
+      if Z.eqb (l__0) (0) then x else list_nth_bool (g__0) ((Z.sub (l__0) (1))) (d)
+   | ([], _) => d
+   end.
+
+Definition deliver_ipi (m : Machine) (i : Z) : Machine :=
+   {| Machine_cores := m.(Machine_cores);
+      Machine_mem := m.(Machine_mem);
+      Machine_ram := m.(Machine_ram);
+      Machine_ipi := list_update_bool (m.(Machine_ipi)) (i) (true) |}.
+
+Fixpoint receive_ipi_cores (cores : list Core) (i : Z) (delivered : bool) (va : mword 64)
+: list Core :=
+   match (cores, i) with
+   | (c :: cs, l__0) =>
+      if Z.eqb (l__0) (0) then (if delivered then sfence_vma_va (c) (va) else c) :: cs
+      else c :: (receive_ipi_cores (cs) ((Z.sub (l__0) (1))) (delivered) (va))
+   | ([], _) => []
+   end.
+
+Definition receive_ipi (m : Machine) (i : Z) (va : mword 64) : Machine :=
+   {| Machine_cores :=
+        receive_ipi_cores (m.(Machine_cores)) (i) ((list_nth_bool (m.(Machine_ipi)) (i) (false)))
+          (va);
+      Machine_mem := m.(Machine_mem);
+      Machine_ram := m.(Machine_ram);
+      Machine_ipi := m.(Machine_ipi) |}.
+
 Definition initialize_registers '(tt : unit) : unit := tt.
 
 Definition sail_model_init (_ : unit) : unit := initialize_registers (tt).

@@ -49,11 +49,16 @@ Soundness: no core translates through `va` after the protocol completes.
   onto a genuine relaxed-memory base, *over the generated `machine.v`* (not gpfsl's toy
   `mp` example). Now reconciled into the **rocq-9.2 switch** with the vendored dev stack
   (`third_party/{stdpp,iris,gpfsl}` — no separate `wm` switch). Design below.
-- **S2.3 — IPI delivery (queued).** SSG-3 (`system-state-goals.md`): today the shootdown
+- **S2.3 — IPI delivery (in progress).** SSG-3 (`system-state-goals.md`): today the shootdown
   is a functional broadcast (`map sfence_vma_va` over `Machine.cores`); there is no
   IPI-delivery transition. S2.3 adds a `deliver_ipi` state transition on `Machine` and
   proves **"delivery precedes ack"** — turning "the protocol is correct" into "the
-  kernel's *IPI-based* protocol is correct". Highest-leverage glue after S2.2.
+  kernel's *IPI-based* protocol is correct". **S2.3a done** (`hardware/rocq/ipi.v`,
+  axiom-free): `Machine.ipi` mailbox + `deliver_ipi`/`receive_ipi` transitions, and the
+  guard lemmas `receive_ipi_before_delivery_noop` / `receive_ipi_after_delivery_sfences`
+  (a remote cannot flush before its IPI is delivered; once delivered, its core is
+  flushed). Remaining: the composed broadcast that refines `invalidate_shootdown`, then
+  the concurrent/weak-memory lift.
 
 ## Concrete-value encoding (S2.1)
 

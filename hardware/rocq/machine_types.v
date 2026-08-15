@@ -304,39 +304,51 @@ Record Machine := {
   Machine_cores : list Core;
   Machine_mem : PageTable;
   Machine_ram : Ram;
+  Machine_ipi : list bool;
 }.
 Arguments Machine : clear implicits.
 #[export]
 Instance Decidable_eq_Machine : EqDecision Machine.
-   intros [x0 x1 x2].
-   intros [y0 y1 y2].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_Machine : Countable Machine.
 refine {|
-  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x);
-  decode x := '(x0, x1, x2) ← decode x;
-              mret (Build_Machine x0 x1 x2)
+  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_Machine x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1 x2];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
-  match r with Build_Machine _ (_ as f1) (_ as f2) => Build_Machine e f1 f2 end (at level 0).
+  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_Machine e f1 f2 f3 end (at level 0).
 Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
-  match r with Build_Machine (_ as f0) _ (_ as f2) => Build_Machine f0 e f2 end (at level 0).
+  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_Machine f0 e f2 f3 end (at level 0).
 Notation "{[ r 'with' 'Machine_ram' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) _ => Build_Machine f0 f1 e end (at level 0).
+  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_Machine f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'Machine_ipi' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_Machine f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_Machine : Inhabited (Machine) := {
-  inhabitant := {| Machine_cores := inhabitant; Machine_mem := inhabitant; Machine_ram := inhabitant
+  inhabitant := {|
+    Machine_cores := inhabitant;
+    Machine_mem := inhabitant;
+    Machine_ram := inhabitant;
+    Machine_ipi := inhabitant
 |} }.
 
 
