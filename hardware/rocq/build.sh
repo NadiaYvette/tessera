@@ -114,6 +114,13 @@ if [ -d "$GP" ]; then
   rocq compile $WFLAGS shootdown_weak.v
   axiom_free shootdown_weak shootdown_weak_gen_inv "$WFLAGS"
   axiom_free shootdown_weak shootdown_weak_ack_gen_inv "$WFLAGS"
+  # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
+  rocq compile $WFLAGS shootdown_weak_broadcast.v
+  axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_fork_remotes_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_broadcast_spec "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi

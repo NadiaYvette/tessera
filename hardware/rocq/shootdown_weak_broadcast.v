@@ -31,7 +31,7 @@ From gpfsl.logic Require Import lifting proofmode atomics view_invariants
 From iris.algebra Require Import excl.
 From iris.base_logic.lib Require Import own ghost_var.
 From iris.proofmode Require Import proofmode monpred.
-From gpfsl.base_logic Require Import vprop.
+From gpfsl.base_logic Require Import vprop na meta_data.
 From SailStdpp Require Import MachineWord.
 Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
@@ -86,6 +86,11 @@ Qed.
 Lemma all_cores_0 : all_cores 0 = ∅.
 Proof. rewrite /all_cores. reflexivity. Qed.
 
+(* The i = 0 base cases of the loop specs mention [all_cores n ∖ all_cores 0];
+   [new] produces the whole set [all_cores n], so bridge them here. *)
+Lemma all_cores_n_diff_0 (n : nat) : all_cores n = all_cores n ∖ all_cores 0.
+Proof. rewrite all_cores_0 difference_empty_L. done. Qed.
+
 Lemma all_cores_diff_empty (n i : nat) : n ≤ i → all_cores n ∖ all_cores i = ∅.
 Proof.
   intros Hni. apply subseteq_empty_difference_L. intros x.
@@ -127,43 +132,42 @@ Definition bc_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n
    The program.
    ============================================================ *)
 
-Definition bc_remote : expr :=
+Definition bc_remote : val :=
   λ: ["go"; "ack"; "tlb"; "i"],
     (repeat: !ᵃᶜ("go")) ;;                        (* acquire go: the PTE is published *)
     ("tlb" +ₗ "i") <- #(encode_tlb None) ;;       (* clear own TLB *)
     ("ack" +ₗ "i") <-ʳᵉˡ #1.                      (* release ack: the clear is visible *)
 
-Definition bc_init_acks : expr :=
+Definition bc_init_acks : val :=
   rec: "f" ["ack"; "i"; "n"] :=
     if: "i" < "n"
     then ("ack" +ₗ "i" <- #0 ;; "f" ["ack"; ("i" + #1); "n"])
     else #☠.
 
-Definition bc_fork_remotes : expr :=
+Definition bc_fork_remotes : val :=
   rec: "f" ["go"; "ack"; "tlb"; "i"; "n"] :=
     if: "i" < "n"
     then (Fork (bc_remote ["go"; "ack"; "tlb"; "i"]) ;;
           "f" ["go"; "ack"; "tlb"; ("i" + #1); "n"])
     else #☠.
 
-Definition bc_wait_all : expr :=
+Definition bc_wait_all : val :=
   rec: "w" ["ack"; "i"; "n"] :=
     if: "i" < "n"
     then ((repeat: !ᵃᶜ("ack" +ₗ "i")) ;; "w" ["ack"; ("i" + #1); "n"])
     else #☠.
 
-Definition bc_broadcast : expr :=
-  λ: ["n"],
-    let: "pte" := new [ #1] in
-    let: "go"  := new [ #1] in
-    let: "ack" := new [ "n"] in
-    let: "tlb" := new [ "n"] in
-    "go" +ₗ #0 <- #0 ;;
-    "pte" +ₗ #0 <- #(encode_pte invalid_pte) ;;  (* break-before-make *)
-    "go" +ₗ #0 <-ʳᵉˡ #1 ;;                       (* release go *)
-    bc_init_acks ["ack"; #0; "n"] ;;
-    bc_fork_remotes ["go"; "ack"; "tlb"; #0; "n"] ;;
-    bc_wait_all ["ack"; #0; "n"].
+Definition bc_broadcast (n : nat) : expr :=
+  let: "pte" := new [ #1] in
+  let: "go"  := new [ #1] in
+  let: "ack" := new [ #(Z.of_nat n)] in
+  let: "tlb" := new [ #(Z.of_nat n)] in
+  "go" +ₗ #0 <- #0 ;;
+  "pte" +ₗ #0 <- #(encode_pte invalid_pte) ;;  (* break-before-make *)
+  "go" +ₗ #0 <-ʳᵉˡ #1 ;;                       (* release go *)
+  bc_init_acks ["ack"; #0; #(Z.of_nat n)] ;;
+  bc_fork_remotes ["go"; "ack"; "tlb"; #0; #(Z.of_nat n)] ;;
+  bc_wait_all ["ack"; #0; #(Z.of_nat n)].
 
 (* Application helpers: the [ # ] literal notation does not survive the list
    application (it binds to the head via the App coercion), so we write the
@@ -177,8 +181,7 @@ Definition bc_fork_remotes_at (go ack tlb : loc) (i n : nat) : expr :=
                        Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
 Definition bc_wait_all_at (ack : loc) (i n : nat) : expr :=
   App bc_wait_all [Lit (LitLoc ack); Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
-Definition bc_broadcast_at (n : nat) : expr :=
-  App bc_broadcast [Lit (LitInt (Z.of_nat n))].
+Definition bc_broadcast_at (n : nat) : expr := bc_broadcast n.
 
 (* ============================================================
    The ack cell (S2.2b's one-shot buffer, per remote) and the go flag.
@@ -504,6 +507,13 @@ Proof.
   rewrite /all_cores -big_sepS_list_to_set; [done | apply NoDup_seq].
 Qed.
 
+(* The i = 0 base cases of the loop specs consume [all_cores n ∖ all_cores 0],
+   but the broadcast builds its [∗ set] resources over the whole [all_cores n];
+   bridge here (on the hypothesis, where a bare [rewrite] cannot reach it). *)
+Lemma big_sepS_all_cores_n_diff_0 (P : nat → vProp) (n : nat) :
+  ([∗ set] j ∈ all_cores n, P j) ⊢ ([∗ set] j ∈ all_cores n ∖ all_cores 0, P j).
+Proof. by rewrite -all_cores_n_diff_0. Qed.
+
 (* Convert a finite set of NA cells to atomic cells, one fresh gname per cell.
    [AtomicPtsTo_from_na] allocates a fresh gname each call, so the resulting
    γ/t/V functions are injective on S and the sw⊒/sw↦ histories never collide. *)
@@ -627,6 +637,165 @@ Proof.
       iIntros "!> _". by iApply "HΦ".
   - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
     by iApply "HΦ".
+Qed.
+
+(* ============================================================
+   The broadcast: allocate, write, convert, fork, wait, reify.
+   ============================================================ *)
+
+(* Convert the ack array (already written #0) into per-cell atomic resources:
+   the empty ack cell (for the invariant), the writer-seen (for the fork), and
+   the sync view (persistent, for the leader).  [γtok] is a parameter because the
+   broadcast's remotes deposit the cleared TLB (never the one-shot token), so the
+   token itself is never allocated. *)
+Lemma bc_ack_setup (ack tlb : loc) (γtok : nat → gname) (n : nat) :
+  ([∗ set] j ∈ all_cores n, (ack >> j) ↦ #0)%I ⊢
+  |==> ∃ (γack : nat → gname) (t : nat → positive) (V : nat → view),
+    [∗ set] j ∈ all_cores n,
+      ((ack_cell (ack >> j) (tlb >> j) (γtok j) (γack j) ∗
+        (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]}) ∗
+       ((ack >> j) sy⊒{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j))).
+Proof.
+  iIntros "Hack".
+  iMod (big_sepS_atomic_from_na ack #0 (all_cores n) with "Hack") as (γack t V) "HAtom".
+  iIntros "!>". iExists γack, t, V.
+  iApply (big_sepS_mono
+    (λ j, ((ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗
+           (ack >> j) sw↦{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j))%I)
+    (λ j, ((ack_cell (ack >> j) (tlb >> j) (γtok j) (γack j) ∗
+            (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]}) ∗
+           ((ack >> j) sy⊒{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j)))%I)
+    (all_cores n) with "HAtom").
+  iIntros (j Hj) "(SW & Pts & SeenV)".
+  iDestruct (AtomicSWriter_AtomicSync with "SW") as "#S".
+  iDestruct (view_at_intro with "Pts") as (Vx) "[_ Pts]".
+  rewrite ack_cell_eq.
+  iFrame "SW SeenV S".
+  iExists _, false, (t j), (V j), Vx. iFrame "Pts". done.
+Qed.
+
+(* [wp_new] is phrased over a [Z] size, so its postcondition mentions the
+   roundtrip [Z.to_nat (Z.of_nat n)]; the broadcast allocates its per-core
+   arrays at the Coq-nat size [n], so give [new] a nat-phrased spec instead.
+   The two roundtrip lemmas below are the only place the [Z.of_nat]/[Z.to_nat]
+   impedance mismatch is bridged. *)
+
+Lemma repeat_poison_roundtrip (n : nat) :
+  repeat #☠ (Z.to_nat (Z.of_nat n)) = repeat #☠ n.
+Proof. f_equal. apply Nat2Z.id. Qed.
+
+Lemma seq_roundtrip (n : nat) :
+  seq 0 (Z.to_nat (Z.of_nat n)) = seq 0 n.
+Proof. f_equal. apply Nat2Z.id. Qed.
+
+Lemma own_loc_na_vec_poison_roundtrip (l : loc) (n : nat) :
+  l ↦∗ repeat #☠ (Z.to_nat (Z.of_nat n)) -∗ l ↦∗ repeat #☠ n.
+Proof.
+  rewrite repeat_poison_roundtrip. iIntros "$".
+Qed.
+
+Lemma big_sepL_seq_poison_roundtrip (l : loc) (n : nat) :
+  ([∗ list] i ∈ seq 0 (Z.to_nat (Z.of_nat n)), meta_token (l >> i) ⊤) -∗
+  ([∗ list] i ∈ seq 0 n, meta_token (l >> i) ⊤).
+Proof.
+  rewrite seq_roundtrip. iIntros "$".
+Qed.
+
+Lemma wp_new_nat (n : nat) :
+  ∀ tid,
+  {{{ True }}} new [ #(Z.of_nat n) ] @ tid; ⊤
+  {{{ l, RET LitV $ LitLoc l;
+      (⎡†l…n⎤ ∨ ⌜n = 0%nat⌝) ∗
+      l ↦∗ repeat #☠ n ∗
+      [∗ list] i ∈ seq 0 n, meta_token (l >> i) ⊤ }}}.
+Proof.
+  iIntros (tid Φ) "_ HΦ". wp_lam. wp_op; case_bool_decide.
+  - wp_if. assert (n = 0%nat) as -> by lia. iApply "HΦ".
+    rewrite own_loc_na_vec_nil. auto.
+  - wp_if. wp_alloc l as "Htok" "Hvec" "Hfree"; first lia.
+    apply Nat2Z.inj in Hsz. subst sz.
+    iApply "HΦ".
+    iFrame "Hfree".
+    iSplitL "Hvec".
+    { iApply (own_loc_na_vec_poison_roundtrip with "Hvec"). }
+    iApply (big_sepL_seq_poison_roundtrip with "Htok").
+Qed.
+
+Lemma bc_broadcast_spec (n : nat) :
+  ∀ tid,
+  {{{ machine_ctx γm (broadcast_pre_machine root va mem n) }}}
+    bc_broadcast_at n @ tid; ⊤
+  {{{ RET #☠; ∃ (γgo : gname) (γtok γack : nat → gname) (pte go ack tlb : loc),
+      bc_inv_ctx γgo γtok γack go ack tlb n ∗
+      pte ↦ #(encode_pte invalid_pte) ∗
+      machine_ctx γm (broadcast_post_machine root va mem n) }}}.
+Proof.
+  iIntros (tid Φ) "Hm0 HΦ".
+  rewrite /bc_broadcast_at /bc_broadcast.
+  cbn beta.
+  wp_apply wp_new; [done..|]. iIntros (pte) "(_ & Hpte & _)".
+  rewrite own_loc_na_vec_singleton.
+  wp_let.
+  wp_apply wp_new; [done..|]. iIntros (go) "(_ & Hgo & _)".
+  rewrite own_loc_na_vec_singleton.
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (ack) "(_ & Hack & _)".
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (tlb) "(_ & Htlb & _)".
+  wp_let.
+  (* ---- break-before-make: go <- #0, pte <- invalid ---- *)
+  wp_op. rewrite shift_0. wp_write.
+  wp_op. rewrite shift_0. wp_write.
+  iMod (machine_ctx_update γm (broadcast_pre_machine root va mem n)
+          (bc_machine root va mem n 0) with "Hm0") as "Hm1".
+  (* ---- go: NA -> atomic, then release ---- *)
+  iMod (AtomicPtsTo_from_na with "Hgo") as (γgo tgo Vgo) "(#SeenVgo & SWgo & Ptsgo)".
+  iDestruct (AtomicSWriter_AtomicSync with "SWgo") as "#Sgo".
+  iDestruct (view_at_intro with "Ptsgo") as (Vxgo) "[_ Ptsgo]".
+  wp_op. rewrite shift_0.
+  wp_apply (AtomicSWriter_release_write _ _ _ _ Vgo Vxgo #1 True%I
+              with "[$SWgo $Ptsgo $SeenVgo]"); [solve_ndisj|..].
+  iIntros (t1 V1) "(%MAX & _ & [_ SWgo'] & Ptsgo')".
+  iAssert (go_released go γgo)%I with "[Ptsgo']" as "Hgo_released".
+  { rewrite go_released_eq. iExists _, tgo, t1, Vgo, V1, _. iFrame "Ptsgo'".
+    iPureIntro. split; [|done]. destruct MAX as [Hfresh _]. apply Hfresh.
+    rewrite lookup_insert_eq. by eexists. }
+  wp_seq.
+  (* ---- ack array: write #0, then convert to atomic cells ---- *)
+  iDestruct (own_loc_na_vec_repeat_all_cores ack #☠ n with "Hack") as "HackNA".
+  rewrite all_cores_n_diff_0.
+  wp_apply (bc_init_acks_spec ack 0 n tid with "HackNA").
+  iIntros "Hack0".
+  wp_seq.
+  rewrite -all_cores_n_diff_0.
+  iMod (bc_ack_setup ack tlb (fun _ => γgo) n with "Hack0") as (γack t V) "HackAll".
+  iDestruct (big_sepS_sep (λ j, (ack_cell (ack >> j) (tlb >> j) (γgo) (γack j) ∗
+                                   (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]})%I)
+                         (λ j, ((ack >> j) sy⊒{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j))%I)
+                         (all_cores n) with "HackAll") as "[HackSW #Sctx]".
+  iDestruct (big_sepS_sep (λ j, ack_cell (ack >> j) (tlb >> j) (γgo) (γack j))%I
+                         (λ j, (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]})%I
+                         (all_cores n) with "HackSW") as "[HackCells Hack_sw]".
+  (* ---- establish the invariant ---- *)
+  iMod (inv_alloc (bc_N go) _ (bc_inv γgo (fun _ => γgo) γack go ack tlb n)
+          with "[Hgo_released HackCells]") as "#HI".
+  { rewrite bc_inv_eq. iIntros "!>". iFrame "Hgo_released HackCells". }
+  (* ---- the fork + wait premises ---- *)
+  iDestruct (own_loc_na_vec_repeat_all_cores tlb #☠ n with "Htlb") as "HtlbNA".
+  iDestruct (big_sepS_sep_2 _ _ (all_cores n) with "Hack_sw HtlbNA") as "Hrest".
+  iDestruct (big_sepS_all_cores_n_diff_0
+              (λ j, ((ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I) n
+              with "Hrest") as "Hrest0".
+  wp_apply (bc_fork_remotes_spec γgo (fun _ => γgo) γack go ack tlb
+              t V {[tgo := (#0, Vgo)]} Vgo 0 n tid
+              with "[$HI $Sctx $Sgo $SeenVgo $Hrest0]").
+  iIntros "_".
+  wp_seq.
+  wp_apply (bc_wait_all_spec γgo (fun _ => γgo) γack go ack tlb t V 0 n tid
+              with "[$Hm1 $HI $Sctx]").
+  iIntros "Hm".
+  iApply "HΦ".
+  iExists γgo, (fun _ => γgo), γack, pte, go, ack, tlb. iFrame "HI Hpte Hm".
 Qed.
 
 End bc_inv.
