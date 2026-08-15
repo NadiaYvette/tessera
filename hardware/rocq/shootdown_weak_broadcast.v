@@ -170,8 +170,8 @@ Definition bc_broadcast : expr :=
    literal arguments explicitly. *)
 Definition bc_remote_at (go ack tlb : loc) (i : nat) : expr :=
   App bc_remote [Lit (LitLoc go); Lit (LitLoc ack); Lit (LitLoc tlb); Lit (LitInt (Z.of_nat i))].
-Definition bc_init_acks_at (ack : loc) (n : nat) : expr :=
-  App bc_init_acks [Lit (LitLoc ack); Lit (LitInt 0); Lit (LitInt (Z.of_nat n))].
+Definition bc_init_acks_at (ack : loc) (i n : nat) : expr :=
+  App bc_init_acks [Lit (LitLoc ack); Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
 Definition bc_fork_remotes_at (go ack tlb : loc) (i n : nat) : expr :=
   App bc_fork_remotes [Lit (LitLoc go); Lit (LitLoc ack); Lit (LitLoc tlb);
                        Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
@@ -480,6 +480,111 @@ Proof.
             with "Hmach") as "Hmach'".
     wp_op. rewrite bool_decide_false; [|lia]. wp_if.
     by iApply ("HΦ" with "Hmach'").
+Qed.
+
+(* ============================================================
+   Pure helpers shared by the setup / forking proofs.
+   ============================================================ *)
+
+Lemma singleton_notin_diff (n i : nat) (Hin : i < n) :
+  {[i]} ## (all_cores n ∖ all_cores (i + 1)).
+Proof.
+  intros x. rewrite elem_of_singleton. intros ->.
+  intros Hx. apply elem_of_difference in Hx as [_ Hx]. apply Hx.
+  rewrite elem_of_all_cores. lia.
+Qed.
+
+(* [new [n]] gives [l ↦∗ repeat v n]; this unfolds it to a per-cell [∗ set] over
+   [all_cores n], the form the loop specs consume. *)
+Lemma own_loc_na_vec_repeat_all_cores (l : loc) (v : val) (n : nat) :
+  l ↦∗ repeat v n ⊢ [∗ set] j ∈ all_cores n, (l >> j) ↦ v.
+Proof.
+  iIntros "H".
+  iDestruct (own_loc_na_vec_repeat l 1 n v with "H") as "H".
+  rewrite /all_cores -big_sepS_list_to_set; [done | apply NoDup_seq].
+Qed.
+
+(* Convert a finite set of NA cells to atomic cells, one fresh gname per cell.
+   [AtomicPtsTo_from_na] allocates a fresh gname each call, so the resulting
+   γ/t/V functions are injective on S and the sw⊒/sw↦ histories never collide. *)
+Lemma big_sepS_atomic_from_na (l : loc) (v : val) (S : gset nat) :
+  ([∗ set] j ∈ S, (l >> j) ↦ v)%I ⊢
+  |==> ∃ (γ : nat → gname) (t : nat → positive) (V : nat → view),
+    [∗ set] j ∈ S, ((l >> j) sw⊒{γ j} {[t j := (v, V j)]} ∗
+                    (l >> j) sw↦{γ j} {[t j := (v, V j)]} ∗
+                    ⊒(V j)).
+Proof.
+  apply (set_ind_L (λ S, ([∗ set] j ∈ S, (l >> j) ↦ v)%I ⊢
+                         |==> ∃ (γ : nat → gname) (t : nat → positive) (V : nat → view),
+                           [∗ set] j ∈ S, ((l >> j) sw⊒{γ j} {[t j := (v, V j)]} ∗
+                                           (l >> j) sw↦{γ j} {[t j := (v, V j)]} ∗
+                                           ⊒(V j)))).
+  - rewrite !big_sepS_empty. iIntros "_". iModIntro.
+    iExists (fun _ => 1%positive), (fun _ => 1%positive), (fun _ => ∅).
+    rewrite !big_sepS_empty. done.
+  - intros i S' Hi IH. iIntros "H".
+    rewrite big_sepS_union; last first.
+    { intros x. rewrite elem_of_singleton. intros ->. exact Hi. }
+    rewrite big_sepS_singleton.
+    iDestruct "H" as "[Hi0 HS']".
+    iMod (IH with "HS'") as (γ' t' V') "Hres".
+    iMod (AtomicPtsTo_from_na (l >> i) v with "Hi0") as (γi ti Vi) "(#SVi & SWi & Ptsi)".
+    iIntros "!>".
+    iExists (fun j => if decide (j = i) then γi else γ' j),
+            (fun j => if decide (j = i) then ti else t' j),
+            (fun j => if decide (j = i) then Vi else V' j).
+    rewrite big_sepS_union; last first.
+    { intros x. rewrite elem_of_singleton. intros ->. exact Hi. }
+    rewrite big_sepS_singleton.
+    iSplitL "SWi Ptsi SVi".
+    { rewrite !decide_True; [|reflexivity..]. iFrame "SWi Ptsi SVi". }
+    iApply (big_sepS_mono (λ j, ((l >> j) sw⊒{γ' j} {[t' j := (v, V' j)]} ∗
+                                 (l >> j) sw↦{γ' j} {[t' j := (v, V' j)]} ∗
+                                 ⊒(V' j))%I)
+                         (λ j, ((l >> j) sw⊒{(fun k => if decide (k = i) then γi else γ' k) j}
+                                          {[(fun k => if decide (k = i) then ti else t' k) j :=
+                                            (v, (fun k => if decide (k = i) then Vi else V' k) j)]} ∗
+                                (l >> j) sw↦{(fun k => if decide (k = i) then γi else γ' k) j}
+                                          {[(fun k => if decide (k = i) then ti else t' k) j :=
+                                            (v, (fun k => if decide (k = i) then Vi else V' k) j)]} ∗
+                                ⊒((fun k => if decide (k = i) then Vi else V' k) j))%I)
+             with "Hres").
+    iIntros (j Hj).
+    rewrite !decide_False; [done| | |]; intros ->; apply Hi, Hj.
+Qed.
+
+(* ============================================================
+   The ack-array initialisation: write #0 to each ack cell (NA).
+   ============================================================ *)
+
+Lemma bc_init_acks_spec (ack : loc) :
+  ∀ (i n : nat) tid,
+  {{{ [∗ set] j ∈ (all_cores n ∖ all_cores i), (ack >> j) ↦ #☠ }}}
+    bc_init_acks_at ack i n @ tid; ⊤
+  {{{ RET #☠; [∗ set] j ∈ (all_cores n ∖ all_cores i), (ack >> j) ↦ #0 }}}.
+Proof.
+  iIntros (i n tid Φ) "Hack HΦ".
+  rewrite /bc_init_acks_at /bc_init_acks.
+  iLöb as "IH" forall (i Φ).
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    rewrite (all_cores_step n i Hin).
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton.
+    iDestruct "Hack" as "[Hacki Hackrest]".
+    wp_op. rewrite Nat2Z.id. wp_write.
+    wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+    iApply ("IH" $! (i + 1)%nat Φ with "Hackrest").
+    iIntros "!> Hackrest'".
+    iApply "HΦ".
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton. iFrame.
+  - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    rewrite (all_cores_diff_empty n i); [|lia].
+    rewrite big_sepS_empty. by iApply "HΦ".
 Qed.
 
 End bc_inv.
