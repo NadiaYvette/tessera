@@ -194,17 +194,19 @@ proof-side twin of the litmus `Sometimes` cases and of
   the waiting leader.  This closes the remote→leader half of the S2.1 broadcast; the
   remaining step is to compose S2.2a + S2.2b into the N-core `wait_all_acks` barrier and
   reify to `invalidate_shootdown` (folded into S2.2c).
-- **S2.2c — N-core broadcast (scaffold).** 🚧 `hardware/rocq/shootdown_weak_broadcast.v`
-  compiles the scaffold: the program (leader writes invalid PTE, releases `go`, forks N
-  remotes, waits on N single-writer `ack[i]` flags), the invariant (`go_released` + per-core
-  `ack_cell`), the per-core `UTok`-disjunction ack buffer (S2.2b pattern), and the pure
-  `bc_machine n i` reification (cores 0..i-1 cleared, cores i..n-1 stale, PTE invalid).
-  Key design point: the machine ghost is held by the leader *outside* the invariant and
-  advanced in lockstep with ack acquisition — no auth-frag pending-map bookkeeping is
-  needed (unlike S2.1's counter), because the leader iterates `i = 0..n-1` and knows the
-  pending cores purely from `i`.  Remaining: the four specs (`bc_remote_spec`,
-  `bc_wait_all_spec`, `bc_fork_remotes_spec`, `bc_broadcast_spec`) and the ack-array
-  atomic conversion, then `broadcast_reifies_machine` for the machine conclusion.
+- **S2.2c — N-core broadcast.** ✅ `hardware/rocq/shootdown_weak_broadcast.v` — all five
+  specs (`bc_remote_spec`, `bc_wait_all_spec`, `bc_init_acks_spec`, `bc_fork_remotes_spec`,
+  `bc_broadcast_spec`) are proven and axiom-free, and wired into `build.sh`.  The leader
+  writes the invalid PTE, releases `go`, writes #0 to the ack array and converts it to
+  per-cell atomic resources (`bc_ack_setup`), forks N remotes, and acquires every ack while
+  stepping the machine ghost from `bc_machine n 0` to `broadcast_post_machine`.  Key design
+  point: the machine ghost is held by the leader *outside* the invariant and advanced in
+  lockstep with ack acquisition — no auth-frag pending-map bookkeeping is needed (unlike
+  S2.1's counter), because the leader iterates `i = 0..n-1` and knows the pending cores
+  purely from `i`.  `broadcast_reifies_machine` (machine_reify.v) then reifies the post-state
+  to "every core's TLB is clear", closing the S2.1 `broadcast_spec` under weak memory.
+  Deferred: per-cell coupling (thread the virtual address into the TLB-entry model so
+  VIVT/VIPT variants can use it).
 
 ### Trust line (S2.2)
 
