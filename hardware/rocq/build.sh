@@ -51,6 +51,7 @@ rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
+rocq compile $FLAGS data_ram.v
 rocq compile $FLAGS shootdown_iris.v
 
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
@@ -105,6 +106,9 @@ axiom_free shootdown_iris  fork_remotes_spec
 axiom_free shootdown_iris  broadcast_spec
 axiom_free machine_reify    broadcast_reifies_machine
 axiom_free machine_encoding invalid_pte_not_valid
+axiom_free data_ram         read_byte_after_write
+axiom_free data_ram         read_byte_after_write_other
+axiom_free data_ram         invalidate_shootdown_load_faults
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

@@ -54,10 +54,23 @@ struct MemEntry = {
 
 type PageTable = list(MemEntry)
 
-// The machine: a set of cores sharing one physical memory.
+// Data RAM: byte-addressable physical memory, as a sparse association list of
+// bytes (the data-side twin of PageTable).  This closes the G3 gap — the machine
+// now has real data storage, so data load/store correctness is in scope.
+// A missing address means an unmapped/faulting access.
+struct Byte = {
+  addr : paddr,
+  data : bits(8)
+}
+
+type Ram = list(Byte)
+
+// The machine: a set of cores sharing one physical memory (page-table
+// descriptors plus data RAM).
 struct Machine = {
   cores : list(Core),
-  mem   : PageTable
+  mem   : PageTable,
+  ram   : Ram
 }
 
 // ---- VPN / offset extraction (Sv39) ----
@@ -110,6 +123,24 @@ function read_pte(mem, addr) = match mem {
   e :: rest =>
     if e.addr == addr then Some(e.pte)
     else read_pte(rest, addr)
+}
+
+// ---- data RAM read / write (byte-addressable) ----
+
+val read_byte : (Ram, paddr) -> option(bits(8))
+function read_byte(ram, addr) = match ram {
+  [||] => None(),
+  b :: rest =>
+    if b.addr == addr then Some(b.data)
+    else read_byte(rest, addr)
+}
+
+val write_byte : (Ram, paddr, bits(8)) -> Ram
+function write_byte(ram, addr, v) = match ram {
+  [||] => struct { addr = addr, data = v } :: [||],
+  b :: rest =>
+    if b.addr == addr then struct { addr = addr, data = v } :: rest
+    else b :: write_byte(rest, addr, v)
 }
 
 // ---- hardware page-table walk (3 levels, Sv39) ----

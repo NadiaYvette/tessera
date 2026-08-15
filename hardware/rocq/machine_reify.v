@@ -34,7 +34,8 @@ Definition reify_core (root : mword 44) (o : option TlbEntry) : Core :=
 Definition reify_machine (root : mword 44) (va : mword 64) (mem : list MemEntry)
                         (p : Pte) (tls : nat -> option TlbEntry) (n : nat) : Machine :=
   {| Machine_mem := invalidate_leaf_mem (core_with_root root) mem va p;
-     Machine_cores := List.map (fun j => reify_core root (tls j)) (seq 0 n) |}.
+     Machine_cores := List.map (fun j => reify_core root (tls j)) (seq 0 n);
+     Machine_ram := [] |}.
 
 (* Core [j] still caches the stale [leaf_entry va] exactly while it is pending
    (in the domain of the map [m]); once it has acked its TLB is empty.  The map's

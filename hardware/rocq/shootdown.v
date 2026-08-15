@@ -29,7 +29,8 @@ Definition core_with_root (root : mword 44) : Core :=
    `root`) and invalidate every core's TLB. *)
 Definition shootdown (m : Machine) (root : mword 44) (va : mword 64) : Machine :=
   {| Machine_mem := unmap_leaf_mem (core_with_root root) m.(Machine_mem) va;
-     Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores) |}.
+     Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
+     Machine_ram := m.(Machine_ram) |}.
 
 (* ============================================================
    Lemmas.
@@ -124,7 +125,8 @@ Proof.
   { rewrite Forall_map. apply Forall_forall. intros x _. reflexivity. }
   specialize (shootdown_correct
     {| Machine_mem := mem;
-       Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n) |}
+       Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
+       Machine_ram := [] |}
     root va Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.
@@ -156,7 +158,8 @@ Qed.
    invalidate every core's TLB (break-before-make), vs `shootdown`'s removal. *)
 Definition invalidate_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) : Machine :=
   {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
-     Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores) |}.
+     Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
+     Machine_ram := m.(Machine_ram) |}.
 
 Theorem invalidate_shootdown_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
   p.(Pte_valid) = false ->
@@ -190,7 +193,8 @@ Proof.
   { rewrite Forall_map. apply Forall_forall. intros x _. reflexivity. }
   specialize (invalidate_shootdown_correct
     {| Machine_mem := mem;
-       Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n) |}
+       Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
+       Machine_ram := [] |}
     root va p Hinv Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.

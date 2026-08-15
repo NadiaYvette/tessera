@@ -262,13 +262,13 @@ Instance dummy_MemEntry : Inhabited (MemEntry) := {
 
 Definition PageTable : Type := list MemEntry.
 
-Record Machine := {
-  Machine_cores : list Core;
-  Machine_mem : PageTable;
+Record Byte := {
+  Byte_addr : paddr;
+  Byte_data : bits 8;
 }.
-Arguments Machine : clear implicits.
+Arguments Byte : clear implicits.
 #[export]
-Instance Decidable_eq_Machine : EqDecision Machine.
+Instance Decidable_eq_Byte : EqDecision Byte.
    intros [x0 x1].
    intros [y0 y1].
   cmp_record_field x0 y0.
@@ -276,11 +276,11 @@ Instance Decidable_eq_Machine : EqDecision Machine.
 left; subst; reflexivity.
 Defined.
 #[export]
-Instance Countable_Machine : Countable Machine.
+Instance Countable_Byte : Countable Byte.
 refine {|
-  encode x := encode (Machine_cores x, Machine_mem x);
+  encode x := encode (Byte_addr x, Byte_data x);
   decode x := '(x0, x1) ← decode x;
-              mret (Build_Machine x0 x1)
+              mret (Build_Byte x0 x1)
 |}.
 abstract (
   intros [x0 x1];
@@ -288,13 +288,55 @@ abstract (
   reflexivity).
 Defined.
 
+Notation "{[ r 'with' 'Byte_addr' := e ]}" :=
+  match r with Build_Byte _ (_ as f1) => Build_Byte e f1 end (at level 0).
+Notation "{[ r 'with' 'Byte_data' := e ]}" :=
+  match r with Build_Byte (_ as f0) _ => Build_Byte f0 e end (at level 0).
+#[export]
+Instance dummy_Byte : Inhabited (Byte) := {
+  inhabitant := {| Byte_addr := inhabitant; Byte_data := inhabitant
+|} }.
+
+
+Definition Ram : Type := list Byte.
+
+Record Machine := {
+  Machine_cores : list Core;
+  Machine_mem : PageTable;
+  Machine_ram : Ram;
+}.
+Arguments Machine : clear implicits.
+#[export]
+Instance Decidable_eq_Machine : EqDecision Machine.
+   intros [x0 x1 x2].
+   intros [y0 y1 y2].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_Machine : Countable Machine.
+refine {|
+  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x);
+  decode x := '(x0, x1, x2) ← decode x;
+              mret (Build_Machine x0 x1 x2)
+|}.
+abstract (
+  intros [x0 x1 x2];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
 Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
-  match r with Build_Machine _ (_ as f1) => Build_Machine e f1 end (at level 0).
+  match r with Build_Machine _ (_ as f1) (_ as f2) => Build_Machine e f1 f2 end (at level 0).
 Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
-  match r with Build_Machine (_ as f0) _ => Build_Machine f0 e end (at level 0).
+  match r with Build_Machine (_ as f0) _ (_ as f2) => Build_Machine f0 e f2 end (at level 0).
+Notation "{[ r 'with' 'Machine_ram' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) _ => Build_Machine f0 f1 e end (at level 0).
 #[export]
 Instance dummy_Machine : Inhabited (Machine) := {
-  inhabitant := {| Machine_cores := inhabitant; Machine_mem := inhabitant
+  inhabitant := {| Machine_cores := inhabitant; Machine_mem := inhabitant; Machine_ram := inhabitant
 |} }.
 
 

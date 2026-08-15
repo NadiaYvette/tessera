@@ -101,6 +101,11 @@ Definition undefined_MemEntry '(tt : unit) : M (MemEntry) :=
    (undefined_Pte (tt)) >>= fun (w__1 : Pte) =>
    returnM (({| MemEntry_addr := w__0;  MemEntry_pte := w__1 |})).
 
+Definition undefined_Byte '(tt : unit) : M (Byte) :=
+   (undefined_bitvector (56)) >>= fun (w__0 : mword 56) =>
+   (undefined_bitvector (8)) >>= fun (w__1 : mword 8) =>
+   returnM (({| Byte_addr := w__0;  Byte_data := w__1 |})).
+
 Definition vpn2 (va : mword 64) : mword 9 := subrange_vec_dec (va) (38) (30).
 
 Definition vpn1 (va : mword 64) : mword 9 := subrange_vec_dec (va) (29) (21).
@@ -132,6 +137,21 @@ Fixpoint read_pte (mem : list MemEntry) (addr : mword 56) : option Pte :=
    | [] => None
    | e :: rest =>
       if eq_vec (e.(MemEntry_addr)) (addr) then Some (e.(MemEntry_pte)) else read_pte (rest) (addr)
+   end.
+
+Fixpoint read_byte (ram : list Byte) (addr : mword 56) : option (mword 8) :=
+   match ram with
+   | [] => None
+   | b :: rest =>
+      if eq_vec (b.(Byte_addr)) (addr) then Some (b.(Byte_data)) else read_byte (rest) (addr)
+   end.
+
+Fixpoint write_byte (ram : list Byte) (addr : mword 56) (v : mword 8) : list Byte :=
+   match ram with
+   | [] => ({| Byte_addr := addr;  Byte_data := v |}) :: []
+   | b :: rest =>
+      if eq_vec (b.(Byte_addr)) (addr) then ({| Byte_addr := addr;  Byte_data := v |}) :: rest
+      else b :: (write_byte (rest) (addr) (v))
    end.
 
 Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
