@@ -87,10 +87,14 @@ Definition undefined_Pte '(tt : unit) : M (Pte) :=
                 Pte_ppn := w__5 |})).
 
 Definition undefined_TlbEntry '(tt : unit) : M (TlbEntry) :=
-   (undefined_bitvector (27)) >>= fun (w__0 : mword 27) =>
-   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
-   (undefined_Perm (tt)) >>= fun (w__2 : Perm) =>
-   returnM (({| TlbEntry_vpn := w__0;  TlbEntry_ppn := w__1;  TlbEntry_perm := w__2 |})).
+   (undefined_bitvector (64)) >>= fun (w__0 : mword 64) =>
+   (undefined_bitvector (27)) >>= fun (w__1 : mword 27) =>
+   (undefined_bitvector (44)) >>= fun (w__2 : mword 44) =>
+   (undefined_Perm (tt)) >>= fun (w__3 : Perm) =>
+   returnM (({| TlbEntry_vaddr := w__0;
+                TlbEntry_vpn := w__1;
+                TlbEntry_ppn := w__2;
+                TlbEntry_perm := w__3 |})).
 
 Definition undefined_MemEntry '(tt : unit) : M (MemEntry) :=
    (undefined_bitvector (56)) >>= fun (w__0 : mword 56) =>

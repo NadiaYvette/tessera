@@ -49,28 +49,31 @@ Proof.
   rewrite !z2b_b2z. rewrite mword_of_int_int_of_mword. reflexivity.
 Qed.
 
-(* option TlbEntry -> val: InjLV #() for None, InjRV (vpn, ppn, perm) for Some. *)
+(* option TlbEntry -> val: InjLV #() for None, InjRV (vaddr, vpn, ppn, perm) for
+   Some.  The full `vaddr` is threaded so VIVT/VIPT variants can index/tag by it;
+   RISC-V ignores it (matches on `vpn` only). *)
 Definition encode_tlb (o : option TlbEntry) : val :=
   match o with
   | None => InjLV #()
-  | Some e => InjRV (PairV (#(int_of_mword false e.(TlbEntry_vpn)))
-                           (PairV (#(int_of_mword false e.(TlbEntry_ppn)))
-                                  #(num_of_Perm e.(TlbEntry_perm))))
+  | Some e => InjRV (PairV (#(int_of_mword false e.(TlbEntry_vaddr)))
+                           (PairV (#(int_of_mword false e.(TlbEntry_vpn)))
+                                  (PairV (#(int_of_mword false e.(TlbEntry_ppn)))
+                                         #(num_of_Perm e.(TlbEntry_perm)))))
   end.
 
 Definition decode_tlb (v : val) : option (option TlbEntry) :=
   match v with
   | InjLV (LitV LitUnit) => Some None
-  | InjRV (PairV (LitV (LitInt zv)) (PairV (LitV (LitInt zp)) (LitV (LitInt zperm)))) =>
-      Some (Some {| TlbEntry_vpn := mword_of_int zv; TlbEntry_ppn := mword_of_int zp;
-                    TlbEntry_perm := Perm_of_num zperm |})
+  | InjRV (PairV (LitV (LitInt zva)) (PairV (LitV (LitInt zv)) (PairV (LitV (LitInt zp)) (LitV (LitInt zperm))))) =>
+      Some (Some {| TlbEntry_vaddr := mword_of_int zva; TlbEntry_vpn := mword_of_int zv;
+                    TlbEntry_ppn := mword_of_int zp; TlbEntry_perm := Perm_of_num zperm |})
   | _ => None
   end.
 
 Lemma decode_tlb_encode (o : option TlbEntry) : decode_tlb (encode_tlb o) = Some o.
 Proof.
   destruct o as [e |]; cbn.
-  - destruct e as [vpn ppn perm]. cbn.
+  - destruct e as [vaddr vpn ppn perm]. cbn.
     rewrite !mword_of_int_int_of_mword. rewrite Perm_num_of_roundtrip. reflexivity.
   - reflexivity.
 Qed.

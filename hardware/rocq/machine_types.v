@@ -14,7 +14,7 @@ Definition bit : Type := mword 1.
 
 Definition bits (n : Z) : Type := mword n.
 
-Definition vaddr : Type := bits 64.
+Definition vaddr_typ : Type := bits 64.
 
 Definition paddr : Type := bits 56.
 
@@ -137,6 +137,7 @@ Instance dummy_Pte : Inhabited (Pte) := {
 
 
 Record TlbEntry := {
+  TlbEntry_vaddr : vaddr_typ;
   TlbEntry_vpn : bits 27;
   TlbEntry_ppn : bits 44;
   TlbEntry_perm : Perm;
@@ -144,35 +145,43 @@ Record TlbEntry := {
 Arguments TlbEntry : clear implicits.
 #[export]
 Instance Decidable_eq_TlbEntry : EqDecision TlbEntry.
-   intros [x0 x1 x2].
-   intros [y0 y1 y2].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_TlbEntry : Countable TlbEntry.
 refine {|
-  encode x := encode (TlbEntry_vpn x, TlbEntry_ppn x, TlbEntry_perm x);
-  decode x := '(x0, x1, x2) ← decode x;
-              mret (Build_TlbEntry x0 x1 x2)
+  encode x := encode (TlbEntry_vaddr x, TlbEntry_vpn x, TlbEntry_ppn x, TlbEntry_perm x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_TlbEntry x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1 x2];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
+Notation "{[ r 'with' 'TlbEntry_vaddr' := e ]}" :=
+  match r with Build_TlbEntry _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_TlbEntry e f1 f2 f3 end (at level 0).
 Notation "{[ r 'with' 'TlbEntry_vpn' := e ]}" :=
-  match r with Build_TlbEntry _ (_ as f1) (_ as f2) => Build_TlbEntry e f1 f2 end (at level 0).
+  match r with Build_TlbEntry (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_TlbEntry f0 e f2 f3 end (at level 0).
 Notation "{[ r 'with' 'TlbEntry_ppn' := e ]}" :=
-  match r with Build_TlbEntry (_ as f0) _ (_ as f2) => Build_TlbEntry f0 e f2 end (at level 0).
+  match r with Build_TlbEntry (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_TlbEntry f0 f1 e f3 end (at level 0).
 Notation "{[ r 'with' 'TlbEntry_perm' := e ]}" :=
-  match r with Build_TlbEntry (_ as f0) (_ as f1) _ => Build_TlbEntry f0 f1 e end (at level 0).
+  match r with Build_TlbEntry (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_TlbEntry f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_TlbEntry : Inhabited (TlbEntry) := {
   inhabitant := {|
+    TlbEntry_vaddr := inhabitant;
     TlbEntry_vpn := inhabitant;
     TlbEntry_ppn := inhabitant;
     TlbEntry_perm := inhabitant

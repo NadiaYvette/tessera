@@ -27,11 +27,16 @@ struct Pte = {
   ppn   : bits(44)
 }
 
-// A TLB entry: virtual page number -> physical page number + perms.
+// A TLB entry: the full virtual address it was filled from, its VPN, the
+// physical page number, and perms.  RISC-V matches on `vpn` only, but VIVT/VIPT
+// variants index/tag by the full `vaddr` (the low-order set-index bits live in
+// the page offset, which `vpn` discards) — so each entry ("cell") is coupled to
+// the virtual address that produced it.
 struct TlbEntry = {
-  vpn  : bits(27),   // Sv39 VPN = VA[38..12]
-  ppn  : bits(44),
-  perm : Perm
+  vaddr : vaddr,      // full VA the entry was filled for (VIVT/VIPT index/tag)
+  vpn   : bits(27),   // Sv39 VPN = VA[38..12]
+  ppn   : bits(44),
+  perm  : Perm
 }
 
 // One core: the root page-table PPN (satp.PPN) and its private TLB.

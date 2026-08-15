@@ -53,8 +53,10 @@ Definition valid_pte : Pte :=
 
 (* The stale TLB entry the broadcast models a core as caching for `va`: its VPN
    is `vpn_of va` (VA[38:12] under Sv39), so `tlb_lookup`/`sfence_vma_va` actually
-   match it. Threading `va` here — rather than hardcoding VPN 0 — is what lets
-   non-RISC-V TLB models (VIPT/VIVT, Svnapot, …) reuse the reification. *)
+   match it, and its full `vaddr` is the very `va` it was filled for. Threading
+   `va` through — rather than hardcoding VPN 0 — is what lets non-RISC-V TLB
+   models (VIPT/VIVT, Svnapot, …) reuse the reification: they index/tag the entry
+   by `TlbEntry_vaddr`, RISC-V only by `TlbEntry_vpn`. *)
 Definition leaf_entry (va : mword 64) : TlbEntry :=
-  {| TlbEntry_vpn := vpn_of va; TlbEntry_ppn := mword_of_int 0;
-     TlbEntry_perm := ReadWrite |}.
+  {| TlbEntry_vaddr := va; TlbEntry_vpn := vpn_of va;
+     TlbEntry_ppn := mword_of_int 0; TlbEntry_perm := ReadWrite |}.
