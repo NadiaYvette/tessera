@@ -53,6 +53,7 @@ rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
 rocq compile $FLAGS ipi.v
+rocq compile $FLAGS conformance.v
 rocq compile $FLAGS shootdown_iris.v
 
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
@@ -117,6 +118,9 @@ axiom_free ipi              receive_ipi_before_delivery_noop
 axiom_free ipi              receive_ipi_after_delivery_sfences
 axiom_free ipi              list_nth_bool_update_self
 axiom_free ipi              receive_ipi_cores_true_eq_sfence_at
+axiom_free conformance      translate_conforms
+axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
+axiom_free conformance      oracle_invalid_is_negb_valid
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

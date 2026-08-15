@@ -91,7 +91,7 @@ assumption, and it is the single largest rigour gap in this development.
 
 | # | Gap | Why it matters | To close it |
 |---|---|---|---|
-| G1 | `machine.sail` is **not validated** against `sail-riscv`/`sail-cheri-mips`/etc. | The whole hardware layer rests on an unverified hand-written walk | Cross-check `translate` against the upstream Sv39 walker (extraction/conformance tests), or derive the model from the upstream Sail |
+| G1 | `machine.sail` is **not validated** against `sail-riscv`/`sail-cheri-mips`/etc. | The whole hardware layer rests on an unverified hand-written walk | **Conformance test done** (`hardware/rocq/conformance.v`): a transcription of the upstream Sv39 `pt_walk` and `translate_conforms` proves exact agreement (same PA/perm/fault) on the leaf-only, no-write-only fragment. Remaining: the write-only (R=0,W=1) delta fix + the full refinement/derivation from upstream Sail |
 | G2 | No register file / ISA semantics | The model cannot express *any* code execution, only translation | Add a register/ISA fragment once a property needs execution |
 | G3 | Memory = PTE association list | **Data RAM added** (`Machine.ram`, `read_byte`/`write_byte`) **+ address decode added** (`Region`/`decode_addr`, decode-routed `load_byte`/`store_byte` in `data_ram.v`); still no device (MMIO) model, bus, or cache | device model / bus / cache, later increment |
 | G4 | No weak-memory ordering | TLB-shootdown soundness under relaxed memory (Property 2) is un-modeled | S2.2: gpfsl/ORC11 lift (toolchain reconciliation pending — see below) |
