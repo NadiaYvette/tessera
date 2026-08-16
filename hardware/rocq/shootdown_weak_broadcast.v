@@ -443,18 +443,6 @@ Proof.
   - apply ipi_prefix_step. exact Hin.
 Qed.
 
-(* The leader's ghost step is literally the IPI deliver + receive: S2.3's
-   [deliver_ipi]/[receive_ipi] transitions, not an unconstrained [machine_ctx_update].
-   [bc_machine_ipi_step] rewrites the target to [receive_ipi (deliver_ipi _)], so the
-   update goes through the S2.3 protocol. *)
-Lemma machine_ctx_ipi_step (n i : nat) (Hin : i < n) :
-  machine_ctx γm (bc_machine root va mem n i) ⊢
-  |==> machine_ctx γm (bc_machine root va mem n (i + 1)) : vProp.
-Proof.
-  rewrite (bc_machine_ipi_step n i Hin).
-  iApply machine_ctx_update.
-Qed.
-
 (* The post-machine's cores are all empty-TLB cores sharing [root]. *)
 Lemma bc_cores_done (n : nat) :
   List.map (fun (j : nat) => reify_core root (if decide (n ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n)
@@ -753,11 +741,16 @@ Proof.
         { iPureIntro. split; [exact Lt1 | exact Eqζ']. }
         iFrame "Own". }
       iIntros "!>". iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
-      (* core i has acked (cleared its TLB): deliver its IPI then receive it —
-         the ghost advances through S2.3's [deliver_ipi]/[receive_ipi]. *)
-      iMod (machine_ctx_ipi_step n i Hin with "Hmach") as "Hmach'".
+      (* core i has acked (cleared its TLB): the ghost step is literally S2.3's
+         [receive_ipi (deliver_ipi _ (Z.of_nat i)) (Z.of_nat i) va], not a bare
+         [machine_ctx_update] between arbitrary [bc_machine n i] states. *)
+      iMod (machine_ctx_update γm (bc_machine root va mem n i)
+              (receive_ipi (deliver_ipi (bc_machine root va mem n i) (Z.of_nat i)) (Z.of_nat i) va)
+              with "Hmach") as "Hmach'".
+      iAssert (machine_ctx γm (bc_machine root va mem n (i + 1)%nat)) with "[Hmach']" as "Hmach''".
+      { rewrite (bc_machine_ipi_step n i Hin). iFrame "Hmach'". }
       wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
-      iApply ("IH" $! (i + 1)%nat Φ with "Hmach' HΦ").
+      iApply ("IH" $! (i + 1)%nat Φ with "Hmach'' HΦ").
   - (* i ≥ n: return *)
     iMod (machine_ctx_update γm (bc_machine root va mem n i) (bc_post_machine root va mem n)
             with "Hmach") as "Hmach'".

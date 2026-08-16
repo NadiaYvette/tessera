@@ -120,6 +120,10 @@ axiom_free ipi              list_nth_bool_update_self
 axiom_free ipi              receive_ipi_cores_true_eq_sfence_at
 axiom_free ipi              ipi_broadcast_refines_invalidate_shootdown
 axiom_free ipi              ipi_broadcast_correct
+axiom_free ipi              test_vector_deliver_ipi
+axiom_free ipi              test_vector_receive_before_delivery
+axiom_free ipi              test_vector_receive_after_delivery
+axiom_free ipi              test_vector_ipi_broadcast
 axiom_free conformance      translate_conforms
 axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
 axiom_free conformance      test_vector_mapping_ok

@@ -30,6 +30,7 @@ Require Import machine_types.
 Require Import machine.
 Require Import coherence_leaf.  (* invalidate_leaf_mem *)
 Require Import shootdown.       (* core_with_root, invalidate_shootdown, invalidate_shootdown_correct *)
+Require Import machine_encoding. (* leaf_entry, invalid_pte *)
 Import ListNotations.
 
 (* ============================================================
@@ -333,3 +334,49 @@ Proof.
   rewrite Hmem. rewrite Hcores.
   apply invalidate_shootdown_correct; assumption.
 Qed.
+
+(* ============================================================
+   IPI test vectors (executable): a concrete 3-core machine and
+   `vm_compute` pins for deliver_ipi / receive_ipi / ipi_broadcast.
+   ============================================================ *)
+
+Definition ipi_va : mword 64 := mword_of_int 0.
+Definition ipi_root : mword 44 := mword_of_int 1.
+
+(* A core caching the stale [leaf_entry ipi_va] for [ipi_root]. *)
+Definition ipi_stale_core : Core :=
+  {| Core_satp_ppn := ipi_root; Core_tlb := [leaf_entry ipi_va] |}.
+
+(* A core with an empty TLB (the post-flush state). *)
+Definition ipi_flushed_core : Core :=
+  {| Core_satp_ppn := ipi_root; Core_tlb := [] |}.
+
+(* Three cores, all stale, no IPI delivered, empty mem/ram. *)
+Definition ipi_machine : Machine :=
+  {| Machine_cores := [ipi_stale_core; ipi_stale_core; ipi_stale_core];
+     Machine_mem := [];
+     Machine_ram := [];
+     Machine_ipi := [false; false; false] |}.
+
+(* 1. deliver_ipi sets exactly the addressed delivered bit. *)
+Lemma test_vector_deliver_ipi :
+  (deliver_ipi ipi_machine 1).(Machine_ipi) = [false; true; false].
+Proof. vm_compute. reflexivity. Qed.
+
+(* 2. receive_ipi before delivery is a no-op (no flush). *)
+Lemma test_vector_receive_before_delivery :
+  (receive_ipi ipi_machine 1 ipi_va).(Machine_cores) = ipi_machine.(Machine_cores).
+Proof. vm_compute. reflexivity. Qed.
+
+(* 3. receive_ipi after delivery flushes exactly core 1. *)
+Lemma test_vector_receive_after_delivery :
+  (receive_ipi (deliver_ipi ipi_machine 1) 1 ipi_va).(Machine_cores)
+  = [ipi_stale_core; ipi_flushed_core; ipi_stale_core].
+Proof. vm_compute. reflexivity. Qed.
+
+(* 4. ipi_broadcast flushes every core and delivers every IPI. *)
+Lemma test_vector_ipi_broadcast :
+  let m' := ipi_broadcast ipi_machine ipi_root ipi_va invalid_pte in
+  m'.(Machine_ipi) = [true; true; true] /\
+  m'.(Machine_cores) = [ipi_flushed_core; ipi_flushed_core; ipi_flushed_core].
+Proof. vm_compute. split; reflexivity. Qed.

@@ -61,11 +61,17 @@ Soundness: no core translates through `va` after the protocol completes.
   PTE, deliver to, then receive from, every core) and
   `ipi_broadcast_refines_invalidate_shootdown` proves it produces the same mem and fully
   flushed cores as the functional `invalidate_shootdown`, so `ipi_broadcast_correct`
-  re-establishes coherence on every core. **S2.4 done** (`shootdown_weak_broadcast.v`,
+  re-establishes coherence on every core. Four executable IPI test vectors
+  (`test_vector_deliver_ipi`, `test_vector_receive_before_delivery`,
+  `test_vector_receive_after_delivery`, `test_vector_ipi_broadcast`) pin the
+  transitions on a concrete 3-core machine via `vm_compute`. **S2.4 done**
+  (`shootdown_weak_broadcast.v`,
   axiom-free): the S2.2c weak-memory broadcast now carries the `Machine_ipi` mailbox —
-  `bc_machine`/`bc_post_machine` thread it through, the leader's ghost step on ack i is
-  exactly `receive_ipi (deliver_ipi _ (Z.of_nat i))` (`bc_machine_ipi_step`), the final
-  ghost is the pure `ipi_broadcast_cores` of the pre-machine (`bc_machine_ipi_broadcast`),
+  `bc_machine`/`bc_post_machine` thread it through, and `bc_wait_all_spec`'s leader ghost
+  step on ack i is *inlined* as `receive_ipi (deliver_ipi _ (Z.of_nat i)) (Z.of_nat i) va`
+  (the `machine_ctx_update` target, rewritten back through the pure `bc_machine_ipi_step`),
+  the final ghost is the pure `ipi_broadcast_cores` of the pre-machine
+  (`bc_machine_ipi_broadcast`),
   and `bc_post_reifies` reifies it to `Forall (translate = None ∧ tlb_lookup = None)`. So
   the weak-memory broadcast is the IPI-based protocol, not just a flag-ordering model.
   **S2.4 → S2.3b** (`bc_post_machine_is_ipi_broadcast` + `bc_post_reifies_via_ipi_broadcast`,
