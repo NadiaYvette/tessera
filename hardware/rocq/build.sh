@@ -150,6 +150,10 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak_broadcast bc_machine_ipi_step "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_machine_ipi_broadcast "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_post_reifies "$WFLAGS"
+  # S2.4 -> S2.3b: the post-machine is exactly ipi_broadcast of the pre-machine,
+  # so the coherence conclusion follows from ipi_broadcast_correct (S2.3b).
+  axiom_free shootdown_weak_broadcast bc_post_machine_is_ipi_broadcast "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_post_reifies_via_ipi_broadcast "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi

@@ -68,6 +68,11 @@ Soundness: no core translates through `va` after the protocol completes.
   ghost is the pure `ipi_broadcast_cores` of the pre-machine (`bc_machine_ipi_broadcast`),
   and `bc_post_reifies` reifies it to `Forall (translate = None ∧ tlb_lookup = None)`. So
   the weak-memory broadcast is the IPI-based protocol, not just a flag-ordering model.
+  **S2.4 → S2.3b** (`bc_post_machine_is_ipi_broadcast` + `bc_post_reifies_via_ipi_broadcast`,
+  axiom-free): the weak-memory post-machine is *exactly* `ipi_broadcast` of a pre-machine
+  whose leaf PTE is still mapped, so the coherence conclusion now follows from S2.3b's
+  `ipi_broadcast_correct` verbatim — the weak-memory and sequential IPI paths land on the
+  same theorem, not on two parallel re-derivations.
 
 ## Concrete-value encoding (S2.1)
 

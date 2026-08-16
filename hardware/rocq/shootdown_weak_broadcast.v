@@ -144,6 +144,18 @@ Definition bc_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n
 Definition bc_post_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
   bc_machine root va mem n n.
 
+(* The pre-machine S2.3b's [ipi_broadcast] starts from: the leaf PTE for [va] is
+   still mapped (the break-before-make write has not happened), every core caches
+   the stale [leaf_entry va], and no IPI is delivered.  [ipi_broadcast] on this
+   machine first writes the invalid PTE, then delivers+receives on every core —
+   exactly the S2.4 leader's [bc_machine] ghost sequence (whose step-0 state is
+   this machine after the break-before-make write). *)
+Definition bc_pre_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
+  {| Machine_mem := mem;
+     Machine_cores := List.map (fun _ => reify_core root (Some (leaf_entry va))) (seq 0 n);
+     Machine_ram := [];
+     Machine_ipi := ipi_prefix n 0 |}.
+
 (* ============================================================
    The program.
    ============================================================ *)
@@ -431,6 +443,18 @@ Proof.
   - apply ipi_prefix_step. exact Hin.
 Qed.
 
+(* The leader's ghost step is literally the IPI deliver + receive: S2.3's
+   [deliver_ipi]/[receive_ipi] transitions, not an unconstrained [machine_ctx_update].
+   [bc_machine_ipi_step] rewrites the target to [receive_ipi (deliver_ipi _)], so the
+   update goes through the S2.3 protocol. *)
+Lemma machine_ctx_ipi_step (n i : nat) (Hin : i < n) :
+  machine_ctx γm (bc_machine root va mem n i) ⊢
+  |==> machine_ctx γm (bc_machine root va mem n (i + 1)) : vProp.
+Proof.
+  rewrite (bc_machine_ipi_step n i Hin).
+  iApply machine_ctx_update.
+Qed.
+
 (* The post-machine's cores are all empty-TLB cores sharing [root]. *)
 Lemma bc_cores_done (n : nat) :
   List.map (fun (j : nat) => reify_core root (if decide (n ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n)
@@ -471,6 +495,79 @@ Qed.
 Lemma bc_machine_ipi_broadcast (n : nat) :
   bc_machine root va mem n n = ipi_broadcast_cores (bc_machine root va mem n 0) n va.
 Proof. apply (bc_machine_ipi_cores n n). lia. Qed.
+
+(* ============================================================
+   S2.4 -> S2.3b: the weak-memory post-machine IS the sequential
+   IPI-broadcast result, so [ipi_broadcast_correct] applies verbatim.
+   ============================================================ *)
+
+(* Core [j] of the step-0 machine still caches [leaf_entry va] (the [0 ≤ j < n]
+   guard is always true on [seq 0 n]). *)
+Lemma bc_cores_zero (n : nat) :
+  List.map (fun (j : nat) => reify_core root (if decide (0%nat ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n)
+  = List.map (fun _ => reify_core root (Some (leaf_entry va))) (seq 0 n).
+Proof.
+  apply List.map_ext_in. intros j Hj.
+  apply List.in_seq in Hj.
+  rewrite decide_True; [reflexivity |]. lia.
+Qed.
+
+(* After the break-before-make write, the pre-machine is exactly [bc_machine n 0]:
+   leaf PTE invalid, every core stale, no IPI delivered. *)
+Lemma bc_machine_is_pre_invalidated (n : nat) :
+  {| Machine_mem := invalidate_leaf_mem (core_with_root root) mem va invalid_pte;
+     Machine_cores := List.map (fun _ => reify_core root (Some (leaf_entry va))) (seq 0 n);
+     Machine_ram := [];
+     Machine_ipi := ipi_prefix n 0 |}
+  = bc_machine root va mem n 0.
+Proof.
+  unfold bc_machine. f_equal.
+  rewrite <- bc_cores_zero. reflexivity.
+Qed.
+
+(* [bc_pre_machine] has one IPI bit per core, and every core shares [root]. *)
+Lemma bc_pre_machine_len (n : nat) :
+  length (bc_pre_machine root va mem n).(Machine_ipi) = length (bc_pre_machine root va mem n).(Machine_cores).
+Proof.
+  unfold bc_pre_machine. cbn [Machine_ipi Machine_cores].
+  unfold ipi_prefix. rewrite !List.length_map. reflexivity.
+Qed.
+
+Lemma bc_pre_machine_root (n : nat) :
+  Forall (fun c => c.(Core_satp_ppn) = root) (bc_pre_machine root va mem n).(Machine_cores).
+Proof.
+  unfold bc_pre_machine. cbn [Machine_cores].
+  rewrite Forall_map. apply Forall_forall. intros x Hx.
+  reflexivity.
+Qed.
+
+(* The headline tie: S2.4's post-machine is exactly S2.3b's [ipi_broadcast] of the
+   pre-machine (invalidate the leaf PTE, then deliver+receive on every core). *)
+Lemma bc_post_machine_is_ipi_broadcast (n : nat) :
+  bc_post_machine root va mem n
+  = ipi_broadcast (bc_pre_machine root va mem n) root va invalid_pte.
+Proof.
+  unfold bc_post_machine, bc_pre_machine, ipi_broadcast.
+  cbn [Machine_mem Machine_cores Machine_ram Machine_ipi].
+  rewrite List.length_map. rewrite List.length_seq.
+  rewrite (bc_machine_is_pre_invalidated n).
+  exact (bc_machine_ipi_broadcast n).
+Qed.
+
+(* The coherence conclusion now follows from S2.3b's [ipi_broadcast_correct] —
+   the weak-memory protocol re-establishes the same invariant as the sequential
+   IPI broadcast — rather than from a re-derivation. *)
+Lemma bc_post_reifies_via_ipi_broadcast (n : nat) :
+  Forall (fun c => translate c (bc_post_machine root va mem n).(Machine_mem) va = None /\
+                   tlb_lookup c va = None)
+         (bc_post_machine root va mem n).(Machine_cores).
+Proof.
+  rewrite bc_post_machine_is_ipi_broadcast.
+  apply (ipi_broadcast_correct (bc_pre_machine root va mem n) root va invalid_pte).
+  - apply invalid_pte_not_valid.
+  - apply bc_pre_machine_len.
+  - apply bc_pre_machine_root.
+Qed.
 
 (* ============================================================
    The remote: acquire go, clear tlb, release ack.
@@ -656,9 +753,9 @@ Proof.
         { iPureIntro. split; [exact Lt1 | exact Eqζ']. }
         iFrame "Own". }
       iIntros "!>". iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
-      (* core i has acked (cleared its TLB): advance the machine ghost *)
-      iMod (machine_ctx_update γm (bc_machine root va mem n i) (bc_machine root va mem n (i + 1))
-              with "Hmach") as "Hmach'".
+      (* core i has acked (cleared its TLB): deliver its IPI then receive it —
+         the ghost advances through S2.3's [deliver_ipi]/[receive_ipi]. *)
+      iMod (machine_ctx_ipi_step n i Hin with "Hmach") as "Hmach'".
       wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
       iApply ("IH" $! (i + 1)%nat Φ with "Hmach' HΦ").
   - (* i ≥ n: return *)
