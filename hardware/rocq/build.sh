@@ -163,6 +163,9 @@ if [ -d "$GP" ]; then
   # so the coherence conclusion follows from ipi_broadcast_correct (S2.3b).
   axiom_free shootdown_weak_broadcast bc_post_machine_is_ipi_broadcast "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_post_reifies_via_ipi_broadcast "$WFLAGS"
+  # per-cell coupling: the ack cell's released branch carries the va-flushed TLB
+  # entry (flush_tlb_entry (Some (leaf_entry va)) va), bridged to encode_tlb None.
+  axiom_free shootdown_weak_broadcast flush_tlb_entry_leaf "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi

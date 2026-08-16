@@ -237,8 +237,12 @@ proof-side twin of the litmus `Sometimes` cases and of
   S2.1's counter), because the leader iterates `i = 0..n-1` and knows the pending cores
   purely from `i`.  `broadcast_reifies_machine` (machine_reify.v) then reifies the post-state
   to "every core's TLB is clear", closing the S2.1 `broadcast_spec` under weak memory.
-  Deferred: per-cell coupling (thread the virtual address into the TLB-entry model so
-  VIVT/VIPT variants can use it).
+  **Per-cell coupling (done)**: `encode_tlb` now bit-packs the *whole* `TlbEntry` —
+  vaddr (64) + vpn (27) + ppn (44) + perm (2), with `None = 0` the sentinel — and the
+  ack cell's released branch carries `encode_tlb (flush_tlb_entry (Some (leaf_entry va)) va)`
+  (the va-flushed entry, bridged to `encode_tlb None` by `flush_tlb_entry_leaf`).  So the
+  per-cell TLB resource carries the virtual address, and a VIVT/VIPT model swaps
+  `flush_tlb_entry`'s guard from `TlbEntry_vpn` to `TlbEntry_vaddr` in *one* definition.
 
 ### Trust line (S2.2)
 
