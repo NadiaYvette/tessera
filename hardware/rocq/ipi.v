@@ -345,11 +345,11 @@ Definition ipi_root : mword 44 := mword_of_int 1.
 
 (* A core caching the stale [leaf_entry ipi_va] for [ipi_root]. *)
 Definition ipi_stale_core : Core :=
-  {| Core_satp_ppn := ipi_root; Core_tlb := [leaf_entry ipi_va] |}.
+  {| Core_satp_ppn := ipi_root; Core_tlb := [leaf_entry ipi_va]; Core_hart := 0; Core_node := 0 |}.
 
 (* A core with an empty TLB (the post-flush state). *)
 Definition ipi_flushed_core : Core :=
-  {| Core_satp_ppn := ipi_root; Core_tlb := [] |}.
+  {| Core_satp_ppn := ipi_root; Core_tlb := []; Core_hart := 0; Core_node := 0 |}.
 
 (* Three cores, all stale, no IPI delivered, empty mem/ram. *)
 Definition ipi_machine : Machine :=

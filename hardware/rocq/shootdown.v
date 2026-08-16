@@ -23,7 +23,7 @@ Import ListNotations.
 
 (* A core with a given page-table root and an empty TLB. *)
 Definition core_with_root (root : mword 44) : Core :=
-  {| Core_satp_ppn := root; Core_tlb := [] |}.
+  {| Core_satp_ppn := root; Core_tlb := []; Core_hart := 0; Core_node := 0 |}.
 
 (* The broadcast shootdown: remove the leaf PTE for `va` (using page-table root
    `root`) and invalidate every core's TLB. *)
@@ -100,7 +100,7 @@ Qed.
 Lemma sfence_vma_va_empty (c : Core) (va : mword 64) :
   c.(Core_tlb) = [] -> sfence_vma_va c va = c.
 Proof.
-  destruct c as [satp tlb]. cbn. intros ->. cbn. reflexivity.
+  destruct c as [satp tlb hart node]. cbn. intros ->. cbn. reflexivity.
 Qed.
 
 (* SFENCE-ing a list of empty-TLB cores is the identity (list form of the above). *)

@@ -39,10 +39,17 @@ struct TlbEntry = {
   perm  : Perm
 }
 
-// One core: the root page-table PPN (satp.PPN) and its private TLB.
+// One core: the root page-table PPN (satp.PPN), its private TLB, and its
+// topology placement — the hardware-thread id (hart, an SMT thread within a
+// core) and the NUMA node the core belongs to (SSG-1).  The shootdown
+// correctness so far is topology-agnostic; these fields are the plumbing that
+// future topology-sensitive properties (SMT co-residency, NUMA locality) attach
+// to.
 struct Core = {
   satp_ppn : bits(44),
-  tlb      : list(TlbEntry)
+  tlb      : list(TlbEntry),
+  hart     : int,
+  node     : int
 }
 
 // Physical memory, as a sparse association list: (PTE physical address, PTE).
@@ -216,7 +223,9 @@ function tlb_lookup(core, va) = find_tlb(core.tlb, vpn_of(va), page_offset(va))
 val sfence_vma_all : Core -> Core
 function sfence_vma_all(core) = struct {
   satp_ppn = core.satp_ppn,
-  tlb      = [||]
+  tlb      = [||],
+  hart     = core.hart,
+  node     = core.node
 }
 
 // SFENCE.VMA by VA: drop only entries matching the virtual page.
@@ -231,7 +240,9 @@ function filter_tlb(entries, vpn) = match entries {
 val sfence_vma_va : (Core, vaddr) -> Core
 function sfence_vma_va(core, va) = struct {
   satp_ppn = core.satp_ppn,
-  tlb      = filter_tlb(core.tlb, vpn_of(va))
+  tlb      = filter_tlb(core.tlb, vpn_of(va)),
+  hart     = core.hart,
+  node     = core.node
 }
 
 // ---- IPI delivery (SSG-3 / S2.3) ----

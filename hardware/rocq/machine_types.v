@@ -191,36 +191,48 @@ Instance dummy_TlbEntry : Inhabited (TlbEntry) := {
 Record Core := {
   Core_satp_ppn : bits 44;
   Core_tlb : list TlbEntry;
+  Core_hart : Z;
+  Core_node : Z;
 }.
 Arguments Core : clear implicits.
 #[export]
 Instance Decidable_eq_Core : EqDecision Core.
-   intros [x0 x1].
-   intros [y0 y1].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_Core : Countable Core.
 refine {|
-  encode x := encode (Core_satp_ppn x, Core_tlb x);
-  decode x := '(x0, x1) ← decode x;
-              mret (Build_Core x0 x1)
+  encode x := encode (Core_satp_ppn x, Core_tlb x, Core_hart x, Core_node x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_Core x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'Core_satp_ppn' := e ]}" :=
-  match r with Build_Core _ (_ as f1) => Build_Core e f1 end (at level 0).
+  match r with Build_Core _ (_ as f1) (_ as f2) (_ as f3) => Build_Core e f1 f2 f3 end (at level 0).
 Notation "{[ r 'with' 'Core_tlb' := e ]}" :=
-  match r with Build_Core (_ as f0) _ => Build_Core f0 e end (at level 0).
+  match r with Build_Core (_ as f0) _ (_ as f2) (_ as f3) => Build_Core f0 e f2 f3 end (at level 0).
+Notation "{[ r 'with' 'Core_hart' := e ]}" :=
+  match r with Build_Core (_ as f0) (_ as f1) _ (_ as f3) => Build_Core f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'Core_node' := e ]}" :=
+  match r with Build_Core (_ as f0) (_ as f1) (_ as f2) _ => Build_Core f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_Core : Inhabited (Core) := {
-  inhabitant := {| Core_satp_ppn := inhabitant; Core_tlb := inhabitant
+  inhabitant := {|
+    Core_satp_ppn := inhabitant;
+    Core_tlb := inhabitant;
+    Core_hart := inhabitant;
+    Core_node := inhabitant
 |} }.
 
 

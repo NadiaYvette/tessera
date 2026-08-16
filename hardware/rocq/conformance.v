@@ -126,7 +126,7 @@ Definition va0 : mword 64 := mword_of_int 0.
 Definition root_ppn : mword 44 := mword_of_int 1.
 Definition mid_ppn  : mword 44 := mword_of_int 2.
 Definition leaf_ppn : mword 44 := mword_of_int 42.
-Definition core0 : Core := {| Core_satp_ppn := root_ppn; Core_tlb := [] |}.
+Definition core0 : Core := {| Core_satp_ppn := root_ppn; Core_tlb := []; Core_hart := 0; Core_node := 0 |}.
 
 (* PTE builders for the vectors. *)
 Definition ptr_pte (next : mword 44) : Pte :=   (* non-leaf pointer (R=W=X=0) *)

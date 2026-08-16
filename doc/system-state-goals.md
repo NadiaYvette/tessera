@@ -24,12 +24,20 @@ carved out of.
   consistently with it.
 - **Integrity.** Topology metadata faithful to hardware; no cross-thread corruption
   of per-core/per-node state; NUMA-aware placement doesn't alias.
-- **Modeled today.** *Partly.* The hardware model (`hardware/src/machine.sail`) is a
-  flat `list Core` — no SMT, no node grouping. telix has real topology code
-  (`kernel/src/sched/topology.rs`, `arch/x86_64/apic.rs`, `arch/riscv64/plic.rs`).
-- **Proof needed.** Add `hart`/`node` fields to `Core`/`Machine` *when a concrete
-  property demands them*; topology-aware placement/affinity theorems. No current
-  theorem needs it (TLB-shootdown coherence is symmetric across cores).
+- **Modeled today.** *Plumbing landed.* `Core` now carries `hart : int` (the SMT
+  hardware-thread id within a core) and `node : int` (the NUMA node the core sits
+  on), threaded through every `Core` constructor and both `sfence_vma_all`/
+  `sfence_vma_va` (they preserve the fields). The full build stays green and
+  topology-agnostic: shootdown correctness so far is symmetric across cores, so no
+  theorem yet depends on the fields — they are the attach-point for future
+  topology-sensitive properties (SMT co-residency, NUMA locality). `Machine` is
+  still a flat `list Core`; node/hart *grouping* (SSG-9's rung structure) is not
+  modeled. telix has real topology code (`kernel/src/sched/topology.rs`,
+  `arch/x86_64/apic.rs`, `arch/riscv64/plic.rs`).
+- **Proof needed.** Topology-aware placement/affinity theorems (e.g. "co-resident
+  harts on one core share no private TLB state"; "NUMA-local allocation never
+  aliases a remote node's frames") — the first consumers of `hart`/`node`. No
+  current theorem needs them.
 
 ### SSG-2 — RAM under weak memory ordering
 
@@ -179,7 +187,8 @@ SMT threads cleanly up to distributed clusters.
 1. **SSG-2 (weak memory), concrete lift — in progress.** S2.2: the generated Sv39
    machine under gpfsl/ORC11.
 2. **SSG-3 (IPI delivery)** — makes the shootdown proof real; follows SSG-2.
-3. **SSG-1 (topology)** — add `hart`/`node` fields when a property needs them.
+3. **SSG-1 (topology)** — `hart`/`node` fields are now on `Core` (the plumbing);
+   remaining: topology-aware placement/affinity theorems, the first consumers.
 4. **SSG-4 (IOMMU)** — self-contained replay of Stage 1/2.
 5. **SSG-5–8 (devices)** — a scope expansion into I/O correctness, only if taken on.
 6. **SSG-9 (grouping hierarchy: nodes → SSI → NORMA)** — only with multi-node reasoning; couples to the domain remark.

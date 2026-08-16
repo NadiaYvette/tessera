@@ -26,7 +26,8 @@ Import ListNotations.
 (* A core whose TLB is the reification of an [option TlbEntry]: [None] is an
    empty TLB, [Some e] is the singleton [e]. *)
 Definition reify_core (root : mword 44) (o : option TlbEntry) : Core :=
-  {| Core_satp_ppn := root; Core_tlb := match o with None => [] | Some e => [e] end |}.
+  {| Core_satp_ppn := root; Core_tlb := match o with None => [] | Some e => [e] end;
+     Core_hart := 0; Core_node := 0 |}.
 
 (* Reconstructs the machine the broadcast program models: memory whose leaf PTE
    for `va` is `p` (written via the data-dependent walk), and n cores sharing

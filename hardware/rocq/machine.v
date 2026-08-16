@@ -206,7 +206,10 @@ Definition tlb_lookup (core : Core) (va : mword 64) : option ((mword 56 * Perm))
    find_tlb (core.(Core_tlb)) ((vpn_of (va))) ((page_offset (va))).
 
 Definition sfence_vma_all (core : Core) : Core :=
-   {| Core_satp_ppn := core.(Core_satp_ppn);  Core_tlb := [] |}.
+   {| Core_satp_ppn := core.(Core_satp_ppn);
+      Core_tlb := [];
+      Core_hart := core.(Core_hart);
+      Core_node := core.(Core_node) |}.
 
 Fixpoint filter_tlb (entries : list TlbEntry) (vpn : mword 27) : list TlbEntry :=
    match entries with
@@ -218,7 +221,9 @@ Fixpoint filter_tlb (entries : list TlbEntry) (vpn : mword 27) : list TlbEntry :
 
 Definition sfence_vma_va (core : Core) (va : mword 64) : Core :=
    {| Core_satp_ppn := core.(Core_satp_ppn);
-      Core_tlb := filter_tlb (core.(Core_tlb)) ((vpn_of (va))) |}.
+      Core_tlb := filter_tlb (core.(Core_tlb)) ((vpn_of (va)));
+      Core_hart := core.(Core_hart);
+      Core_node := core.(Core_node) |}.
 
 Fixpoint list_update_bool (l : list bool) (i : Z) (v : bool) : list bool :=
    match (l, i) with
