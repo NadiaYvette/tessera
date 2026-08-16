@@ -249,15 +249,50 @@ Qed.
    shootdown's happens-before graph.
    ============================================================ *)
 
-(* option TlbEntry -> Z.  gpfsl's values are LitPoison|LitLoc|LitInt, so the
-   entry is collapsed to the one bit the protocol needs here — cleared (None = 0)
-   vs stale (Some = 1).  The full vpn/ppn/perm packing is deferred to the N-core
-   reification (S2.2b part 2), which cites shootdown_correct. *)
+(* The Perm tag: None_ ↦ 0, Read ↦ 1, ReadWrite ↦ 2. *)
+Definition perm_to_z (p : Perm) : Z :=
+  match p with None_ => 0 | Read => 1 | ReadWrite => 2 end.
+
+(* option TlbEntry -> Z, a full bit-packed encoding.  gpfsl's values are
+   LitPoison|LitLoc|LitInt, so the *whole* entry — vaddr (64 bits), vpn (27),
+   ppn (44), perm (2) — is packed into a Z, with [None] the sentinel 0 and
+   [Some e] the odd value 1 + 2 * payload(e).  Carrying [TlbEntry_vaddr] (the
+   virtual address), not just a cleared/stale bit, is what lets VIVT/VIPT/Svnapot
+   TLB models — which tag the entry by vaddr, not just vpn — reuse this cell: the
+   cell's value determines *which* virtual address it was flushed for. *)
 Definition encode_tlb (o : option TlbEntry) : Z :=
-  match o with None => 0 | Some _ => 1 end.
+  match o with
+  | None => 0
+  | Some e =>
+      1 + 2 * (int_of_mword false e.(TlbEntry_vaddr) * 2^(27 + 44 + 2)
+               + int_of_mword false e.(TlbEntry_vpn)  * 2^(44 + 2)
+               + int_of_mword false e.(TlbEntry_ppn)  * 2^2
+               + perm_to_z e.(TlbEntry_perm))
+  end.
 
 Lemma encode_tlb_None_ne_Some (e : TlbEntry) : encode_tlb None ≠ encode_tlb (Some e).
-Proof. cbn. lia. Qed.
+Proof. unfold encode_tlb. lia. Qed.
+
+(* The cleared sentinel is exactly 0. *)
+Lemma encode_tlb_None_eq : encode_tlb None = 0.
+Proof. reflexivity. Qed.
+
+(* ============================================================
+   encode_tlb test vectors (executable): pin that the packing carries
+   the virtual address, the enabler for VIVT/VIPT TLB models.
+   ============================================================ *)
+
+(* va = 0: vaddr = vpn = ppn = 0, perm = ReadWrite (2) ⇒ 1 + 2·2 = 5. *)
+Lemma encode_tlb_test_vector_zero :
+  encode_tlb (Some (leaf_entry (mword_of_int 0))) = 5.
+Proof. vm_compute. reflexivity. Qed.
+
+(* va = 2^40 changes the packed value (bit 114 set), so distinct virtual
+   addresses are carried by distinct cell values. *)
+Lemma encode_tlb_test_vector_carries_va :
+  encode_tlb (Some (leaf_entry (mword_of_int (2^40)))) ≠
+  encode_tlb (Some (leaf_entry (mword_of_int 0))).
+Proof. vm_compute. lia. Qed.
 
 (* cell 0 = ack (the completion flag); cell 1 = tlb (the cleared entry). *)
 Abbreviation ack := 0%Z.

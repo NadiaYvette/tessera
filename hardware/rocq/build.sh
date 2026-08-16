@@ -142,6 +142,11 @@ if [ -d "$GP" ]; then
   rocq compile $WFLAGS shootdown_weak.v
   axiom_free shootdown_weak shootdown_weak_gen_inv "$WFLAGS"
   axiom_free shootdown_weak shootdown_weak_ack_gen_inv "$WFLAGS"
+  # per-cell coupling: the full TLB encoding carries the virtual address.
+  axiom_free shootdown_weak encode_tlb_None_ne_Some "$WFLAGS"
+  axiom_free shootdown_weak encode_tlb_None_eq "$WFLAGS"
+  axiom_free shootdown_weak encode_tlb_test_vector_zero "$WFLAGS"
+  axiom_free shootdown_weak encode_tlb_test_vector_carries_va "$WFLAGS"
   # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
   rocq compile $WFLAGS shootdown_weak_broadcast.v
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
