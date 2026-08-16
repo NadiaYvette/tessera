@@ -37,12 +37,14 @@ Definition leaf_addr (core : Core) (mem : list MemEntry) (va : mword 64) : optio
   | Some p2 =>
       if p2.(Pte_valid) then
         if is_leaf p2 then None
+        else if p2.(Pte_napot) then None   (* N on a non-leaf PTE: reserved *)
         else
           match read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va)) with
           | None => None
           | Some p1 =>
               if p1.(Pte_valid) then
                 if is_leaf p1 then None
+                else if p1.(Pte_napot) then None   (* N on a non-leaf PTE: reserved *)
                 else Some (pte_address p1.(Pte_ppn) (vpn0 va))
               else None
           end
@@ -101,13 +103,17 @@ Proof.
   - cbn. destruct (p2.(Pte_valid)) eqn:Ev2.
     + cbn. destruct (is_leaf p2) eqn:El2.
       * reflexivity.
-      * cbn. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |].
-        -- cbn. destruct (p1.(Pte_valid)) eqn:Ev1.
-           ++ cbn. destruct (is_leaf p1) eqn:El1.
-              ** reflexivity.
-              ** intros H. discriminate.
-           ++ reflexivity.
+      * cbn. destruct (p2.(Pte_napot)) eqn:En2.
         -- reflexivity.
+        -- cbn. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |].
+           ++ cbn. destruct (p1.(Pte_valid)) eqn:Ev1.
+              ** cbn. destruct (is_leaf p1) eqn:El1.
+                 --- reflexivity.
+                 --- cbn. destruct (p1.(Pte_napot)) eqn:En1.
+                     +++ reflexivity.
+                     +++ intros H. discriminate.
+              ** reflexivity.
+           ++ reflexivity.
     + reflexivity.
   - reflexivity.
 Qed.
@@ -124,31 +130,35 @@ Proof.
   - simpl in H. destruct (p2.(Pte_valid)) eqn:Ev2.
     + simpl in H. destruct (is_leaf p2) eqn:El2.
       * simpl in H. discriminate.
-      * simpl in H. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |] eqn:Hl1.
-        -- simpl in H. destruct (p1.(Pte_valid)) eqn:Ev1.
-           ++ simpl in H. destruct (is_leaf p1) eqn:El1.
-              ** simpl in H. discriminate.
-              ** simpl in H. injection H as Ha.
-                 unfold translate. cbn.
-                 destruct (eq_vec a (pte_address core.(Core_satp_ppn) (vpn2 va))) eqn:Eroot.
-                 --- (* a = root: the removal took the root too; fault at level 2. *)
-                     apply eq_vec_true_iff in Eroot.
-                     rewrite <- Eroot. rewrite read_pte_absent_after_remove. reflexivity.
-                 --- (* a <> root: the root PTE survives. *)
-                     apply eq_vec_false_iff in Eroot.
-                     rewrite (read_pte_remove_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) Eroot).
-                     rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn.
-                     destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
-                     ---- (* a = l1: the level-1 PTE was removed; fault at level 1. *)
-                          apply eq_vec_true_iff in El1a.
-                          rewrite <- El1a. rewrite read_pte_absent_after_remove. reflexivity.
-                     ---- (* a <> l1: the level-1 PTE survives; fault at level 0. *)
-                          apply eq_vec_false_iff in El1a.
-                          rewrite (read_pte_remove_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) El1a).
-                          rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn.
-                          rewrite Ha. rewrite read_pte_absent_after_remove. reflexivity.
-           ++ simpl in H. discriminate.
+      * simpl in H. destruct (p2.(Pte_napot)) eqn:En2.
         -- simpl in H. discriminate.
+        -- simpl in H. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |] eqn:Hl1.
+           ++ simpl in H. destruct (p1.(Pte_valid)) eqn:Ev1.
+              ** simpl in H. destruct (is_leaf p1) eqn:El1.
+                 --- simpl in H. discriminate.
+                 --- simpl in H. destruct (p1.(Pte_napot)) eqn:En1.
+                     +++ simpl in H. discriminate.
+                     +++ simpl in H. injection H as Ha.
+                         unfold translate. cbn.
+                         destruct (eq_vec a (pte_address core.(Core_satp_ppn) (vpn2 va))) eqn:Eroot.
+                         ---- (* a = root: the removal took the root too; fault at level 2. *)
+                              apply eq_vec_true_iff in Eroot.
+                              rewrite <- Eroot. rewrite read_pte_absent_after_remove. reflexivity.
+                         ---- (* a <> root: the root PTE survives. *)
+                              apply eq_vec_false_iff in Eroot.
+                              rewrite (read_pte_remove_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) Eroot).
+                              rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn. rewrite En2. cbn.
+                              destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
+                              ----- (* a = l1: the level-1 PTE was removed; fault at level 1. *)
+                                    apply eq_vec_true_iff in El1a.
+                                    rewrite <- El1a. rewrite read_pte_absent_after_remove. reflexivity.
+                              ----- (* a <> l1: the level-1 PTE survives; fault at level 0. *)
+                                    apply eq_vec_false_iff in El1a.
+                                    rewrite (read_pte_remove_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) El1a).
+                                    rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn. rewrite En1. cbn.
+                                    rewrite Ha. rewrite read_pte_absent_after_remove. reflexivity.
+              ** simpl in H. discriminate.
+           ++ simpl in H. discriminate.
     + simpl in H. discriminate.
   - simpl in H. discriminate.
 Qed.
@@ -178,27 +188,31 @@ Proof.
   - simpl in H. destruct (p2.(Pte_valid)) eqn:Ev2.
     + simpl in H. destruct (is_leaf p2) eqn:El2.
       * simpl in H. discriminate.
-      * simpl in H. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |] eqn:Hl1.
-        -- simpl in H. destruct (p1.(Pte_valid)) eqn:Ev1.
-           ++ simpl in H. destruct (is_leaf p1) eqn:El1.
-              ** simpl in H. discriminate.
-              ** simpl in H. injection H as Ha.
-                 unfold translate. cbn.
-                 destruct (eq_vec a (pte_address core.(Core_satp_ppn) (vpn2 va))) eqn:Eroot.
-                 --- apply eq_vec_true_iff in Eroot.
-                     rewrite <- Eroot. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
-                 --- apply eq_vec_false_iff in Eroot.
-                     rewrite (read_pte_after_write_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) p Eroot).
-                     rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn.
-                     destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
-                     ---- apply eq_vec_true_iff in El1a.
-                          rewrite <- El1a. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
-                     ---- apply eq_vec_false_iff in El1a.
-                          rewrite (read_pte_after_write_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) p El1a).
-                          rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn.
-                          rewrite Ha. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
-           ++ simpl in H. discriminate.
+      * simpl in H. destruct (p2.(Pte_napot)) eqn:En2.
         -- simpl in H. discriminate.
+        -- simpl in H. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |] eqn:Hl1.
+           ++ simpl in H. destruct (p1.(Pte_valid)) eqn:Ev1.
+              ** simpl in H. destruct (is_leaf p1) eqn:El1.
+                 --- simpl in H. discriminate.
+                 --- simpl in H. destruct (p1.(Pte_napot)) eqn:En1.
+                     +++ simpl in H. discriminate.
+                     +++ simpl in H. injection H as Ha.
+                         unfold translate. cbn.
+                         destruct (eq_vec a (pte_address core.(Core_satp_ppn) (vpn2 va))) eqn:Eroot.
+                         ---- apply eq_vec_true_iff in Eroot.
+                              rewrite <- Eroot. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                         ---- apply eq_vec_false_iff in Eroot.
+                              rewrite (read_pte_after_write_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) p Eroot).
+                              rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn. rewrite En2. cbn.
+                              destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
+                              ----- apply eq_vec_true_iff in El1a.
+                                    rewrite <- El1a. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                              ----- apply eq_vec_false_iff in El1a.
+                                    rewrite (read_pte_after_write_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) p El1a).
+                                    rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn. rewrite En1. cbn.
+                                    rewrite Ha. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+              ** simpl in H. discriminate.
+           ++ simpl in H. discriminate.
     + simpl in H. discriminate.
   - simpl in H. discriminate.
 Qed.

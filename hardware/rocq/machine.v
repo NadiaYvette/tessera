@@ -177,6 +177,7 @@ Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
    | Some p2 =>
       if p2.(Pte_valid) then
         if is_leaf (p2) then None
+        else if p2.(Pte_napot) then None
         else
           let l1 : option Pte := read_pte (mem) ((pte_address (p2.(Pte_ppn)) ((vpn1 (va))))) in
           match l1 with
@@ -184,6 +185,7 @@ Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
           | Some p1 =>
              if p1.(Pte_valid) then
                if is_leaf (p1) then None
+               else if p1.(Pte_napot) then None
                else
                  let l0 : option Pte := read_pte (mem) ((pte_address (p1.(Pte_ppn)) ((vpn0 (va))))) in
                  match l0 with

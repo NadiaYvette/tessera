@@ -138,6 +138,8 @@ axiom_free conformance      test_vector_napot_mapping
 axiom_free conformance      test_vector_napot_bad_faults
 axiom_free conformance      test_vector_napot_conforms
 axiom_free conformance      test_vector_napot_bad_conforms
+axiom_free conformance      test_vector_napot_nonleaf_faults
+axiom_free conformance      test_vector_napot_nonleaf_conforms
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf

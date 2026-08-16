@@ -196,6 +196,9 @@ function translate(core, mem, va) = {
     Some(p2) =>
       if p2.valid then {
         if is_leaf(p2) then None()
+        // Svnapot: N=1 on a non-leaf PTE is reserved (upstream pte_is_invalid's
+        // "non-leaf & ext bits != 0" clause) and faults.
+        else if p2.napot then None()
         else {
           let l1 : option(Pte) = read_pte(mem, pte_address(p2.ppn, vpn1(va)));
           match l1 {
@@ -203,6 +206,7 @@ function translate(core, mem, va) = {
             Some(p1) =>
               if p1.valid then {
                 if is_leaf(p1) then None()
+                else if p1.napot then None()
                 else {
                   let l0 : option(Pte) = read_pte(mem, pte_address(p1.ppn, vpn0(va)));
                   match l0 {

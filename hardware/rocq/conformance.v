@@ -15,12 +15,16 @@
          (sail-riscv model/sys/vmem_pte.sail, `pte_is_invalid`, ll. 89-108:
           V=0, or the reserved write-only encodings R=0,W=1 — the A/D/U/G/PBMT
           and shadow-stack clauses are vacuously 0 on this fragment)
+     - the non-leaf-N reserved clause (sail-riscv `pte_is_invalid`, "non-leaf ∧
+          ext bits ≠ 0"): a non-leaf pointer PTE with N=1 is reserved ⇒ fault;
+          modeled as an explicit guard in the walk's non-leaf branch (matches
+          `translate`'s `else if p*.napot then None`)
      - the NAPOT clause (sail-riscv model/sys/vmem.sail, `pt_walk`, ll. 190-196:
           N=1 at a level-0 leaf ⇒ 64KiB page, valid only when ppn[3..0] = 0b1000,
           with the low 4 PPN bits taken from VPN[3..0] = VA[15..12])
-     - the walk structure (invalid ⇒ fault; non-leaf ⇒ recurse; leaf at level>0 ⇒
-          superpage — here FAULT, the fragment does not model superpages; leaf at
-          level 0 ⇒ succeed, NAPOT if N=1) follows
+     - the walk structure (invalid ⇒ fault; non-leaf ⇒ recurse (fault if N=1);
+          leaf at level>0 ⇒ superpage — here FAULT, the fragment does not model
+          superpages; leaf at level 0 ⇒ succeed, NAPOT if N=1) follows
          (sail-riscv model/sys/vmem.sail, `pt_walk`, ll. 101-208).
 
    The oracle reuses the *same* `Pte`/`PageTable`/`pte_address`/`phys_addr`/
@@ -63,11 +67,15 @@ Definition oracle_walk (satp : mword 44) (mem : PageTable) (va : mword 64)
   | Some p2 =>
       if oracle_pte_invalid p2 then None
       else if oracle_pte_non_leaf p2 then
+        if p2.(Pte_napot) then None   (* N on a non-leaf PTE: reserved (pte_is_invalid) *)
+        else
         match read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va)) with
         | None => None
         | Some p1 =>
             if oracle_pte_invalid p1 then None
             else if oracle_pte_non_leaf p1 then
+              if p1.(Pte_napot) then None   (* N on a non-leaf PTE: reserved *)
+              else
               match read_pte mem (pte_address p1.(Pte_ppn) (vpn0 va)) with
               | None => None
               | Some p0 =>
@@ -108,12 +116,12 @@ Proof.
   unfold translate, oracle_walk, is_leaf, oracle_pte_invalid, oracle_pte_non_leaf.
   destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va))) as [p2|] eqn:E2;
     [| reflexivity].
-  destruct p2.(Pte_valid), p2.(Pte_read), p2.(Pte_write), p2.(Pte_exec);
+  destruct p2.(Pte_valid), p2.(Pte_read), p2.(Pte_write), p2.(Pte_exec), p2.(Pte_napot);
     cbn; try reflexivity.
-  (* p2 is a valid non-leaf pointer: walk to level 1. *)
+  (* p2 is a valid non-leaf pointer (N=0): walk to level 1. *)
   destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1|] eqn:E1;
     [| reflexivity].
-  destruct p1.(Pte_valid), p1.(Pte_read), p1.(Pte_write), p1.(Pte_exec);
+  destruct p1.(Pte_valid), p1.(Pte_read), p1.(Pte_write), p1.(Pte_exec), p1.(Pte_napot);
     cbn; try reflexivity.
   (* p1 is a valid non-leaf pointer: walk to level 0. *)
   destruct (read_pte mem (pte_address p1.(Pte_ppn) (vpn0 va))) as [p0|] eqn:E0;
@@ -155,6 +163,10 @@ Definition xo_pte (next : mword 44) : Pte :=     (* exec-only leaf (R=0,W=0,X=1)
 (* A NAPOT leaf (N=1): a 64KiB page, valid only when ppn[3..0] = 0b1000. *)
 Definition napot_pte (next : mword 44) : Pte :=
   {| Pte_valid := true; Pte_read := true; Pte_write := false;
+     Pte_exec := false; Pte_user := false; Pte_napot := true; Pte_ppn := next |}.
+(* A non-leaf pointer with N=1: reserved (pte_is_invalid's "non-leaf & ext bits ≠ 0"). *)
+Definition napot_ptr_pte (next : mword 44) : Pte :=
+  {| Pte_valid := true; Pte_read := false; Pte_write := false;
      Pte_exec := false; Pte_user := false; Pte_napot := true; Pte_ppn := next |}.
 
 (* The physical address the chain ending at leaf_ppn resolves va0 to. *)
@@ -268,4 +280,18 @@ Proof. vm_compute. reflexivity. Qed.
 (* 11. The reserved NAPOT encoding is also a conformance fault. *)
 Lemma test_vector_napot_bad_conforms :
   oracle_walk root_ppn table_napot_bad va_napot = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* 12. A non-leaf pointer PTE with N=1 is reserved and faults (level-1 pointer). *)
+Definition table_napot_nonleaf : PageTable :=
+  [ {| MemEntry_addr := pte_address root_ppn (vpn2 va_napot); MemEntry_pte := ptr_pte mid_ppn |};
+    {| MemEntry_addr := pte_address mid_ppn (vpn1 va_napot); MemEntry_pte := napot_ptr_pte napot_l0_ppn |} ].
+
+Lemma test_vector_napot_nonleaf_faults :
+  translate core0 table_napot_nonleaf va_napot = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* 13. ...and the upstream oracle faults on it too. *)
+Lemma test_vector_napot_nonleaf_conforms :
+  oracle_walk root_ppn table_napot_nonleaf va_napot = None.
 Proof. vm_compute. reflexivity. Qed.

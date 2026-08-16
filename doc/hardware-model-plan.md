@@ -96,15 +96,16 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
 - **RISC-V Svnapot** — ✅ **walk done** (2026-08-16): the `N` bit (`Pte.napot`),
   `napot_guard` (ppn[3..0] = 0b1000) and `napot_phys_addr` (ppn[43..4] @ VA[15..0],
   the 64KiB low-PPN-substitution) are in `machine.sail`'s `translate` at the level-0
-  leaf; `translate_conforms` still holds axiom-free and four new executable vectors
-  (`test_vector_napot_*`) pin the decode. Transcribed from sail-riscv
+  leaf, and N=1 on a *non-leaf* pointer PTE is reserved ⇒ fault (upstream
+  `pte_is_invalid`'s "non-leaf ∧ ext bits ≠ 0" clause, mirrored in `leaf_addr` +
+  the coherence_leaf.v proofs). `translate_conforms` still holds axiom-free and
+  six executable vectors (`test_vector_napot_*`) pin the decode, the reserved
+  encodings, and oracle agreement. Transcribed from sail-riscv
   `model/sys/vmem.sail` ll. 190-196 + `vmem_pte.sail` PTE_Ext.N. **Remaining**
-  (two follow-ups, small diffs): (a) N=1 on a *non-leaf* PTE is reserved ⇒ fault
-  (`pte_is_invalid`'s "non-leaf ∧ ext bits ≠ 0" clause) — needs a matching
-  `leaf_addr` guard + napot destructs in coherence_leaf.v; (b) TLB superpage
-  matching — a 64KiB entry tags on VA[38..16], so `find_tlb`/`tlb_lookup`/
-  `sfence_vma_va` need page-size-aware matching (the per-cell coupling already
-  threads `vaddr`; this adds a `napot`/granularity field to `TlbEntry`).
+  (one follow-up): TLB superpage matching — a 64KiB entry tags on VA[38..16], so
+  `find_tlb`/`tlb_lookup`/`sfence_vma_va` need page-size-aware matching (the
+  per-cell coupling already threads `vaddr`; this adds a `napot`/granularity
+  field to `TlbEntry`).
 - **MIPS PageGrain (1 KiB, ESP) + software-refill** — the `mmu-variants.md`
   demonstration platform. Hand-write a translation-only Sail model (TLB + CP0
   `PageGrain`/`PageMask`/`EntryHi`/`EntryLo` + `compute_pagemask`). **A conformance
