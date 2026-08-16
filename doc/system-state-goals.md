@@ -55,16 +55,18 @@ carved out of.
   **shootdown IPI** — plus masking and interrupt context.
 - **Integrity.** An IPI is delivered exactly once to each target; an ack is observed
   only after delivery; no lost or duplicated shootdown.
-- **Modeled today.** *Partly (S2.3 in progress).* `Machine.ipi` (per-core mailbox),
+- **Modeled today.** *Mostly (S2.3 done).* `Machine.ipi` (per-core mailbox),
   `deliver_ipi`/`receive_ipi` transitions added, and "delivery precedes ack" proved
   (`hardware/rocq/ipi.v`: `receive_ipi_before_delivery_noop` — an undelivered remote
   cannot flush; `receive_ipi_after_delivery_sfences` — a delivered remote flushes
-  its own core). The shootdown is still a functional broadcast (`map sfence_vma_va`
-  over `Machine.cores`); telix's real mechanism is `broadcast_tlb_flush` (LAPIC vec
-  0xFC / PLIC).
-- **Proof needed.** Compose the per-core transitions into the full IPI broadcast and
-  prove it refines `invalidate_shootdown` ("the IPI-based protocol is correct"), then
-  the concurrent/weak-memory lift. The per-core "delivery precedes ack" crux is done.
+  its own core). The composed `ipi_broadcast` (invalidate the leaf PTE, deliver to,
+  then receive from, every core) is proven to refine the functional
+  `invalidate_shootdown` (`ipi_broadcast_refines_invalidate_shootdown`,
+  `ipi_broadcast_correct`). telix's real mechanism is `broadcast_tlb_flush` (LAPIC
+  vec 0xFC / PLIC).
+- **Proof needed.** The concurrent/weak-memory lift of the IPI-based protocol
+  (S2.4), plus masking and interrupt context (SSG-3's other half). The per-core
+  "delivery precedes ack" crux and the composed-broadcast refinement are done.
 
 ### SSG-4 — IOMMU / DMA controller
 
