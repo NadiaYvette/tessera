@@ -106,18 +106,30 @@ carved out of.
 - **Proof needed.** As SSG-5; the swap *data* discipline is already covered, the
   device is not.
 
-### SSG-9 — Bound groups of cluster nodes
+### SSG-9 — The grouping hierarchy: SMT threads up to NORMA clusters
 
-- **Objective.** Multi-node grouping (ccNUMA clusters) — which memory is node-local,
-  which cores belong to which node.
-- **Integrity.** Node-local memory never aliased across nodes; cross-node state
-  changes are message-passed, not shared.
+- **Objective.** Span the machine's *grouping hierarchy* — **SMT threads → cores →
+  NUMA nodes → small groups of near-adjacent NUMA nodes → SSI (Single System Image)
+  shared-memory systems → distributed clusters with NORMA (No Remote Memory
+  Access)** — and keep the kernel's notion of "which memory is local to which group"
+  correct at every level.
+- **Integrity.** Group-local memory never aliased across groups; cross-group state
+  changes are message-passed, not shared. At the shared-memory levels (SMT/cores/
+  NUMA/SSI), NUMA-aware algorithms that counter **starvation in lock-cacheline
+  exclusive-access grants** (cacheline ping-pong / unfairness) are themselves part
+  of what must be modeled and proven fair.
 - **Modeled today.** *No — and note the homonym.* Tessera's "cluster" is **page
-  clustering** (KAU = c·M), which is the project's core and *is* modeled — but in the
-  Lean Layer-A (`proof/Tessera/`), not in the hardware model. The ccNUMA *node* sense
-  is absent from both.
+  clustering** (KAU = c·M), the project's core, modeled in the Lean Layer-A
+  (`proof/Tessera/`) — not in the hardware model. The SSG-9 *grouping* sense is
+  absent from both, apart from the flat per-core `Machine` list (an ungrouped set
+  of cores).
+- **Terminology (deliberately disambiguated).** "cluster" = page clustering (KAU);
+  "group"/"node"/"domain" = the SSG-9 topology hierarchy; "SSI" = single system
+  image (one shared address space across a group of machines); "NORMA" = no remote
+  memory access (message passing only, no shared memory).
 - **Proof needed.** Only if multi-node reasoning is taken on; ties into the domain
-  remark below.
+  remark below. The multikernel-domain boundary below is what makes the SSI/NORMA
+  rungs of the hierarchy tractable — each rung is a message-passing refinement.
 
 ## Topology as a verification boundary: multikernel domains, framekernel within
 
@@ -141,6 +153,14 @@ This is not only an OS-structure choice — it is a **verification-scoping** cho
   and the cross-domain link is discharged by a message-passing refinement rather than
   a raw shared-memory argument.
 
+The same boundary recurs at every rung of the SSG-9 hierarchy: a multikernel domain
+covers a NUMA node or a small group of near-adjacent nodes; an **SSI** system is a
+group of domains presenting one shared address space (its cross-node coherence is a
+scale-up of the intra-domain weak-memory argument); and a **NORMA cluster** is the
+limit where there is no shared memory at all, so *every* cross-node interaction is
+already message passing. The domain boundary is thus what carries the reasoning from
+SMT threads cleanly up to distributed clusters.
+
 ## Sequencing
 
 1. **SSG-2 (weak memory), concrete lift — in progress.** S2.2: the generated Sv39
@@ -149,4 +169,4 @@ This is not only an OS-structure choice — it is a **verification-scoping** cho
 3. **SSG-1 (topology)** — add `hart`/`node` fields when a property needs them.
 4. **SSG-4 (IOMMU)** — self-contained replay of Stage 1/2.
 5. **SSG-5–8 (devices)** — a scope expansion into I/O correctness, only if taken on.
-6. **SSG-9 (nodes)** — only with multi-node reasoning; couples to the domain remark.
+6. **SSG-9 (grouping hierarchy: nodes → SSI → NORMA)** — only with multi-node reasoning; couples to the domain remark.
