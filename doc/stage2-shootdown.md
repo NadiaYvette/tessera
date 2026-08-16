@@ -241,8 +241,13 @@ proof-side twin of the litmus `Sometimes` cases and of
   vaddr (64) + vpn (27) + ppn (44) + perm (2), with `None = 0` the sentinel — and the
   ack cell's released branch carries `encode_tlb (flush_tlb_entry (Some (leaf_entry va)) va)`
   (the va-flushed entry, bridged to `encode_tlb None` by `flush_tlb_entry_leaf`).  So the
-  per-cell TLB resource carries the virtual address, and a VIVT/VIPT model swaps
-  `flush_tlb_entry`'s guard from `TlbEntry_vpn` to `TlbEntry_vaddr` in *one* definition.
+  per-cell TLB resource carries the virtual address.  The tag discipline is now a
+  first-class, **pure** module (`hardware/rocq/tlb_tags.v`): `flush_entry_by` is
+  parameterized by `tag_of`/`va_tag`, with PIPT (RISC-V: tag = `TlbEntry_vpn`) and
+  VIVT (tag = `TlbEntry_vaddr`) instantiations; `flush_tlb_entry_leaf` and
+  `flush_tlb_entry_vivt_leaf` both prove the stale `leaf_entry va` is flushed, and the
+  `test_vector_pipt_vivt_differ` pin shows the two disagree on a vpn/vaddr homonym.  A
+  VIVT/VIPT port swaps the tag in *one* pure definition, not in the proof.
 
 ### Trust line (S2.2)
 

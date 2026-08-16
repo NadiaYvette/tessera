@@ -43,6 +43,7 @@ Require Import coherence_leaf.     (* invalidate_leaf_mem *)
 Require Import shootdown.          (* core_with_root, invalidate_shootdown_empty_cores *)
 Require Import ipi.                (* deliver_ipi/receive_ipi + sfence_at/ipi_broadcast (S2.3) *)
 Require Import shootdown_weak.     (* encode_pte/encode_tlb, UTok, uniqTokG *)
+Require Import tlb_tags.           (* flush_tlb_entry/…_vivt, flush_tlb_entry_leaf (per-cell coupling) *)
 Require Import iris.prelude.options.
 Import ListNotations.
 
@@ -210,19 +211,6 @@ Definition bc_fork_remotes_at (go ack tlb : loc) (i n : nat) : expr :=
 Definition bc_wait_all_at (ack : loc) (i n : nat) : expr :=
   App bc_wait_all [Lit (LitLoc ack); Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
 Definition bc_broadcast_at (n : nat) : expr := bc_broadcast n.
-
-(* Flush [va] from a single-entry TLB: drop the entry if it tags [va].  This is
-   the per-entry form of the machine's [filter_tlb]/[sfence_vma_va] (which flush
-   a whole core's TLB list): RISC-V PIPT tags by [TlbEntry_vpn], so the guard is
-   [eq_vec e.(TlbEntry_vpn) (vpn_of va)].  A VIVT/VIPT model swaps the guard for
-   [TlbEntry_vaddr] — and this definition, not the proof, is the only place that
-   changes.  It is the bridge coupling the per-cell TLB resource to the
-   va-threaded machine flush. *)
-Definition flush_tlb_entry (o : option TlbEntry) (va : mword 64) : option TlbEntry :=
-  match o with
-  | None => None
-  | Some e => if eq_vec e.(TlbEntry_vpn) (vpn_of va) then None else Some e
-  end.
 
 (* ============================================================
    The ack cell (S2.2b's one-shot buffer, per remote) and the go flag.
@@ -588,15 +576,6 @@ Proof.
   injection Hv as Hv'. congruence.
 Qed.
 
-(* Flushing [va] from the stale entry [leaf_entry va] empties it: the entry's vpn
-   is [vpn_of va], so the guard matches and the entry is dropped.  This is the
-   coupling bridge between the per-cell TLB resource and the va-threaded flush. *)
-Lemma flush_tlb_entry_leaf :
-  flush_tlb_entry (Some (leaf_entry va)) va = None.
-Proof.
-  unfold flush_tlb_entry, leaf_entry. cbn. rewrite eq_vec_refl. reflexivity.
-Qed.
-
 Lemma bc_remote_spec (γgo : gname) (γtok γack : nat → gname) (go ack tlb : loc) (i n : nat) :
   ∀ (ζgo : absHist) (t_i : positive) (Vgo V_i : view) tid,
   {{{ ⌜i < n⌝ ∗ bc_inv_ctx γgo γtok γack go ack tlb n ∗
@@ -677,7 +656,7 @@ Proof.
     rewrite ack_cell_eq. iFrame "Hacks_rest".
     iExists _, true, t_i, V_i, _. iFrame "Ptsa'". iExists t1', V1'. iSplit.
     { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
-    iRight. rewrite flush_tlb_entry_leaf. by iFrame "Htlb".
+    iRight. rewrite (flush_tlb_entry_leaf va). by iFrame "Htlb".
 Qed.
 
 (* ============================================================

@@ -49,6 +49,7 @@ rocq compile $FLAGS machine.v
 rocq compile $FLAGS machine_encoding.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
+rocq compile $FLAGS tlb_tags.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -133,6 +134,11 @@ axiom_free conformance      test_vector_missing_pte_faults
 axiom_free conformance      test_vector_superpage_faults
 axiom_free conformance      test_vector_execonly
 axiom_free conformance      test_vector_writeonly_conforms
+axiom_free tlb_tags         flush_tlb_entry_leaf
+axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
+axiom_free tlb_tags         filter_tlb_leaf
+axiom_free tlb_tags         test_vector_pipt_vivt_agree
+axiom_free tlb_tags         test_vector_pipt_vivt_differ
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.
@@ -164,8 +170,8 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak_broadcast bc_post_machine_is_ipi_broadcast "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_post_reifies_via_ipi_broadcast "$WFLAGS"
   # per-cell coupling: the ack cell's released branch carries the va-flushed TLB
-  # entry (flush_tlb_entry (Some (leaf_entry va)) va), bridged to encode_tlb None.
-  axiom_free shootdown_weak_broadcast flush_tlb_entry_leaf "$WFLAGS"
+  # entry (flush_tlb_entry (Some (leaf_entry va)) va), bridged to encode_tlb None
+  # via tlb_tags.flush_tlb_entry_leaf (checked in the pure section above).
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi
