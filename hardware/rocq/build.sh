@@ -50,6 +50,7 @@ rocq compile $FLAGS machine_encoding.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
 rocq compile $FLAGS tlb_tags.v
+rocq compile $FLAGS mips_tlb.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -148,6 +149,22 @@ axiom_free tlb_tags         test_vector_pipt_vivt_differ
 axiom_free tlb_tags         find_tlb_napot_leaf
 axiom_free tlb_tags         test_vector_tlb_napot_covers_page
 axiom_free tlb_tags         test_vector_tlb_napot_flush
+# second MMU variant: MIPS software-refill TLB (+ 1 KiB PageGrain).
+axiom_free mips_tlb         compute_mask_level_even
+axiom_free mips_tlb         compute_mask_level_run
+axiom_free mips_tlb         mips_refill_lookup_covers
+axiom_free mips_tlb         test_vector_mask_lvl0
+axiom_free mips_tlb         test_vector_mask_lvl4
+axiom_free mips_tlb         test_vector_mask_odd
+axiom_free mips_tlb         test_vector_mask_nonrun
+axiom_free mips_tlb         test_vector_page_shift_1k
+axiom_free mips_tlb         test_vector_page_shift_16k
+axiom_free mips_tlb         test_vector_mips_4k_covers
+axiom_free mips_tlb         test_vector_mips_4k_next_page
+axiom_free mips_tlb         test_vector_mips_16k_covers
+axiom_free mips_tlb         test_vector_mips_pa_4k
+axiom_free mips_tlb         test_vector_mips_pa_16k
+axiom_free mips_tlb         test_vector_mips_refill
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

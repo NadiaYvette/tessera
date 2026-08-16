@@ -109,13 +109,25 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   + two vectors pin the 64KiB-page coverage and the flush. All coherence/shootdown
   lemmas stay axiom-free.
 - **MIPS PageGrain (1 KiB, ESP) + software-refill** — the `mmu-variants.md`
-  demonstration platform. Hand-write a translation-only Sail model (TLB + CP0
-  `PageGrain`/`PageMask`/`EntryHi`/`EntryLo` + `compute_pagemask`). **A conformance
-  oracle already exists**: `~/src/QEMU` branch `nadia.chambers/page-grain-001`
-  (4 commits, MD00091-cited). Key semantics it encodes: enable = `Config3.SP ∧
-  PageGrain.ESP`; PageMask is a run of 1s with even count (the `{4^k·M}` spectrum);
-  `pfn_shift = 10` (vs 12) under ESP; `VPN2X = EntryHi[12:11]`; MaskX stored "as
-  if 0b11" when ESP=0. Differential-test the Sail model against it (closes G1).
+  demonstration platform. **Software-refill TLB core done** (2026-08-16,
+  `hardware/rocq/mips_tlb.v`, pure/self-contained): `compute_mask_level`
+  (the PageMask run-of-1s/even-count decode, `{4^k·M}` spectrum),
+  `MipsEntry`/`mips_lookup`/`mips_pa` (page-size-aware match
+  `vpn[27..level] == va[39..12+level]` and translation `pfn @ va[11+level..0]`),
+  and `mips_refill` (the software refill handler). The trust-boundary win is
+  `mips_refill_lookup_covers`: refill-then-lookup is the entry's translation
+  when the entry covers the address — a *theorem about our refill handler*, not
+  a trusted hardware walker. `compute_mask_level_even`/`compute_mask_level_run`
+  pin the even-run characterization, plus 15 axiom-free lemmas/vectors (spectrum
+  acceptance/rejection, page-size-aware match, PA translation, refill). The
+  `esp` flag carries the 1 KiB base-page mode (`mips_page_shift true 0 = 10`) for
+  the future VPN2X instantiation. See `mips-software-refill.md`. **Remaining:** a
+  Sail transcription + differential-testing against the QEMU oracle. The oracle:
+  `~/src/QEMU` branch `nadia.chambers/page-grain-001` (4 commits, MD00091-cited).
+  Key semantics it encodes: enable = `Config3.SP ∧ PageGrain.ESP`; PageMask is a
+  run of 1s with even count (the `{4^k·M}` spectrum); `pfn_shift = 10` (vs 12)
+  under ESP; `VPN2X = EntryHi[12:11]`; MaskX stored "as if 0b11" when ESP=0.
+  Differential-test the Sail model against it (closes G1).
 - **LoongArch** — next arch of interest (telix target: `kernel/src/arch/loongarch64/`,
   QEMU runner present). Software-refill (MIPS-like) → reuse the refill-handler
   theorem; but **no upstream Sail model exists**, so hand-write from the manual and
