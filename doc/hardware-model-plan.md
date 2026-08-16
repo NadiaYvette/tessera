@@ -101,11 +101,13 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   the coherence_leaf.v proofs). `translate_conforms` still holds axiom-free and
   six executable vectors (`test_vector_napot_*`) pin the decode, the reserved
   encodings, and oracle agreement. Transcribed from sail-riscv
-  `model/sys/vmem.sail` ll. 190-196 + `vmem_pte.sail` PTE_Ext.N. **Remaining**
-  (one follow-up): TLB superpage matching — a 64KiB entry tags on VA[38..16], so
-  `find_tlb`/`tlb_lookup`/`sfence_vma_va` need page-size-aware matching (the
-  per-cell coupling already threads `vaddr`; this adds a `napot`/granularity
-  field to `TlbEntry`).
+  `model/sys/vmem.sail` ll. 190-196 + `vmem_pte.sail` PTE_Ext.N. **TLB superpage
+  matching done** (2026-08-16): `TlbEntry` gains a `napot` flag, `tag_eq`
+  matches a 64KiB entry on VA[38..16] (dropping the low 4 VPN bits), `tlb_pa`
+  composes the 16-bit-offset PA (ppn[43..4] @ VA[15..0]), and
+  `find_tlb`/`tlb_lookup`/`sfence_vma_va` are page-size-aware. `find_tlb_napot_leaf`
+  + two vectors pin the 64KiB-page coverage and the flush. All coherence/shootdown
+  lemmas stay axiom-free.
 - **MIPS PageGrain (1 KiB, ESP) + software-refill** — the `mmu-variants.md`
   demonstration platform. Hand-write a translation-only Sail model (TLB + CP0
   `PageGrain`/`PageMask`/`EntryHi`/`EntryLo` + `compute_pagemask`). **A conformance

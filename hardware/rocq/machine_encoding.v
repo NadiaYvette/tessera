@@ -59,4 +59,14 @@ Definition valid_pte : Pte :=
    by `TlbEntry_vaddr`, RISC-V only by `TlbEntry_vpn`. *)
 Definition leaf_entry (va : mword 64) : TlbEntry :=
   {| TlbEntry_vaddr := va; TlbEntry_vpn := vpn_of va;
-     TlbEntry_ppn := mword_of_int 0; TlbEntry_perm := ReadWrite |}.
+     TlbEntry_ppn := mword_of_int 0; TlbEntry_perm := ReadWrite;
+     TlbEntry_napot := false |}.
+
+(* A 64KiB NAPOT TLB entry: napot=true, so it tags on VA[38..16] (tag_eq drops the
+   low 4 VPN bits) and translates to tlb_pa = napot_phys_addr ppn va =
+   ppn[43..4] @ VA[15..0].  The raw leaf PPN (ppn[3..0] = 0b1000) is stored; the
+   low 4 bits are ignored by napot_phys_addr. *)
+Definition napot_entry (va : mword 64) (ppn : mword 44) : TlbEntry :=
+  {| TlbEntry_vaddr := va; TlbEntry_vpn := vpn_of va;
+     TlbEntry_ppn := ppn; TlbEntry_perm := ReadWrite;
+     TlbEntry_napot := true |}.

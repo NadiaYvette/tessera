@@ -52,32 +52,38 @@ Proof.
   rewrite !z2b_b2z. rewrite mword_of_int_int_of_mword. reflexivity.
 Qed.
 
-(* option TlbEntry -> val: InjLV #() for None, InjRV (vaddr, vpn, ppn, perm) for
-   Some.  The full `vaddr` is threaded so VIVT/VIPT variants can index/tag by it;
-   RISC-V ignores it (matches on `vpn` only). *)
+(* option TlbEntry -> val: InjLV #() for None, InjRV (vaddr, vpn, ppn, perm, napot)
+   for Some.  The full `vaddr` is threaded so VIVT/VIPT variants can index/tag by
+   it; RISC-V ignores it (matches on `vpn` only).  `napot` carries the page size
+   (tag_eq drops the low 4 VPN bits for a 64KiB entry). *)
 Definition encode_tlb (o : option TlbEntry) : val :=
   match o with
   | None => InjLV #()
   | Some e => InjRV (PairV (#(int_of_mword false e.(TlbEntry_vaddr)))
                            (PairV (#(int_of_mword false e.(TlbEntry_vpn)))
                                   (PairV (#(int_of_mword false e.(TlbEntry_ppn)))
-                                         #(num_of_Perm e.(TlbEntry_perm)))))
+                                         (PairV (#(num_of_Perm e.(TlbEntry_perm)))
+                                                #(b2z e.(TlbEntry_napot))))))
   end.
 
 Definition decode_tlb (v : val) : option (option TlbEntry) :=
   match v with
   | InjLV (LitV LitUnit) => Some None
-  | InjRV (PairV (LitV (LitInt zva)) (PairV (LitV (LitInt zv)) (PairV (LitV (LitInt zp)) (LitV (LitInt zperm))))) =>
+  | InjRV (PairV (LitV (LitInt zva))
+             (PairV (LitV (LitInt zv))
+               (PairV (LitV (LitInt zp))
+                 (PairV (LitV (LitInt zperm)) (LitV (LitInt znapot)))))) =>
       Some (Some {| TlbEntry_vaddr := mword_of_int zva; TlbEntry_vpn := mword_of_int zv;
-                    TlbEntry_ppn := mword_of_int zp; TlbEntry_perm := Perm_of_num zperm |})
+                    TlbEntry_ppn := mword_of_int zp; TlbEntry_perm := Perm_of_num zperm;
+                    TlbEntry_napot := z2b znapot |})
   | _ => None
   end.
 
 Lemma decode_tlb_encode (o : option TlbEntry) : decode_tlb (encode_tlb o) = Some o.
 Proof.
   destruct o as [e |]; cbn.
-  - destruct e as [vaddr vpn ppn perm]. cbn.
-    rewrite !mword_of_int_int_of_mword. rewrite Perm_num_of_roundtrip. reflexivity.
+  - destruct e as [vaddr vpn ppn perm napot]. cbn.
+    rewrite !mword_of_int_int_of_mword. rewrite Perm_num_of_roundtrip. rewrite z2b_b2z. reflexivity.
   - reflexivity.
 Qed.
 

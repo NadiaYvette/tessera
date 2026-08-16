@@ -145,6 +145,9 @@ axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf
 axiom_free tlb_tags         test_vector_pipt_vivt_agree
 axiom_free tlb_tags         test_vector_pipt_vivt_differ
+axiom_free tlb_tags         find_tlb_napot_leaf
+axiom_free tlb_tags         test_vector_tlb_napot_covers_page
+axiom_free tlb_tags         test_vector_tlb_napot_flush
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

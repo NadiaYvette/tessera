@@ -107,14 +107,18 @@ Proof.
 Qed.
 
 (* After SFENCE.VMA-by-VA, the TLB no longer answers for that VA. *)
-Lemma find_tlb_absent_after_filter (entries : list TlbEntry) (vpn : mword 27) (off : mword 12) :
-  find_tlb (filter_tlb entries vpn) vpn off = None.
+Lemma find_tlb_absent_after_filter (entries : list TlbEntry) (va : mword 64) :
+  find_tlb (filter_tlb entries (vpn_of va)) va = None.
 Proof.
   induction entries as [| e rest IH]; cbn [filter_tlb].
   - reflexivity.
-  - destruct (eq_vec (e.(TlbEntry_vpn)) vpn) eqn:E.
-    + cbn. exact IH.
-    + cbn [find_tlb]. rewrite E. exact IH.
+  - unfold tag_eq. destruct (e.(TlbEntry_napot)) eqn:En; cbn.
+    + destruct (eq_vec (subrange_vec_dec e.(TlbEntry_vpn) 26 4) (subrange_vec_dec (vpn_of va) 26 4)) eqn:E.
+      * exact IH.
+      * cbn [find_tlb]. unfold tag_eq. rewrite En. cbn. rewrite E. cbn. exact IH.
+    + destruct (eq_vec (e.(TlbEntry_vpn)) (vpn_of va)) eqn:E.
+      * exact IH.
+      * cbn [find_tlb]. unfold tag_eq. rewrite En. cbn. rewrite E. cbn. exact IH.
 Qed.
 
 Lemma sfence_vma_va_clears (core : Core) (va : mword 64) :
@@ -142,12 +146,13 @@ Proof. unfold translate, sfence_vma_va. cbn. reflexivity. Qed.
 Lemma tlb_stale (core : Core) (va : mword 64) (e : TlbEntry) :
   core.(Core_tlb) = [e] ->
   e.(TlbEntry_vpn) = vpn_of va ->
-  tlb_lookup core va = Some (phys_addr e.(TlbEntry_ppn) (page_offset va), e.(TlbEntry_perm)).
+  tlb_lookup core va = Some (tlb_pa e va, e.(TlbEntry_perm)).
 Proof.
   intros Htlb Hvpn.
   unfold tlb_lookup. rewrite Htlb. cbn [find_tlb].
-  rewrite Hvpn. rewrite (eq_vec_refl (vpn_of va)).
-  reflexivity.
+  unfold tag_eq. destruct (e.(TlbEntry_napot)) eqn:En; cbn.
+  - rewrite Hvpn. rewrite (eq_vec_refl (subrange_vec_dec (vpn_of va) 26 4)). reflexivity.
+  - rewrite Hvpn. rewrite (eq_vec_refl (vpn_of va)). reflexivity.
 Qed.
 
 (* ============================================================

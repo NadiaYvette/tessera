@@ -302,7 +302,7 @@ Lemma sfence_vma_va_reify (r : mword 44) (a : mword 64) :
   sfence_vma_va (reify_core r (Some (leaf_entry a))) a = reify_core r None.
 Proof.
   rewrite /reify_core /sfence_vma_va /leaf_entry.
-  cbn [Core_satp_ppn Core_tlb filter_tlb TlbEntry_vpn].
+  cbn [Core_satp_ppn Core_tlb filter_tlb TlbEntry_vpn TlbEntry_napot tag_eq].
   rewrite (eq_vec_refl (vpn_of a)). reflexivity.
 Qed.
 

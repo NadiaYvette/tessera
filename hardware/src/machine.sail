@@ -37,8 +37,9 @@ struct Pte = {
 struct TlbEntry = {
   vaddr : vaddr,      // full VA the entry was filled for (VIVT/VIPT index/tag)
   vpn   : bits(27),   // Sv39 VPN = VA[38..12]
-  ppn   : bits(44),
-  perm  : Perm
+  ppn   : bits(44),   // the (raw) leaf PPN; for a NAPOT entry find_tlb uses ppn[43..4]
+  perm  : Perm,
+  napot : bool        // 64KiB NAPOT page (tags VA[38..16]) vs 4KiB (tags VA[38..12])
 }
 
 // One core: the root page-table PPN (satp.PPN), its private TLB, and its
@@ -238,16 +239,32 @@ function translate(core, mem, va) = {
 
 // ---- TLB lookup / invalidation ----
 
-val find_tlb : (list(TlbEntry), bits(27), bits(12)) -> option((paddr, Perm))
-function find_tlb(entries, vpn, off) = match entries {
+// TLB tag match: a 64KiB NAPOT entry tags on VA[38..16] (the high 23 VPN bits —
+// the low 4 VPN bits are subsumed by the page), a 4KiB entry on the full VPN.
+val tag_eq : (TlbEntry, bits(27)) -> bool
+function tag_eq(e, vpn) =
+  if e.napot then e.vpn[26 .. 4] == vpn[26 .. 4]
+  else e.vpn == vpn
+
+// The physical address a TLB entry translates va to: a 4KiB entry is
+// ppn @ VA[11..0]; a 64KiB NAPOT entry is ppn[43..4] @ VA[15..0] (napot_phys_addr
+// ignores the low 4 PPN bits, the 0b1000 contiguity pattern).
+val tlb_pa : (TlbEntry, vaddr) -> paddr
+function tlb_pa(e, va) =
+  if e.napot then napot_phys_addr(e.ppn, va)
+  else phys_addr(e.ppn, page_offset(va))
+
+// TLB lookup: find the first entry whose tag matches, and compose its PA.
+val find_tlb : (list(TlbEntry), vaddr) -> option((paddr, Perm))
+function find_tlb(entries, va) = match entries {
   [||] => None(),
   e :: rest =>
-    if e.vpn == vpn then Some((phys_addr(e.ppn, off), e.perm))
-    else find_tlb(rest, vpn, off)
+    if tag_eq(e, vpn_of(va)) then Some((tlb_pa(e, va), e.perm))
+    else find_tlb(rest, va)
 }
 
 val tlb_lookup : (Core, vaddr) -> option((paddr, Perm))
-function tlb_lookup(core, va) = find_tlb(core.tlb, vpn_of(va), page_offset(va))
+function tlb_lookup(core, va) = find_tlb(core.tlb, va)
 
 // SFENCE.VMA all: invalidate every TLB entry on this core.
 val sfence_vma_all : Core -> Core
@@ -263,7 +280,7 @@ val filter_tlb : (list(TlbEntry), bits(27)) -> list(TlbEntry)
 function filter_tlb(entries, vpn) = match entries {
   [||] => [||],
   e :: rest =>
-    if e.vpn == vpn then filter_tlb(rest, vpn)
+    if tag_eq(e, vpn) then filter_tlb(rest, vpn)
     else e :: filter_tlb(rest, vpn)
 }
 

@@ -93,10 +93,12 @@ Definition undefined_TlbEntry '(tt : unit) : M (TlbEntry) :=
    (undefined_bitvector (27)) >>= fun (w__1 : mword 27) =>
    (undefined_bitvector (44)) >>= fun (w__2 : mword 44) =>
    (undefined_Perm (tt)) >>= fun (w__3 : Perm) =>
+   (undefined_bool (tt)) >>= fun (w__4 : bool) =>
    returnM (({| TlbEntry_vaddr := w__0;
                 TlbEntry_vpn := w__1;
                 TlbEntry_ppn := w__2;
-                TlbEntry_perm := w__3 |})).
+                TlbEntry_perm := w__3;
+                TlbEntry_napot := w__4 |})).
 
 Definition undefined_MemEntry '(tt : unit) : M (MemEntry) :=
    (undefined_bitvector (56)) >>= fun (w__0 : mword 56) =>
@@ -208,18 +210,25 @@ Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
       else None
    end.
 
-Fixpoint find_tlb (entries : list TlbEntry) (vpn : mword 27) (off : mword 12)
-: option ((mword 56 * Perm)) :=
+Definition tag_eq (e : TlbEntry) (vpn : mword 27) : bool :=
+   if e.(TlbEntry_napot) then
+     eq_vec ((subrange_vec_dec (e.(TlbEntry_vpn)) (26) (4))) ((subrange_vec_dec (vpn) (26) (4)))
+   else eq_vec (e.(TlbEntry_vpn)) (vpn).
+
+Definition tlb_pa (e : TlbEntry) (va : mword 64) : mword 56 :=
+   if e.(TlbEntry_napot) then napot_phys_addr (e.(TlbEntry_ppn)) (va)
+   else phys_addr (e.(TlbEntry_ppn)) ((page_offset (va))).
+
+Fixpoint find_tlb (entries : list TlbEntry) (va : mword 64) : option ((mword 56 * Perm)) :=
    match entries with
    | [] => None
    | e :: rest =>
-      if eq_vec (e.(TlbEntry_vpn)) (vpn) then
-        Some ((phys_addr (e.(TlbEntry_ppn)) (off), e.(TlbEntry_perm)))
-      else find_tlb (rest) (vpn) (off)
+      if tag_eq (e) ((vpn_of (va))) then Some ((tlb_pa (e) (va), e.(TlbEntry_perm)))
+      else find_tlb (rest) (va)
    end.
 
 Definition tlb_lookup (core : Core) (va : mword 64) : option ((mword 56 * Perm)) :=
-   find_tlb (core.(Core_tlb)) ((vpn_of (va))) ((page_offset (va))).
+   find_tlb (core.(Core_tlb)) (va).
 
 Definition sfence_vma_all (core : Core) : Core :=
    {| Core_satp_ppn := core.(Core_satp_ppn);
@@ -231,8 +240,7 @@ Fixpoint filter_tlb (entries : list TlbEntry) (vpn : mword 27) : list TlbEntry :
    match entries with
    | [] => []
    | e :: rest =>
-      if eq_vec (e.(TlbEntry_vpn)) (vpn) then filter_tlb (rest) (vpn)
-      else e :: (filter_tlb (rest) (vpn))
+      if tag_eq (e) (vpn) then filter_tlb (rest) (vpn) else e :: (filter_tlb (rest) (vpn))
    end.
 
 Definition sfence_vma_va (core : Core) (va : mword 64) : Core :=

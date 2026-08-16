@@ -255,8 +255,8 @@ Definition perm_to_z (p : Perm) : Z :=
 
 (* option TlbEntry -> Z, a full bit-packed encoding.  gpfsl's values are
    LitPoison|LitLoc|LitInt, so the *whole* entry — vaddr (64 bits), vpn (27),
-   ppn (44), perm (2) — is packed into a Z, with [None] the sentinel 0 and
-   [Some e] the odd value 1 + 2 * payload(e).  Carrying [TlbEntry_vaddr] (the
+   ppn (44), perm (2), napot (1) — is packed into a Z, with [None] the sentinel 0
+   and [Some e] the odd value 1 + 2 * payload(e).  Carrying [TlbEntry_vaddr] (the
    virtual address), not just a cleared/stale bit, is what lets VIVT/VIPT/Svnapot
    TLB models — which tag the entry by vaddr, not just vpn — reuse this cell: the
    cell's value determines *which* virtual address it was flushed for. *)
@@ -264,7 +264,8 @@ Definition encode_tlb (o : option TlbEntry) : Z :=
   match o with
   | None => 0
   | Some e =>
-      1 + 2 * (int_of_mword false e.(TlbEntry_vaddr) * 2^(27 + 44 + 2)
+      1 + 2 * (int_of_mword false e.(TlbEntry_vaddr) * 2^(1 + 27 + 44 + 2)
+               + b2z e.(TlbEntry_napot) * 2^(27 + 44 + 2)
                + int_of_mword false e.(TlbEntry_vpn)  * 2^(44 + 2)
                + int_of_mword false e.(TlbEntry_ppn)  * 2^2
                + perm_to_z e.(TlbEntry_perm))

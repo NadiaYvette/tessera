@@ -72,7 +72,7 @@ Qed.
 Lemma filter_tlb_leaf (va : mword 64) :
   filter_tlb [leaf_entry va] (vpn_of va) = [].
 Proof.
-  unfold leaf_entry. cbn. rewrite eq_vec_refl. reflexivity.
+  unfold leaf_entry, tag_eq. cbn. rewrite eq_vec_refl. reflexivity.
 Qed.
 
 (* ============================================================
@@ -89,7 +89,8 @@ Definition tag_homonym : TlbEntry :=
   {| TlbEntry_vaddr := tag_va_b;
      TlbEntry_vpn := vpn_of tag_va_a;
      TlbEntry_ppn := mword_of_int 0;
-     TlbEntry_perm := ReadWrite |}.
+     TlbEntry_perm := ReadWrite;
+     TlbEntry_napot := false |}.
 
 Lemma test_vector_pipt_vivt_agree :
   flush_tlb_entry (Some (leaf_entry tag_va_a)) tag_va_a = None /\
@@ -101,3 +102,35 @@ Lemma test_vector_pipt_vivt_differ :
   flush_tlb_entry (Some tag_homonym) tag_va_a = None /\
   flush_tlb_entry_vivt (Some tag_homonym) tag_va_a = Some tag_homonym.
 Proof. vm_compute. split; reflexivity. Qed.
+
+(* ============================================================
+   NAPOT superpage matching: a 64KiB entry tags on VA[38..16] (tag_eq drops the
+   low 4 VPN bits) and translates to napot_phys_addr.  `find_tlb`/`filter_tlb`
+   are page-size-aware via tag_eq/tlb_pa; the per-cell `flush_tlb_entry` above is
+   the 4KiB PIPT special case that agrees with them on napot=false entries.
+   ============================================================ *)
+
+Lemma find_tlb_napot_leaf (va : mword 64) (ppn : mword 44) :
+  find_tlb [napot_entry va ppn] va = Some (napot_phys_addr ppn va, ReadWrite).
+Proof.
+  unfold napot_entry, find_tlb, tag_eq, tlb_pa. cbn.
+  rewrite (eq_vec_refl (subrange_vec_dec (vpn_of va) 26 4)). reflexivity.
+Qed.
+
+(* Two VAs in the same 64KiB page: 0x1234 and 0x2234 differ only in VA[15..12]
+   (VA[38..16] = 0 for both), so one NAPOT entry covers both. *)
+Definition tlb_napot_va : mword 64 := mword_of_int 0x1234.
+Definition tlb_napot_va2 : mword 64 := mword_of_int 0x2234.
+Definition tlb_napot_ppn : mword 44 := mword_of_int 0x1008.
+
+Definition tlb_napot_core : Core :=
+  {| Core_satp_ppn := mword_of_int 0; Core_tlb := [napot_entry tlb_napot_va tlb_napot_ppn];
+     Core_hart := 0; Core_node := 0 |}.
+
+Lemma test_vector_tlb_napot_covers_page :
+  tlb_lookup tlb_napot_core tlb_napot_va2 = Some (napot_phys_addr tlb_napot_ppn tlb_napot_va2, ReadWrite).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_tlb_napot_flush :
+  tlb_lookup (sfence_vma_va tlb_napot_core tlb_napot_va2) tlb_napot_va2 = None.
+Proof. vm_compute. reflexivity. Qed.
