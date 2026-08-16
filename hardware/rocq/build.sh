@@ -145,6 +145,11 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_fork_remotes_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_broadcast_spec "$WFLAGS"
+  # S2.4: the weak-memory broadcast's ghost step is the IPI deliver+receive,
+  # and the final machine is the pure IPI broadcast that reifies the conclusion.
+  axiom_free shootdown_weak_broadcast bc_machine_ipi_step "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_machine_ipi_broadcast "$WFLAGS"
+  axiom_free shootdown_weak_broadcast bc_post_reifies "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi

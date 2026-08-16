@@ -39,6 +39,9 @@ Require Import machine_types.
 Require Import machine.
 Require Import machine_encoding.   (* invalid_pte/valid_pte, leaf_entry *)
 Require Import machine_reify.      (* reify_machine/tls_of/broadcast_*_machine/reifies *)
+Require Import coherence_leaf.     (* invalidate_leaf_mem *)
+Require Import shootdown.          (* core_with_root, invalidate_shootdown_empty_cores *)
+Require Import ipi.                (* deliver_ipi/receive_ipi + sfence_at/ipi_broadcast (S2.3) *)
 Require Import shootdown_weak.     (* encode_pte/encode_tlb, UTok, uniqTokG *)
 Require Import iris.prelude.options.
 Import ListNotations.
@@ -121,12 +124,25 @@ Proof.
   lia.
 Qed.
 
+(* The IPI mailbox: core j's shootdown IPI is delivered exactly when j < i. *)
+Definition ipi_prefix (n i : nat) : list bool :=
+  List.map (fun (j : nat) => bool_decide (j < i)) (seq 0 n).
+
 (* The machine the leader models at wait-step i: cores 0..i-1 have cleared their
-   TLB, cores i..n-1 still cache [leaf_entry va], and the leaf PTE is already
-   invalid (the break-before-make write happened before the fork). *)
+   TLB and had their IPI delivered, cores i..n-1 still cache [leaf_entry va] with
+   their IPI undelivered, and the leaf PTE is already invalid (the break-before-
+   make write happened before the fork).  The [Machine_ipi] mailbox carries the
+   delivered bits, so the ghost step below is literally [deliver_ipi]/[receive_ipi]. *)
 Definition bc_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n i : nat) : Machine :=
-  reify_machine root va mem invalid_pte
-    (fun j => if decide (i ≤ j < n) then Some (leaf_entry va) else None) n.
+  {| Machine_mem := invalidate_leaf_mem (core_with_root root) mem va invalid_pte;
+     Machine_cores := List.map (fun (j : nat) => reify_core root
+                             (if decide (i ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n);
+     Machine_ram := [];
+     Machine_ipi := ipi_prefix n i |}.
+
+(* The post-machine: every core's IPI delivered and TLB cleared. *)
+Definition bc_post_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
+  bc_machine root va mem n n.
 
 (* ============================================================
    The program.
@@ -261,33 +277,200 @@ Definition bc_sync_ctx (γack : nat → gname) (ack : loc)
     ((ack >> j)%stdpp sy⊒{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j))%I.
 
 (* ============================================================
-   Pure reification step.
+   Pure reification step: the ghost's deliver_ipi + receive_ipi.
    ============================================================ *)
 
-(* Core i still caches [leaf_entry va] exactly while i ≤ i < n; after the leader
-   deletes it the machine steps from [bc_machine n i] to [bc_machine n (i+1)]. *)
-Lemma bc_machine_step_Some (n i : nat) (Hin : i < n) :
-  (fun j => if decide (i ≤ j < n) then Some (leaf_entry va) else None) i
-  = Some (leaf_entry va).
+(* [eq_vec x x] is true: the generated mword equality is reflexive. *)
+Lemma eq_vec_refl {n} (x : mword n) : eq_vec x x = true.
+Proof. apply eq_vec_true_iff. reflexivity. Qed.
+
+(* SFENCE.VMA-by-VA empties a core caching exactly [leaf_entry va]. *)
+Lemma sfence_vma_va_reify (r : mword 44) (a : mword 64) :
+  sfence_vma_va (reify_core r (Some (leaf_entry a))) a = reify_core r None.
 Proof.
-  cbn. case_decide as H; [done|exfalso]. apply H. split; [lia|exact Hin].
+  rewrite /reify_core /sfence_vma_va /leaf_entry.
+  cbn [Core_satp_ppn Core_tlb filter_tlb TlbEntry_vpn].
+  rewrite (eq_vec_refl (vpn_of a)). reflexivity.
 Qed.
 
-Lemma bc_machine_step_None (n i : nat) :
-  (fun j => if decide (i + 1 ≤ j < n) then Some (leaf_entry va) else None) i
-  = None.
+(* [seq (S s) n] is [S] shifted over [seq s n]. *)
+Lemma seq_S_shift (s n : nat) : seq (S s) n = List.map S (seq s n).
 Proof.
-  cbn. case_decide as H; [exfalso; lia|done].
+  revert s. induction n as [| n' IH]; intros s; cbn [seq List.map].
+  - reflexivity.
+  - f_equal. apply IH.
 Qed.
 
-Lemma bc_machine_done_ge (n i : nat) :
-  n ≤ i → bc_machine root va mem n i = broadcast_post_machine root va mem n.
+(* Pointwise helpers: shifting the index past a [map] on [seq 0 n]. *)
+Lemma if_decide_S_eq (j i : nat) (A : Type) (x y : A) :
+  (if decide (S j = S i) then x else y) = (if decide (j = i) then x else y).
 Proof.
-  intros Hni. rewrite /bc_machine /broadcast_post_machine /reify_machine.
-  f_equal. apply List.map_ext_in. intros j Hj.
-  apply list_elem_of_In in Hj. apply elem_of_seq in Hj.
-  rewrite decide_False; [done|]. lia.
+  case_decide as H.
+  - case_decide as H'.
+    + reflexivity.
+    + exfalso. apply H'. lia.
+  - case_decide as H'.
+    + exfalso. apply H. lia.
+    + reflexivity.
 Qed.
+
+Lemma if_decide_S_ne_0 (j : nat) (A : Type) (x y : A) :
+  (if decide (S j = (0 : nat)) then x else y) = y.
+Proof. case_decide as H; [lia | reflexivity]. Qed.
+
+(* [sfence_at] at index i of a [map f (seq 0 n)] updates only the i-th cell. *)
+Lemma sfence_at_map_seq (f : nat → Core) (n i : nat) (a : mword 64) :
+  sfence_at (List.map f (seq 0 n)) i a =
+  List.map (fun j => if decide (j = i) then sfence_vma_va (f j) a else f j) (seq 0 n).
+Proof.
+  revert f i. induction n as [| n' IH]; intros f [| i'].
+  - cbn [seq List.map sfence_at]. reflexivity.
+  - cbn [seq List.map sfence_at]. reflexivity.
+  - cbn [seq List.map sfence_at]. f_equal.
+    rewrite (seq_S_shift 0 n'). rewrite !List.map_map.
+    apply List.map_ext. intros j.
+    rewrite (if_decide_S_ne_0 j Core (sfence_vma_va (f (S j)) a) (f (S j))).
+    reflexivity.
+  - cbn [seq List.map sfence_at]. f_equal.
+    rewrite (seq_S_shift 0 n'). rewrite !List.map_map.
+    rewrite (IH (fun x : nat => f (S x)) i').
+    apply List.map_ext. intros j.
+    rewrite (if_decide_S_eq j i' Core (sfence_vma_va (f (S j)) a) (f (S j))).
+    reflexivity.
+Qed.
+
+(* [list_update_bool] at index i of a [map f (seq 0 n)] updates only the i-th cell. *)
+Lemma list_update_bool_map_seq (f : nat → bool) (n i : nat) (v : bool) :
+  list_update_bool (List.map f (seq 0 n)) (Z.of_nat i) v =
+  List.map (fun j => if decide (j = i) then v else f j) (seq 0 n).
+Proof.
+  revert f i. induction n as [| n' IH]; intros f [| i'].
+  - cbn [seq List.map list_update_bool]. reflexivity.
+  - cbn [seq List.map list_update_bool]. reflexivity.
+  - cbn [seq List.map list_update_bool].
+    change (Z.of_nat 0) with 0%Z. cbn [Z.eqb]. f_equal.
+    rewrite (seq_S_shift 0 n'). rewrite !List.map_map.
+    apply List.map_ext. intros j.
+    rewrite (if_decide_S_ne_0 j bool v (f (S j))). reflexivity.
+  - cbn [seq List.map list_update_bool].
+    destruct (Z.eqb (Z.of_nat (S i')) 0) eqn:E.
+    + apply Z.eqb_eq in E. lia.
+    + f_equal.
+      replace (Z.sub (Z.of_nat (S i')) 1) with (Z.of_nat i') by lia.
+      rewrite (seq_S_shift 0 n'). rewrite !List.map_map.
+      rewrite (IH (fun x : nat => f (S x)) i').
+      apply List.map_ext. intros j.
+      rewrite (if_decide_S_eq j i' bool v (f (S j))). reflexivity.
+Qed.
+
+(* For j ≠ i, [i ≤ j < n] and [i+1 ≤ j < n] decide the same, so the two
+   [if decide] branches agree. *)
+Lemma decide_le_succ (i j n : nat) (Hne : j ≠ i) (A : Type) (x y : A) :
+  (if decide (i ≤ j < n) then x else y) = (if decide ((i + 1)%nat ≤ j < n) then x else y).
+Proof.
+  case_decide as H1.
+  - case_decide as H2.
+    + reflexivity.
+    + exfalso. apply Hne. lia.
+  - case_decide as H2.
+    + exfalso. apply H1. lia.
+    + reflexivity.
+Qed.
+
+(* The ipi mailbox advances by setting index i: ipi_prefix n (i+1) = set i. *)
+Lemma ipi_prefix_step (n i : nat) (Hin : i < n) :
+  ipi_prefix n (i + 1) = list_update_bool (ipi_prefix n i) (Z.of_nat i) true.
+Proof.
+  rewrite /ipi_prefix. rewrite list_update_bool_map_seq.
+  apply List.map_ext. intros j.
+  destruct (decide (j = i)) as [Hj | Hj].
+  - subst.
+    rewrite bool_decide_true; [| lia].
+    reflexivity.
+  - destruct (decide (j < i)) as [H1 | H1];
+    destruct (decide (j < (i + 1)%nat)) as [H2 | H2].
+    + rewrite bool_decide_true; [| exact H2].
+      rewrite bool_decide_true; [| exact H1]. reflexivity.
+    + exfalso. lia.
+    + exfalso. lia.
+    + rewrite bool_decide_false; [| exact H2].
+      rewrite bool_decide_false; [| exact H1]. reflexivity.
+Qed.
+
+(* Flushing core i of the i-th ghost step gives the (i+1)-th cores list. *)
+Lemma bc_cores_ipi_step (n i : nat) (Hin : i < n) :
+  List.map (fun (j : nat) => reify_core root (if decide ((i + 1)%nat ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n)
+  = sfence_at (List.map (fun (j : nat) => reify_core root (if decide (i ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n)) i va.
+Proof.
+  rewrite sfence_at_map_seq.
+  apply List.map_ext. intros j.
+  destruct (decide (j = i)) as [Hj | Hj].
+  - subst.
+    destruct (decide ((i + 1)%nat ≤ i < n)) as [H1 | H1]; [lia |].
+    destruct (decide (i ≤ i < n)) as [H2 | H2]; [| lia].
+    rewrite sfence_vma_va_reify. reflexivity.
+  - rewrite <- (decide_le_succ i j n Hj (option TlbEntry) (Some (leaf_entry va)) None).
+    reflexivity.
+Qed.
+
+(* The leader's machine-ghost step on ack i is exactly the IPI deliver + receive:
+   deliver core i's IPI, then core i flushes its TLB. *)
+Lemma bc_machine_ipi_step (n i : nat) (Hin : i < n) :
+  bc_machine root va mem n (i + 1) =
+  receive_ipi (deliver_ipi (bc_machine root va mem n i) (Z.of_nat i)) (Z.of_nat i) va.
+Proof.
+  unfold bc_machine, receive_ipi, deliver_ipi.
+  cbn [Machine_cores Machine_mem Machine_ram Machine_ipi].
+  rewrite (list_nth_bool_update_self (ipi_prefix n i) i).
+  2: { unfold ipi_prefix. rewrite List.length_map. rewrite List.length_seq. lia. }
+  rewrite (receive_ipi_cores_true_eq_sfence_at
+             (List.map (fun (j : nat) => reify_core root (if decide (i ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n))
+             i va).
+  f_equal.
+  - apply bc_cores_ipi_step. exact Hin.
+  - apply ipi_prefix_step. exact Hin.
+Qed.
+
+(* The post-machine's cores are all empty-TLB cores sharing [root]. *)
+Lemma bc_cores_done (n : nat) :
+  List.map (fun (j : nat) => reify_core root (if decide (n ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n)
+  = List.map (fun _ => core_with_root root) (seq 0 n).
+Proof.
+  apply List.map_ext_in. intros j Hj.
+  apply List.in_seq in Hj.
+  rewrite decide_False; [reflexivity |]. lia.
+Qed.
+
+(* The reified post-machine satisfies the machine-level conclusion. *)
+Lemma bc_post_reifies (n : nat) :
+  Forall (fun c => translate c (bc_post_machine root va mem n).(Machine_mem) va = None /\
+                   tlb_lookup c va = None)
+         (bc_post_machine root va mem n).(Machine_cores).
+Proof.
+  rewrite /bc_post_machine /bc_machine.
+  cbn [Machine_cores Machine_mem].
+  rewrite bc_cores_done.
+  apply (invalidate_shootdown_empty_cores root va mem n invalid_pte invalid_pte_not_valid).
+Qed.
+
+(* The ghost at step i is exactly [ipi_broadcast_cores] applied i times to the
+   all-stale, all-undelivered pre-machine. *)
+Lemma bc_machine_ipi_cores (n i : nat) (Hi : i ≤ n) :
+  bc_machine root va mem n i = ipi_broadcast_cores (bc_machine root va mem n 0) i va.
+Proof.
+  induction i as [| i' IH].
+  - cbn [ipi_broadcast_cores]. reflexivity.
+  - cbn [ipi_broadcast_cores].
+    assert (Hi' : i' ≤ n) by lia.
+    rewrite <- (IH Hi').
+    rewrite <- (Nat.add_1_r i').
+    apply bc_machine_ipi_step. lia.
+Qed.
+
+(* At the end the ghost is the pure IPI broadcast of the pre-machine. *)
+Lemma bc_machine_ipi_broadcast (n : nat) :
+  bc_machine root va mem n n = ipi_broadcast_cores (bc_machine root va mem n 0) n va.
+Proof. apply (bc_machine_ipi_cores n n). lia. Qed.
 
 (* ============================================================
    The remote: acquire go, clear tlb, release ack.
@@ -400,7 +583,7 @@ Lemma bc_wait_all_spec (γgo : gname) (γtok γack : nat → gname) (go ack tlb 
       bc_inv_ctx γgo γtok γack go ack tlb n ∗
       bc_sync_ctx γack ack t V n }}}
     bc_wait_all_at ack i n @ tid; ⊤
-  {{{ RET #☠; machine_ctx γm (broadcast_post_machine root va mem n) }}}.
+  {{{ RET #☠; machine_ctx γm (bc_post_machine root va mem n) }}}.
 Proof.
   iIntros (t V i n tid Φ) "(Hmach & #HI & #Sctx) HΦ".
   rewrite /bc_wait_all_at /bc_wait_all.
@@ -479,7 +662,7 @@ Proof.
       wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
       iApply ("IH" $! (i + 1)%nat Φ with "Hmach' HΦ").
   - (* i ≥ n: return *)
-    iMod (machine_ctx_update γm (bc_machine root va mem n i) (broadcast_post_machine root va mem n)
+    iMod (machine_ctx_update γm (bc_machine root va mem n i) (bc_post_machine root va mem n)
             with "Hmach") as "Hmach'".
     wp_op. rewrite bool_decide_false; [|lia]. wp_if.
     by iApply ("HΦ" with "Hmach'").
@@ -728,7 +911,7 @@ Lemma bc_broadcast_spec (n : nat) :
   {{{ RET #☠; ∃ (γgo : gname) (γtok γack : nat → gname) (pte go ack tlb : loc),
       bc_inv_ctx γgo γtok γack go ack tlb n ∗
       pte ↦ #(encode_pte invalid_pte) ∗
-      machine_ctx γm (broadcast_post_machine root va mem n) }}}.
+      machine_ctx γm (bc_post_machine root va mem n) }}}.
 Proof.
   iIntros (tid Φ) "Hm0 HΦ".
   rewrite /bc_broadcast_at /bc_broadcast.

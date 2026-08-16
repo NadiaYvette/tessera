@@ -61,8 +61,13 @@ Soundness: no core translates through `va` after the protocol completes.
   PTE, deliver to, then receive from, every core) and
   `ipi_broadcast_refines_invalidate_shootdown` proves it produces the same mem and fully
   flushed cores as the functional `invalidate_shootdown`, so `ipi_broadcast_correct`
-  re-establishes coherence on every core. Remaining: the concurrent/weak-memory lift of
-  the IPI-based protocol (S2.4).
+  re-establishes coherence on every core. **S2.4 done** (`shootdown_weak_broadcast.v`,
+  axiom-free): the S2.2c weak-memory broadcast now carries the `Machine_ipi` mailbox —
+  `bc_machine`/`bc_post_machine` thread it through, the leader's ghost step on ack i is
+  exactly `receive_ipi (deliver_ipi _ (Z.of_nat i))` (`bc_machine_ipi_step`), the final
+  ghost is the pure `ipi_broadcast_cores` of the pre-machine (`bc_machine_ipi_broadcast`),
+  and `bc_post_reifies` reifies it to `Forall (translate = None ∧ tlb_lookup = None)`. So
+  the weak-memory broadcast is the IPI-based protocol, not just a flag-ordering model.
 
 ## Concrete-value encoding (S2.1)
 
@@ -93,7 +98,9 @@ waits until the set is full before returning (the "free is safe" point).
 - **Now proved:** the broadcast re-establishes coherence on every core, sequentially
   (S2.0) and under the concurrent schedule (S2.1), over the generated walk.
 - **Still trusted:** the encoding of `mword` (SailStdpp); SC (S2.1) until S2.2 lifts it
-  to ORC11; the IPI is modeled as a shared flag (its ordering effect, not its delivery).
+  to ORC11; the concurrent program still synchronizes via the `go`/`ack` flags (the IPI's
+  *ordering* effect), while S2.4 threads the actual `Machine_ipi` delivery through the
+  machine ghost so the tracked state is the IPI-based protocol.
 
 ## S2.1 — concrete design
 
