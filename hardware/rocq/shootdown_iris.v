@@ -23,13 +23,14 @@ Import ListNotations.
    Concrete-value encoding.
    ============================================================ *)
 
-(* Pte -> val: nested pairs (valid, read, write, exec, user, ppn-as-Z). *)
+(* Pte -> val: nested pairs (valid, read, write, exec, user, napot, ppn-as-Z). *)
 Definition encode_pte (p : Pte) : val :=
   PairV (#(b2z p.(Pte_valid)))
   (PairV (#(b2z p.(Pte_read)))
   (PairV (#(b2z p.(Pte_write)))
   (PairV (#(b2z p.(Pte_exec)))
-  (PairV (#(b2z p.(Pte_user))) #(int_of_mword false p.(Pte_ppn)))))).
+  (PairV (#(b2z p.(Pte_user)))
+  (PairV (#(b2z p.(Pte_napot))) #(int_of_mword false p.(Pte_ppn))))))).
 
 Definition decode_pte (v : val) : option Pte :=
   match v with
@@ -37,15 +38,17 @@ Definition decode_pte (v : val) : option Pte :=
       (PairV (LitV (LitInt z1))
         (PairV (LitV (LitInt z2))
           (PairV (LitV (LitInt z3))
-            (PairV (LitV (LitInt z4)) (LitV (LitInt z5)))))) =>
+            (PairV (LitV (LitInt z4))
+              (PairV (LitV (LitInt z5)) (LitV (LitInt z6))))))) =>
       Some {| Pte_valid := z2b z0; Pte_read := z2b z1; Pte_write := z2b z2;
-              Pte_exec := z2b z3; Pte_user := z2b z4; Pte_ppn := mword_of_int z5 |}
+              Pte_exec := z2b z3; Pte_user := z2b z4; Pte_napot := z2b z5;
+              Pte_ppn := mword_of_int z6 |}
   | _ => None
   end.
 
 Lemma decode_pte_encode (p : Pte) : decode_pte (encode_pte p) = Some p.
 Proof.
-  destruct p as [v r w e u ppn]. cbn.
+  destruct p as [v r w e u n ppn]. cbn.
   rewrite !z2b_b2z. rewrite mword_of_int_int_of_mword. reflexivity.
 Qed.
 

@@ -41,7 +41,7 @@ Qed.
 (* The break-before-make PTE: valid is cleared, everything else is the inhabitant. *)
 Definition invalid_pte : Pte :=
   {| Pte_valid := false; Pte_read := true; Pte_write := true;
-     Pte_exec := true; Pte_user := true; Pte_ppn := mword_of_int 0 |}.
+     Pte_exec := true; Pte_user := true; Pte_napot := false; Pte_ppn := mword_of_int 0 |}.
 
 Lemma invalid_pte_not_valid : invalid_pte.(Pte_valid) = false.
 Proof. reflexivity. Qed.
@@ -49,7 +49,7 @@ Proof. reflexivity. Qed.
 (* The mapped PTE the leaf starts as. *)
 Definition valid_pte : Pte :=
   {| Pte_valid := true; Pte_read := true; Pte_write := true;
-     Pte_exec := true; Pte_user := true; Pte_ppn := mword_of_int 0 |}.
+     Pte_exec := true; Pte_user := true; Pte_napot := false; Pte_ppn := mword_of_int 0 |}.
 
 (* The stale TLB entry the broadcast models a core as caching for `va`: its VPN
    is `vpn_of va` (VA[38:12] under Sv39), so `tlb_lookup`/`sfence_vma_va` actually

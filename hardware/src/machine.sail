@@ -17,13 +17,15 @@ type paddr = bits(56)
 // Mapping permissions -- the Tessera-relevant subset (read / write).
 enum Perm = { None_, Read, ReadWrite }
 
-// RISC-V Sv39 page-table entry (leaf view): V, R, W, X, U + PPN.
+// RISC-V Sv39 page-table entry (leaf view): V, R, W, X, U, the Svnapot N bit
+// (PTE[63]), + PPN.
 struct Pte = {
   valid : bool,
   read  : bool,
   write : bool,
   exec  : bool,
   user  : bool,
+  napot : bool,
   ppn   : bits(44)
 }
 
@@ -107,6 +109,22 @@ function pte_address(table_ppn, index) =
 val phys_addr : (bits(44), bits(12)) -> paddr
 function phys_addr(ppn, off) =
   sail_shiftleft(sail_zero_extend(ppn, 56), 12) | sail_zero_extend(off, 56)
+
+// ---- Svnapot (extension N bit, PTE[63]) ----
+//
+// A leaf PTE with the N bit set is a naturally aligned power-of-two (NAPOT)
+// page.  Only the 64KiB encoding is valid: the low 4 PPN bits must be 0b1000
+// (the "contiguity" pattern), and the physical page is ppn[43..4] followed by
+// the 16-bit page offset VA[15..0].  This transcribes sail-riscv
+// model/sys/vmem.sail (pt_walk, the Svnapot clause) and vmem_pte.sail (the
+// PTE_Ext.N bitfield).
+
+val napot_guard : bits(44) -> bool
+function napot_guard(ppn) = ppn[3 .. 0] == 0b1000
+
+val napot_phys_addr : (bits(44), vaddr) -> paddr
+function napot_phys_addr(ppn, va) =
+  sail_shiftleft(sail_zero_extend(ppn[43 .. 4], 56), 16) | sail_zero_extend(va[15 .. 0], 56)
 
 // ---- PTE interpretation ----
 
@@ -194,7 +212,15 @@ function translate(core, mem, va) = {
                         // Reserved Sv39 encoding R=0, W=1 (an SS page when X=0, or
                         // otherwise-reserved when X=1) must fault, not translate.
                         if p0.write & not_bool(p0.read) then None()
-                        else if is_leaf(p0) then Some((phys_addr(p0.ppn, page_offset(va)), perm_of_pte(p0)))
+                        else if is_leaf(p0) then {
+                          // Svnapot: N=1 is a 64KiB NAPOT page (ppn[3..0] must be
+                          // 0b1000, else reserved -> fault); N=0 is a normal 4KiB
+                          // page.
+                          if p0.napot then {
+                            if napot_guard(p0.ppn) then Some((napot_phys_addr(p0.ppn, va), perm_of_pte(p0)))
+                            else None()
+                          } else Some((phys_addr(p0.ppn, page_offset(va)), perm_of_pte(p0)))
+                        }
                         else None()
                       } else None()
                   }

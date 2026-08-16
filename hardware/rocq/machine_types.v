@@ -78,52 +78,57 @@ Record Pte := {
   Pte_write : bool;
   Pte_exec : bool;
   Pte_user : bool;
+  Pte_napot : bool;
   Pte_ppn : bits 44;
 }.
 Arguments Pte : clear implicits.
 #[export]
 Instance Decidable_eq_Pte : EqDecision Pte.
-   intros [x0 x1 x2 x3 x4 x5].
-   intros [y0 y1 y2 y3 y4 y5].
+   intros [x0 x1 x2 x3 x4 x5 x6].
+   intros [y0 y1 y2 y3 y4 y5 y6].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
   cmp_record_field x3 y3.
   cmp_record_field x4 y4.
   cmp_record_field x5 y5.
+  cmp_record_field x6 y6.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_Pte : Countable Pte.
 refine {|
-  encode x := encode (Pte_valid x, Pte_read x, Pte_write x, Pte_exec x, Pte_user x, Pte_ppn x);
-  decode x := '(x0, x1, x2, x3, x4, x5) ← decode x;
-              mret (Build_Pte x0 x1 x2 x3 x4 x5)
+  encode x := encode (Pte_valid x, Pte_read x, Pte_write x, Pte_exec x, Pte_user x, Pte_napot x, Pte_ppn x);
+  decode x := '(x0, x1, x2, x3, x4, x5, x6) ← decode x;
+              mret (Build_Pte x0 x1 x2 x3 x4 x5 x6)
 |}.
 abstract (
-  intros [x0 x1 x2 x3 x4 x5];
+  intros [x0 x1 x2 x3 x4 x5 x6];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'Pte_valid' := e ]}" :=
-  match r with Build_Pte _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) =>
-    Build_Pte e f1 f2 f3 f4 f5 end (at level 0).
+  match r with Build_Pte _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Pte e f1 f2 f3 f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Pte_read' := e ]}" :=
-  match r with Build_Pte (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) =>
-    Build_Pte f0 e f2 f3 f4 f5 end (at level 0).
+  match r with Build_Pte (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Pte f0 e f2 f3 f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Pte_write' := e ]}" :=
-  match r with Build_Pte (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) =>
-    Build_Pte f0 f1 e f3 f4 f5 end (at level 0).
+  match r with Build_Pte (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Pte f0 f1 e f3 f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Pte_exec' := e ]}" :=
-  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) =>
-    Build_Pte f0 f1 f2 e f4 f5 end (at level 0).
+  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Pte f0 f1 f2 e f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Pte_user' := e ]}" :=
-  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) =>
-    Build_Pte f0 f1 f2 f3 e f5 end (at level 0).
+  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) (_ as f6) =>
+    Build_Pte f0 f1 f2 f3 e f5 f6 end (at level 0).
+Notation "{[ r 'with' 'Pte_napot' := e ]}" :=
+  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ (_ as f6) =>
+    Build_Pte f0 f1 f2 f3 f4 e f6 end (at level 0).
 Notation "{[ r 'with' 'Pte_ppn' := e ]}" :=
-  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ =>
-    Build_Pte f0 f1 f2 f3 f4 e end (at level 0).
+  match r with Build_Pte (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) _ =>
+    Build_Pte f0 f1 f2 f3 f4 f5 e end (at level 0).
 #[export]
 Instance dummy_Pte : Inhabited (Pte) := {
   inhabitant := {|
@@ -132,6 +137,7 @@ Instance dummy_Pte : Inhabited (Pte) := {
     Pte_write := inhabitant;
     Pte_exec := inhabitant;
     Pte_user := inhabitant;
+    Pte_napot := inhabitant;
     Pte_ppn := inhabitant
 |} }.
 

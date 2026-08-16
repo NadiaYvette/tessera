@@ -78,13 +78,15 @@ Definition undefined_Pte '(tt : unit) : M (Pte) :=
    (undefined_bool (tt)) >>= fun (w__2 : bool) =>
    (undefined_bool (tt)) >>= fun (w__3 : bool) =>
    (undefined_bool (tt)) >>= fun (w__4 : bool) =>
-   (undefined_bitvector (44)) >>= fun (w__5 : mword 44) =>
+   (undefined_bool (tt)) >>= fun (w__5 : bool) =>
+   (undefined_bitvector (44)) >>= fun (w__6 : mword 44) =>
    returnM (({| Pte_valid := w__0;
                 Pte_read := w__1;
                 Pte_write := w__2;
                 Pte_exec := w__3;
                 Pte_user := w__4;
-                Pte_ppn := w__5 |})).
+                Pte_napot := w__5;
+                Pte_ppn := w__6 |})).
 
 Definition undefined_TlbEntry '(tt : unit) : M (TlbEntry) :=
    (undefined_bitvector (64)) >>= fun (w__0 : mword 64) =>
@@ -122,6 +124,13 @@ Definition pte_address (table_ppn : mword 44) (index : mword 9) : mword 56 :=
 
 Definition phys_addr (ppn : mword 44) (off : mword 12) : mword 56 :=
    or_vec ((shiftl ((zero_extend (ppn) (56))) (12))) ((zero_extend (off) (56))).
+
+Definition napot_guard (ppn : mword 44) : bool :=
+   eq_vec ((subrange_vec_dec (ppn) (3) (0))) (('b"1000")).
+
+Definition napot_phys_addr (ppn : mword 44) (va : mword 64) : mword 56 :=
+   or_vec ((shiftl ((zero_extend ((subrange_vec_dec (ppn) (43) (4))) (56))) (16)))
+     ((zero_extend ((subrange_vec_dec (va) (15) (0))) (56))).
 
 Definition is_leaf (pte : Pte) : bool :=
    if pte.(Pte_read) then true
@@ -183,7 +192,12 @@ Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
                     if p0.(Pte_valid) then
                       if andb (p0.(Pte_write)) ((negb (p0.(Pte_read)))) then None
                       else if is_leaf (p0) then
-                        Some ((phys_addr (p0.(Pte_ppn)) ((page_offset (va))), perm_of_pte (p0)))
+                        if p0.(Pte_napot) then
+                          if napot_guard (p0.(Pte_ppn)) then
+                            Some ((napot_phys_addr (p0.(Pte_ppn)) (va), perm_of_pte (p0)))
+                          else None
+                        else
+                          Some ((phys_addr (p0.(Pte_ppn)) ((page_offset (va))), perm_of_pte (p0)))
                       else None
                     else None
                  end
