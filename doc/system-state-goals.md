@@ -120,13 +120,26 @@ carved out of.
   of what must be modeled and proven fair.
 - **Modeled today.** *No — and note the homonym.* Tessera's "cluster" is **page
   clustering** (KAU = c·M), the project's core, modeled in the Lean Layer-A
-  (`proof/Tessera/`) — not in the hardware model. The SSG-9 *grouping* sense is
-  absent from both, apart from the flat per-core `Machine` list (an ungrouped set
-  of cores).
-- **Terminology (deliberately disambiguated).** "cluster" = page clustering (KAU);
-  "group"/"node"/"domain" = the SSG-9 topology hierarchy; "SSI" = single system
-  image (one shared address space across a group of machines); "NORMA" = no remote
-  memory access (message passing only, no shared memory).
+  (`proof/Tessera/`) — not in the hardware model. The SSG-9 *distributed-cluster*
+  sense is absent from both, apart from the flat per-core `Machine` list (an
+  ungrouped set of cores).
+- **Terminology (deliberately disambiguated).** Three senses of "cluster" collide;
+  SSG-9 means only the last:
+  1. **page clustering** (KAU = c·M) — Tessera's core, an *allocation-unit* notion,
+     not a topology notion;
+  2. **ccNUMA node — not a cluster.** A ccNUMA machine (even a multi-node one) is
+     still a *tightly-coupled shared-memory* multiprocessor: one address space,
+     real if non-uniform remote-memory access, i.e. an SSI — not a distributed
+     cluster;
+  3. **distributed-systems cluster** (SSG-9's sense) — a *loosely-coupled* set of
+     independent machines over a network interconnect (Beowulf/HPC, datacenter
+     clusters): the NORMA rung, message passing, no shared memory.
+  In the classic distributed-systems taxonomy (tightly- vs loosely-coupled MIMD,
+  Flynn 1972), shared-memory machines run UMA → ccNUMA → SSI, while "cluster"
+  names the loosely-coupled message-passing pole; SSI is the attempt to make a
+  cluster present as one shared-memory image. "group"/"node"/"domain" = the SSG-9
+  topology hierarchy; "SSI" = single system image; "NORMA" = no remote memory
+  access.
 - **Proof needed.** Only if multi-node reasoning is taken on; ties into the domain
   remark below. The multikernel-domain boundary below is what makes the SSI/NORMA
   rungs of the hierarchy tractable — each rung is a message-passing refinement.
