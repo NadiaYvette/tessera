@@ -120,7 +120,13 @@ axiom_free ipi              list_nth_bool_update_self
 axiom_free ipi              receive_ipi_cores_true_eq_sfence_at
 axiom_free conformance      translate_conforms
 axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
-axiom_free conformance      oracle_invalid_is_negb_valid
+axiom_free conformance      test_vector_mapping_ok
+axiom_free conformance      test_vector_writeonly_faults
+axiom_free conformance      test_vector_writeonly_exec_faults
+axiom_free conformance      test_vector_missing_pte_faults
+axiom_free conformance      test_vector_superpage_faults
+axiom_free conformance      test_vector_execonly
+axiom_free conformance      test_vector_writeonly_conforms
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

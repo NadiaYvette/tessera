@@ -184,7 +184,10 @@ function translate(core, mem, va) = {
                     None() => None(),
                     Some(p0) =>
                       if p0.valid then {
-                        if is_leaf(p0) then Some((phys_addr(p0.ppn, page_offset(va)), perm_of_pte(p0)))
+                        // Reserved Sv39 encoding R=0, W=1 (an SS page when X=0, or
+                        // otherwise-reserved when X=1) must fault, not translate.
+                        if p0.write & not_bool(p0.read) then None()
+                        else if is_leaf(p0) then Some((phys_addr(p0.ppn, page_offset(va)), perm_of_pte(p0)))
                         else None()
                       } else None()
                   }

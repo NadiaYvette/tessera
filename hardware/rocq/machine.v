@@ -181,7 +181,8 @@ Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
                  | None => None
                  | Some p0 =>
                     if p0.(Pte_valid) then
-                      if is_leaf (p0) then
+                      if andb (p0.(Pte_write)) ((negb (p0.(Pte_read)))) then None
+                      else if is_leaf (p0) then
                         Some ((phys_addr (p0.(Pte_ppn)) ((page_offset (va))), perm_of_pte (p0)))
                       else None
                     else None
