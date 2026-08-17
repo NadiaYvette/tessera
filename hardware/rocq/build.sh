@@ -8,6 +8,7 @@ HW="$(dirname "$HERE")"                                 # hardware
 REPO="$(dirname "$HW")"                                 # repo root
 SRC="$HW/src/machine.sail"
 MIPS_SRC="$HW/src/mips_tlb.sail"
+LA_SRC="$HW/src/loongarch_tlb.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -31,17 +32,19 @@ fi
 # --- 2. typecheck the Sail sources ---
 sail --just-check "$SRC"
 sail --just-check "$MIPS_SRC"
+sail --just-check "$LA_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
 sail "$MIPS_SRC" --rocq --rocq-output-dir "$HERE" -o mips_tlb
+sail "$LA_SRC" --rocq --rocq-output-dir "$HERE" -o loongarch_tlb
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -57,6 +60,9 @@ rocq compile $FLAGS mips_tlb_types.v
 rocq compile $FLAGS mips_tlb.v
 rocq compile $FLAGS mips_tlb_proofs.v
 rocq compile $FLAGS mips_qemu_oracle.v
+rocq compile $FLAGS loongarch_tlb_types.v
+rocq compile $FLAGS loongarch_tlb.v
+rocq compile $FLAGS loongarch_tlb_proofs.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -214,6 +220,27 @@ axiom_free mips_qemu_oracle diff_match_1k_same
 axiom_free mips_qemu_oracle diff_match_1k_pairing
 axiom_free mips_qemu_oracle diff_match_4k_next
 axiom_free mips_qemu_oracle diff_match_16k_super
+# third MMU variant: LoongArch software-refill TLB (odd/even pair, ps spectrum).
+axiom_free loongarch_tlb_proofs la_refill_lookup_covers
+axiom_free loongarch_tlb_proofs la_flush_clears
+axiom_free loongarch_tlb_proofs la_unmap_without_flush_breaks_coherence
+axiom_free loongarch_tlb_proofs la_refill_flush_composes
+axiom_free loongarch_tlb_proofs la_shootdown_correct
+axiom_free loongarch_tlb_proofs test_vector_la_vppn_of
+axiom_free loongarch_tlb_proofs test_vector_la_4k_even_covers
+axiom_free loongarch_tlb_proofs test_vector_la_4k_odd_covers
+axiom_free loongarch_tlb_proofs test_vector_la_4k_next_pair
+axiom_free loongarch_tlb_proofs test_vector_la_16k_even_covers
+axiom_free loongarch_tlb_proofs test_vector_la_16k_odd_covers
+axiom_free loongarch_tlb_proofs test_vector_la_16k_next_pair
+axiom_free loongarch_tlb_proofs test_vector_la_4k_not_super
+axiom_free loongarch_tlb_proofs test_vector_la_pa_4k_even
+axiom_free loongarch_tlb_proofs test_vector_la_pa_4k_odd
+axiom_free loongarch_tlb_proofs test_vector_la_pa_16k_even
+axiom_free loongarch_tlb_proofs test_vector_la_pa_16k_odd
+axiom_free loongarch_tlb_proofs test_vector_la_refill
+axiom_free loongarch_tlb_proofs test_vector_la_flush
+axiom_free loongarch_tlb_proofs test_vector_la_flush_preserves_other
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

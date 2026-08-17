@@ -143,10 +143,21 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   `compute_pagemask` verbatim from `~/src/QEMU` and runs the six decode vectors,
   confirming real QEMU code agrees with the model; wired into `ci.sh` (skipped
   when QEMU/`cc` absent).
-- **LoongArch** — next arch of interest (telix target: `kernel/src/arch/loongarch64/`,
-  QEMU runner present). Software-refill (MIPS-like) → reuse the refill-handler
-  theorem; but **no upstream Sail model exists**, so hand-write from the manual and
-  differential-test against QEMU's loongarch64 TCG (the only oracle).
+- **LoongArch** — telix target: `kernel/src/arch/loongarch64/`, QEMU runner
+  present. Software-refill (MIPS-like) → reuse the refill-handler theorem; **no
+  upstream Sail model exists**, so hand-written from QEMU's loongarch64 TCG (the
+  only oracle). **Core done** (2026-08-17): `hardware/src/loongarch_tlb.sail`
+  (generated into `loongarch_tlb.v`/`loongarch_tlb_types.v`) models the two
+  LoongArch-specific features — the per-entry `ps` page shift (not MIPS's
+  PageMask decode) and the **odd/even pair** (an entry covers two adjacent pages
+  of size `2^ps`; VPPN = VA[47:13]; `pa = pfn[35:ps-12] @ va[ps-1:0]` with
+  `va[ps]` selecting pfn0/pfn1). `loongarch_tlb_proofs.v` proves
+  `la_refill_lookup_covers` (the refill-handler trust-boundary win) and the
+  coherence/shootdown twins (`la_flush_clears`,
+  `la_unmap_without_flush_breaks_coherence`, `la_refill_flush_composes`,
+  `la_shootdown_correct`), plus 14 `vm_compute` vectors (4 KiB/16 KiB
+  odd/even match, PA translation, refill/flush). See
+  `loongarch-software-refill.md`.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the
