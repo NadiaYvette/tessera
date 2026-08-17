@@ -63,6 +63,7 @@ rocq compile $FLAGS mips_qemu_oracle.v
 rocq compile $FLAGS loongarch_tlb_types.v
 rocq compile $FLAGS loongarch_tlb.v
 rocq compile $FLAGS loongarch_tlb_proofs.v
+rocq compile $FLAGS loongarch_qemu_oracle.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -241,6 +242,18 @@ axiom_free loongarch_tlb_proofs test_vector_la_pa_16k_odd
 axiom_free loongarch_tlb_proofs test_vector_la_refill
 axiom_free loongarch_tlb_proofs test_vector_la_flush
 axiom_free loongarch_tlb_proofs test_vector_la_flush_preserves_other
+# LoongArch QEMU differential oracle (match/PA transcription + diff vectors).
+axiom_free loongarch_qemu_oracle diff_la_match_4k_even
+axiom_free loongarch_qemu_oracle diff_la_match_4k_odd
+axiom_free loongarch_qemu_oracle diff_la_match_4k_next
+axiom_free loongarch_qemu_oracle diff_la_match_16k_even
+axiom_free loongarch_qemu_oracle diff_la_match_16k_odd
+axiom_free loongarch_qemu_oracle diff_la_match_16k_next
+axiom_free loongarch_qemu_oracle diff_la_pa_4k_even
+axiom_free loongarch_qemu_oracle diff_la_pa_4k_odd
+axiom_free loongarch_qemu_oracle diff_la_pa_16k_even
+axiom_free loongarch_qemu_oracle diff_la_pa_16k_odd
+axiom_free loongarch_qemu_oracle diff_la_odd_even
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

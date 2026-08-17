@@ -52,13 +52,23 @@ All axiom-free against the generated model:
    coverage (both halves and the next-pair rejection), 4 KiB-vs-16 KiB
    non-coverage, PA translation (odd/even × 4 KiB/16 KiB), refill and flush.
 
-## Provenance / oracle
+## QEMU differential oracle (`loongarch_qemu_oracle.v`)
 
 Hand-transcribed from QEMU's loongarch64 TCG (`target/loongarch/{tcg/tlb_helper,
-cpu_helper}.c` on the `nadia.chambers/page-grain-001` branch):
-`fill_tlb_entry`, `loongarch_tlb_search_cb` (the `compare_shift`/VPN match),
-`loongarch_map_tlb_entry` (`n = (addr >> ps) & 1` odd/even), and
-`loongarch_check_pte` (`physical = (PPN & ~((1<<(ps-12))-1)) << 12 | addr[ps-1:0]`).
-There is **no upstream Sail model**; a differential-test against QEMU's
-loongarch64 TCG (the only oracle) is the follow-up, mirroring
-`mips_qemu_oracle.v` + `hardware/qemu-diff/`.
+cpu_helper}.c` on the `nadia.chambers/page-grain-001` branch) — there is **no
+upstream Sail model**, so QEMU's TCG is the only oracle.  The oracle uses
+*different* expressions from the model so the agreement genuinely exercises the
+transcription:
+
+- `qemu_la_match` — `loongarch_tlb_search_cb`'s pair match
+  (`(va[47:0] >> (ps+1)) == zero_extend(vppn >> (ps+1-13), 48)`), vs the model's
+  `(va[47:0] >> (ps+1)) == (vppn << 13 >> (ps+1))`.
+- `qemu_la_odd` / `qemu_la_pfn` — `loongarch_map_tlb_entry`'s `n = (addr >> ps) & 1`.
+- `qemu_la_pa` — `loongarch_check_pte`'s `((pfn & ~((1<<(ps-12))-1)) << 12) |
+  (va & ((1<<ps)-1))`, vs the model's `(pfn >> (ps-12)) << ps | va[ps-1:0]`.
+
+11 executable diff vectors pin match/PA agreement on both halves of the 4 KiB
+and 16 KiB pairs and the next-pair rejections, plus the odd/even selection.  The
+general `shiftr (shiftl x 13) (ps+1) = shiftr x (ps+1-13)` bitvector identity
+(which would give the unconditional `la_covers_conforms`) is a noted follow-up;
+the vectors pin the agreement concretely.

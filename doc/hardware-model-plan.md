@@ -156,8 +156,11 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   coherence/shootdown twins (`la_flush_clears`,
   `la_unmap_without_flush_breaks_coherence`, `la_refill_flush_composes`,
   `la_shootdown_correct`), plus 14 `vm_compute` vectors (4 KiB/16 KiB
-  odd/even match, PA translation, refill/flush). See
-  `loongarch-software-refill.md`.
+  odd/even match, PA translation, refill/flush). **QEMU oracle diff-test
+  done** (2026-08-17): `loongarch_qemu_oracle.v` transcribes
+  `loongarch_tlb_search_cb`/`loongarch_map_tlb_entry`/`loongarch_check_pte`
+  with *different* expressions and pins match/PA agreement via 11 executable
+  diff vectors. See `loongarch-software-refill.md`.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the
