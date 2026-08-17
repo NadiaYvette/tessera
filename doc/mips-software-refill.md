@@ -44,37 +44,67 @@ axis 1 = software refill, axis 2 = a **dense page-size spectrum** down to 1 KiB.
   always the 1 K-pair offset), then `VPN & ~mask == va & ~mask`.  Bits [10:0]
   are *always* page offset — this is what makes 1 KiB the floor under ESP.
 
-## Model shape (what we build)
+## Model shape (as built)
 
 A second Sail file `hardware/src/mips_tlb.sail`, self-contained, parallel to
-`machine.sail`.  It elides the even/odd `EntryLo0/1` two-page pairing (not the
+`machine.sail`, generated into `hardware/rocq/mips_tlb.v`/`mips_tlb_types.v`.
+It elides the even/odd `EntryLo0/1` two-page pairing (not the
 Tessera-relevant essence) and models the parts that *differ* from variant 1:
 
-1. **`compute_mask_level : bits(16) -> option(int)`** — the faithful
-   run-of-1s/even-count predicate; `None` for an invalid encoding, `Some k`
-   (k = count of 1s) otherwise.
-2. **`MipsEntry = { vpn : bits(28), pfn : bits(44), level : int, esp : bool }`** —
+1. **`compute_mask_level (reg : mword 29) (esp : bool) : option Z`** — the
+   faithful run-of-1s/even-count predicate over the 18-bit `Mask @ MaskX` field
+   (extracted by `mips_mask_field`); `None` for an invalid encoding, `Some k`
+   (k = count of 1s) otherwise.  `cto18 = count_trailing_zeros (not_vec v)`
+   transcribes QEMU's `cto32`.
+2. **`MipsEntry = { vpn : mword 28, pfn : mword 44, level : Z, esp : bool }`** —
    one TLB entry, page size `2^(base_shift + level)`.
 3. **`mips_lookup : (list(MipsEntry), vaddr) -> option(paddr)`** — page-size-aware
-   match: an entry covers the VA when `vpn[27..level] == va[39..(12+level)]`
-   (matching the high VPN bits), and the PA is `pfn @ va[11+level .. 0]` — the
-   MIPS analog of variant 1's `tag_eq`/`tlb_pa` over a *spectrum*, not a single
-   NAPOT bit.
+   match (`mips_covers`: `vpn[27..level] == va[39..(12+level)]`, high VPN bits)
+   and translation `mips_pa` (`pfn @ va[11+level .. 0]`) — the MIPS analog of
+   variant 1's `tag_eq`/`tlb_pa` over a *spectrum*, not a single NAPOT bit.
 4. **`mips_refill : (MipsEntry, list(MipsEntry)) -> list(MipsEntry)`** — the
    software handler's effect (add/replace the entry), the object of the
    refill-handler-correctness theorem.
+5. **`mips_vpn2x (va : mword 64) : mword 2`** — `EntryHi[12:11]`
+   (`subrange_vec_dec va 12 11`), the 1 KiB VPN2X field; `mips_base_shift`/
+   `mips_page_shift` carry the ESP-dependent base (`true → 10`, `false → 12`).
 
-## Theorems to prove (the point of the variant)
+## Theorems proved (the point of the variant)
+
+All in `hardware/rocq/mips_tlb_proofs.v`, axiom-free against the generated model:
 
 1. **Page-size spectrum** — `compute_mask_level` accepts exactly the `{4^k · M}`
-   encodings (even run) and rejects odd counts / non-runs.  Executable vectors
-   pin 1 KiB, 4 KiB, 16 KiB acceptance and an odd-count rejection.
+   encodings (even run) and rejects odd counts / non-runs
+   (`compute_mask_level_unfold`, `compute_mask_level_some_even`).  Executable
+   vectors pin 1 KiB, 4 KiB, 16 KiB acceptance and odd/non-run rejection
+   (incl. the ESP 1 KiB base via `mips_page_shift true 0 = 10`).
 2. **Page-size-aware match** — a `level = 0` (1 KiB, esp) entry matches a VA
    differing only in bits [11:0] and translates to `pfn @ VA[11:0]`; a 4 KiB
    entry does *not* match a VA 1 KiB apart.  (MIPS twin of `find_tlb_napot_leaf`.)
 3. **Refill-handler correctness** — `mips_lookup (mips_refill e tlb) va =
    Some (mips_pa e va)` when `e` covers `va`: the trust-boundary win, stated as a
    fact about the *software* refill rather than a trusted hardware walker.
+4. **VPN2X (1 KiB) instantiation** — `test_vector_vpn2x_0..3` pin all four
+   `EntryHi[12:11]` decodings; `test_vector_base_shift_*`/
+   `test_vector_page_shift_*` pin the ESP-dependent page-shift spectrum.
+
+## QEMU differential oracle (`mips_qemu_oracle.v`)
+
+The decode is **diff-tested** against QEMU's `compute_pagemask`
+(`~/src/QEMU` branch `nadia.chambers/page-grain-001`, `cp0_helper.c:872`):
+
+- `qemu_*` definitions transcribe QEMU's C line-by-line (`qemu_accept`,
+  `qemu_compute_pagemask`, `qemu_pfn`/`qemu_offset_mask`/`qemu_pa`,
+  `qemu_match_mask`/`qemu_match`); `qemu_extract` shares the model's
+  `mips_mask_field` (the shared field-extraction primitive, per the
+  `conformance.v` precedent).
+- `qemu_cto_cto18` bridges QEMU's `cto32` to the model's `cto18`.
+- **`compute_mask_level_conforms`** — for all `reg`, `esp`, the Sail decode
+  equals the QEMU transcription's accept-or-default result.
+- 16 executable diff vectors: decode agreement (lvl0/2/4, odd, non-run,
+  esp-lvl2), PA translation (1k/4k/16k/esp-4k) and page-size-aware match
+  (1 KiB pairing, 4 KiB next-page, 16 KiB superpage).
 
 The existing coherence/shootdown machinery (variant 1) is left untouched; this is
-an additive second module demonstrating the parameterization point (H4).
+an additive second module demonstrating the parameterization point (H4), now
+fully Sail-transcribed, oracle-diff-tested, and 1 KiB (VPN2X/ESP)-instantiated.

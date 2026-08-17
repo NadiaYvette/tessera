@@ -7,6 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # hardware/rocq
 HW="$(dirname "$HERE")"                                 # hardware
 REPO="$(dirname "$HW")"                                 # repo root
 SRC="$HW/src/machine.sail"
+MIPS_SRC="$HW/src/mips_tlb.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -27,18 +28,20 @@ if [ ! -d "$UC/SailStdpp" ]; then
   exit 1
 fi
 
-# --- 2. typecheck the Sail source ---
+# --- 2. typecheck the Sail sources ---
 sail --just-check "$SRC"
+sail --just-check "$MIPS_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
+sail "$MIPS_SRC" --rocq --rocq-output-dir "$HERE" -o mips_tlb
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -50,7 +53,10 @@ rocq compile $FLAGS machine_encoding.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
 rocq compile $FLAGS tlb_tags.v
+rocq compile $FLAGS mips_tlb_types.v
 rocq compile $FLAGS mips_tlb.v
+rocq compile $FLAGS mips_tlb_proofs.v
+rocq compile $FLAGS mips_qemu_oracle.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -149,22 +155,58 @@ axiom_free tlb_tags         test_vector_pipt_vivt_differ
 axiom_free tlb_tags         find_tlb_napot_leaf
 axiom_free tlb_tags         test_vector_tlb_napot_covers_page
 axiom_free tlb_tags         test_vector_tlb_napot_flush
-# second MMU variant: MIPS software-refill TLB (+ 1 KiB PageGrain).
-axiom_free mips_tlb         compute_mask_level_even
-axiom_free mips_tlb         compute_mask_level_run
-axiom_free mips_tlb         mips_refill_lookup_covers
-axiom_free mips_tlb         test_vector_mask_lvl0
-axiom_free mips_tlb         test_vector_mask_lvl4
-axiom_free mips_tlb         test_vector_mask_odd
-axiom_free mips_tlb         test_vector_mask_nonrun
-axiom_free mips_tlb         test_vector_page_shift_1k
-axiom_free mips_tlb         test_vector_page_shift_16k
-axiom_free mips_tlb         test_vector_mips_4k_covers
-axiom_free mips_tlb         test_vector_mips_4k_next_page
-axiom_free mips_tlb         test_vector_mips_16k_covers
-axiom_free mips_tlb         test_vector_mips_pa_4k
-axiom_free mips_tlb         test_vector_mips_pa_16k
-axiom_free mips_tlb         test_vector_mips_refill
+# second MMU variant: MIPS software-refill TLB (+ 1 KiB PageGrain). The Sail
+# transcription is mips_tlb.v (generated from mips_tlb.sail); the proofs over the
+# generated model live in mips_tlb_proofs.v and the QEMU differential oracle in
+# mips_qemu_oracle.v.
+axiom_free mips_tlb_proofs  compute_mask_level_unfold
+axiom_free mips_tlb_proofs  compute_mask_level_some_even
+axiom_free mips_tlb_proofs  mips_refill_lookup_covers
+axiom_free mips_tlb_proofs  test_vector_mask_lvl0
+axiom_free mips_tlb_proofs  test_vector_mask_lvl2
+axiom_free mips_tlb_proofs  test_vector_mask_lvl4
+axiom_free mips_tlb_proofs  test_vector_mask_odd
+axiom_free mips_tlb_proofs  test_vector_mask_nonrun
+axiom_free mips_tlb_proofs  test_vector_mask_esp_lvl2
+axiom_free mips_tlb_proofs  test_vector_base_shift_1k
+axiom_free mips_tlb_proofs  test_vector_base_shift_4k
+axiom_free mips_tlb_proofs  test_vector_page_shift_1k
+axiom_free mips_tlb_proofs  test_vector_page_shift_4k
+axiom_free mips_tlb_proofs  test_vector_page_shift_16k
+axiom_free mips_tlb_proofs  test_vector_vpn2x_0
+axiom_free mips_tlb_proofs  test_vector_vpn2x_1
+axiom_free mips_tlb_proofs  test_vector_vpn2x_2
+axiom_free mips_tlb_proofs  test_vector_vpn2x_3
+axiom_free mips_tlb_proofs  test_vector_mips_1k_covers
+axiom_free mips_tlb_proofs  test_vector_mips_1k_same_page
+axiom_free mips_tlb_proofs  test_vector_mips_1k_next_page
+axiom_free mips_tlb_proofs  test_vector_mips_4k_covers
+axiom_free mips_tlb_proofs  test_vector_mips_4k_same_page
+axiom_free mips_tlb_proofs  test_vector_mips_4k_next_page
+axiom_free mips_tlb_proofs  test_vector_mips_16k_covers
+axiom_free mips_tlb_proofs  test_vector_mips_4k_not_super
+axiom_free mips_tlb_proofs  test_vector_mips_pa_1k
+axiom_free mips_tlb_proofs  test_vector_mips_pa_4k
+axiom_free mips_tlb_proofs  test_vector_mips_pa_16k
+axiom_free mips_tlb_proofs  test_vector_mips_refill
+# QEMU differential oracle: compute_mask_level transcribes compute_pagemask.
+axiom_free mips_qemu_oracle compute_mask_level_conforms
+axiom_free mips_qemu_oracle qemu_cto_cto18
+axiom_free mips_qemu_oracle diff_decode_lvl0
+axiom_free mips_qemu_oracle diff_decode_lvl2
+axiom_free mips_qemu_oracle diff_decode_lvl4
+axiom_free mips_qemu_oracle diff_decode_odd
+axiom_free mips_qemu_oracle diff_decode_nonrun
+axiom_free mips_qemu_oracle diff_decode_esp_l2
+axiom_free mips_qemu_oracle diff_pa_1k
+axiom_free mips_qemu_oracle diff_pa_4k
+axiom_free mips_qemu_oracle diff_pa_16k
+axiom_free mips_qemu_oracle diff_pa_esp_4k
+axiom_free mips_qemu_oracle diff_match_1k_even
+axiom_free mips_qemu_oracle diff_match_1k_same
+axiom_free mips_qemu_oracle diff_match_1k_pairing
+axiom_free mips_qemu_oracle diff_match_4k_next
+axiom_free mips_qemu_oracle diff_match_16k_super
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.
