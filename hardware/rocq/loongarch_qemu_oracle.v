@@ -22,16 +22,21 @@
    | odd/even | `(va >> ps)[0] == 1` | same (`n = (addr >> ps) & 1`) |
    | PA | `(pfn >> (ps-12)) << ps \| va[ps-1:0]` | `((pfn & ~((1<<(ps-12))-1)) << 12) \| (va & ((1<<ps)-1))` |
 
-   The match/PA agreement is pinned by executable `vm_compute` diff vectors on
-   the 4 KiB/16 KiB odd/even vectors of `loongarch_tlb_proofs.v`.  (The general
-   `shiftr (shiftl x 13) (ps+1) = shiftr x (ps+1-13)` bitvector identity is a
-   noted follow-up; the vectors below pin the agreement concretely.)
+   The match agreement is now proved **generally** (`la_covers_conforms`:
+   every entry/address, for `12 <= ps <= 47`) via the shift identity
+   `shiftr (shiftl x 13) (ps+1) = zero_extend (shiftr x (ps+1-13)) 48`,
+   unblocked by `mword_lemmas.v`'s concrete `MachineWord` instance.  The PA
+   agreement is still pinned by the executable `vm_compute` diff vectors below
+   (its general `(pfn & ~mask) << 12 = (pfn >> (ps-12)) << ps` identity is a
+   noted follow-up, needing `uint_and_vec`/`uint_not_vec` and a `Z.land`
+   clear-low-bits lemma over `Z.ldiff_ones_r`).
 *)
 
 From Stdlib Require Import ZArith Lia.
 Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import SailStdpp.Operators_mwords.
+Require Import mword_lemmas.
 From stdpp.bitvector Require Import definitions tactics.
 Require Import loongarch_tlb_types.
 Require Import loongarch_tlb.
@@ -125,3 +130,62 @@ Lemma diff_la_odd_even :
   qemu_la_odd (la_entry_4k la_vppn1) la_va_4k_even = false
   /\ qemu_la_odd (la_entry_4k la_vppn1) la_va_4k_odd = true.
 Proof. vm_compute. tauto. Qed.
+
+(* ============================================================
+   General conformance (not just vm_compute pins): the model and the
+   QEMU oracle agree for *every* entry/address, via the shift identity
+   `shiftr (shiftl x 13) (ps+1) = zero_extend (shiftr x (ps+1-13)) 48`,
+   unblocked by mword_lemmas.v's concrete MachineWord instance.
+   ============================================================ *)
+
+(* The core match identity: the model places vppn at VA bits [13:47] then
+   shifts right by ps+1; the oracle shifts vppn right by ps+1-13 and
+   zero-extends to 48.  They agree as 48-bit words whenever ps is a valid
+   page shift (12 <= ps <= 47): vppn < 2^35, so vppn << 13 < 2^48 (no
+   overflow), and dividing by 2^(ps+1) cancels the 2^13. *)
+Lemma la_match_shift_conforms (vppn : mword 35) (ps : Z) :
+  12 <= ps -> ps <= 47 ->
+  shiftr (shiftl (zero_extend vppn 48) 13) (Z.add ps 1) =
+  zero_extend (shiftr vppn (Z.add (Z.sub ps 13) 1)) 48.
+Proof.
+  intros Hps0 Hps1.
+  apply bv_eq.
+  rewrite <- !uint_bv_unsigned.
+  rewrite uint_shiftr; [| lia | split; lia].
+  rewrite uint_shiftl; [| lia | split; lia].
+  rewrite uint_zero_extend by lia.
+  rewrite uint_zero_extend by lia.
+  rewrite uint_shiftr; [| lia | split; lia].
+  assert (Hvppn_lt : uint vppn < 2^35).
+  { rewrite uint_bv_unsigned.
+    pose proof (bv_unsigned_in_range (Z.to_N 35) vppn) as Hr.
+    rewrite (bv_modulus_mword (a := 35)) in Hr by lia.
+    destruct Hr as [_ Hlt]. exact Hlt. }
+  assert (Hpow : 2^35 * 2^13 = 2^48).
+  { rewrite <- Z.pow_add_r by lia. reflexivity. }
+  assert (Hmul_lt : uint vppn * 2^13 < 2^48).
+  { rewrite <- Hpow.
+    apply (Zmult_lt_compat_r (uint vppn) (2^35) (2^13));
+      [apply Z.pow_pos_nonneg; lia | exact Hvppn_lt]. }
+  assert (Hmod : (uint vppn * 2^13) mod 2^48 = uint vppn * 2^13).
+  { apply Z.mod_small. split.
+    - apply Z.mul_nonneg_nonneg; [apply uint_nonneg | apply Z.pow_nonneg; lia].
+    - exact Hmul_lt. }
+  rewrite Hmod.
+  replace (Z.add (Z.sub ps 13) 1) with (ps - 12) by lia.
+  replace (Z.add ps 1) with (Z.add (ps - 12) 13) by lia.
+  rewrite Z.pow_add_r by lia.
+  apply Z.div_mul_cancel_r; apply Z.pow_nonzero; lia.
+Qed.
+
+(* General match conformance: the model's pair match and the oracle's
+   `loongarch_tlb_search_cb` transcription agree for every entry/address. *)
+Lemma la_covers_conforms (e : LaEntry) (va : mword 64) :
+  12 <= e.(LaEntry_ps) <= 47 ->
+  la_covers e va = qemu_la_match e va.
+Proof.
+  intros Hps. destruct Hps as [Hps0 Hps1].
+  unfold la_covers, qemu_la_match.
+  f_equal.
+  apply la_match_shift_conforms; assumption.
+Qed.

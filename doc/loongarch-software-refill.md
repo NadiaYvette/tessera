@@ -68,16 +68,18 @@ transcription:
   (va & ((1<<ps)-1))`, vs the model's `(pfn >> (ps-12)) << ps | va[ps-1:0]`.
 
 11 executable diff vectors pin match/PA agreement on both halves of the 4 KiB
-and 16 KiB pairs and the next-pair rejections, plus the odd/even selection.  The
-general `shiftr (shiftl x 13) (ps+1) = shiftr x (ps+1-13)` bitvector identity
-(which would give the unconditional `la_covers_conforms`) is a noted follow-up:
-SailStdpp's `mword`/`shiftr`/`shiftl` sit over an *abstract* `MachineWord`
-interface that does not expose `word_to_N`-distribution lemmas for
-`logical_shift_left/right`, and `stdpp.bitvector`'s `bv_solve`/`bv_simplify` do
-not unfold those abstract operations — so the identity needs new
-`MachineWord`-level lemmas before the general conformance closes.  The
-`vm_compute` diff vectors (and the live C test below) pin the agreement
-concretely in the meantime.
+and 16 KiB pairs and the next-pair rejections, plus the odd/even selection.
+The **match** agreement is now also proved *generally* — `la_covers_conforms`
+(plus the underlying `la_match_shift_conforms`) shows the model's pair match
+and the oracle's `loongarch_tlb_search_cb` transcription agree for *every*
+entry/address with `12 <= ps <= 47`, via the shift identity
+`shiftr (shiftl x 13) (ps+1) = zero_extend (shiftr x (ps+1-13)) 48` (unblocked
+by `hardware/rocq/mword_lemmas.v`, which unfolds SailStdpp's concrete
+`MachineWord` instance to stdpp `bv_*`).  The **PA** agreement is still pinned
+by the diff vectors; its general identity
+`(pfn & ~(2^(ps-12)-1)) << 12 = (pfn >> (ps-12)) << ps` is the remaining
+follow-up (needs `uint_and_vec`/`uint_not_vec` plus a `Z.land` clear-low-bits
+lemma over `Z.ldiff_ones_r`).
 
 ### Live QEMU diff-test (`hardware/qemu-diff/run_loongarch_diff.sh`)
 

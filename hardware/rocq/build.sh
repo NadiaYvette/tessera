@@ -324,6 +324,10 @@ axiom_free loongarch_qemu_oracle diff_la_pa_4k_odd
 axiom_free loongarch_qemu_oracle diff_la_pa_16k_even
 axiom_free loongarch_qemu_oracle diff_la_pa_16k_odd
 axiom_free loongarch_qemu_oracle diff_la_odd_even
+# general conformance: the model/oracle match agrees for every entry/address
+# (the shift identity, unblocked by mword_lemmas.v's concrete MachineWord).
+axiom_free loongarch_qemu_oracle la_match_shift_conforms
+axiom_free loongarch_qemu_oracle la_covers_conforms
 # fourth MMU variant: AArch64 VMSAv8-64 (block descriptors + contpte + LPA2 DS2).
 # The Sail transcription is aarch64_tlb.v (from aarch64_tlb.sail); the proofs
 # over the generated model live in aarch64_tlb_proofs.v.
