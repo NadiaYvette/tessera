@@ -160,7 +160,10 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   done** (2026-08-17): `loongarch_qemu_oracle.v` transcribes
   `loongarch_tlb_search_cb`/`loongarch_map_tlb_entry`/`loongarch_check_pte`
   with *different* expressions and pins match/PA agreement via 11 executable
-  diff vectors. See `loongarch-software-refill.md`.
+  diff vectors. **Live QEMU diff-test done** (2026-08-17):
+  `hardware/qemu-diff/run_loongarch_diff.sh` extracts `check_ps` verbatim and
+  runs an independent C transcription of the match/PA on the same vectors;
+  wired into `ci.sh`. See `loongarch-software-refill.md`.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the

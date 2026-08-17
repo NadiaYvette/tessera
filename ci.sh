@@ -27,12 +27,20 @@ else
   overall=1
 fi
 
-# 1b. Live QEMU differential test for the MIPS decode (skips if ~/src/QEMU absent).
+# 1b. Live QEMU differential tests for the MIPS decode and LoongArch
+#     check_ps/match/PA (each skips if ~/src/QEMU or cc absent).
 step "hardware/qemu-diff (live MIPS compute_pagemask differential test)"
 if bash hardware/qemu-diff/run_mips_decode_diff.sh; then
-  echo "PASS: hardware/qemu-diff"
+  echo "PASS: hardware/qemu-diff (mips)"
 else
-  echo "FAIL: hardware/qemu-diff"
+  echo "FAIL: hardware/qemu-diff (mips)"
+  overall=1
+fi
+step "hardware/qemu-diff (live LoongArch check_ps/match/PA differential test)"
+if bash hardware/qemu-diff/run_loongarch_diff.sh; then
+  echo "PASS: hardware/qemu-diff (loongarch)"
+else
+  echo "FAIL: hardware/qemu-diff (loongarch)"
   overall=1
 fi
 

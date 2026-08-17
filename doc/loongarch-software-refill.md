@@ -72,3 +72,14 @@ and 16 KiB pairs and the next-pair rejections, plus the odd/even selection.  The
 general `shiftr (shiftl x 13) (ps+1) = shiftr x (ps+1-13)` bitvector identity
 (which would give the unconditional `la_covers_conforms`) is a noted follow-up;
 the vectors pin the agreement concretely.
+
+### Live QEMU diff-test (`hardware/qemu-diff/run_loongarch_diff.sh`)
+
+`check_ps` is `sed`-extracted **verbatim** from QEMU and compiled + run (with a
+minimal `CPULoongArchState` shim); the pair match (`compare_shift`/`vpn`) and PA
+(`(pfn & ~mask) << 12 | va & mask`) are transcribed to C with exact line
+citations (they are inline in the struct-heavy `loongarch_tlb_search_cb` /
+`loongarch_check_pte`, so not cleanly extractable whole).  Both agree with the
+Rocq model on the same vectors: `check_ps` accepts ps 12/14/16 and rejects
+13/64; match/PA pin the 4 KiB and 16 KiB odd/even pairs.  Wired into `ci.sh`
+(skipped when `~/src/QEMU` or `cc` absent).
