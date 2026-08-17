@@ -9,6 +9,7 @@ REPO="$(dirname "$HW")"                                 # repo root
 SRC="$HW/src/machine.sail"
 MIPS_SRC="$HW/src/mips_tlb.sail"
 LA_SRC="$HW/src/loongarch_tlb.sail"
+AA_SRC="$HW/src/aarch64_tlb.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -33,18 +34,20 @@ fi
 sail --just-check "$SRC"
 sail --just-check "$MIPS_SRC"
 sail --just-check "$LA_SRC"
+sail --just-check "$AA_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
 sail "$MIPS_SRC" --rocq --rocq-output-dir "$HERE" -o mips_tlb
 sail "$LA_SRC" --rocq --rocq-output-dir "$HERE" -o loongarch_tlb
+sail "$AA_SRC" --rocq --rocq-output-dir "$HERE" -o aarch64_tlb
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -64,6 +67,9 @@ rocq compile $FLAGS loongarch_tlb_types.v
 rocq compile $FLAGS loongarch_tlb.v
 rocq compile $FLAGS loongarch_tlb_proofs.v
 rocq compile $FLAGS loongarch_qemu_oracle.v
+rocq compile $FLAGS aarch64_tlb_types.v
+rocq compile $FLAGS aarch64_tlb.v
+rocq compile $FLAGS aarch64_tlb_proofs.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -254,6 +260,46 @@ axiom_free loongarch_qemu_oracle diff_la_pa_4k_odd
 axiom_free loongarch_qemu_oracle diff_la_pa_16k_even
 axiom_free loongarch_qemu_oracle diff_la_pa_16k_odd
 axiom_free loongarch_qemu_oracle diff_la_odd_even
+# fourth MMU variant: AArch64 VMSAv8-64 (block descriptors + contpte + LPA2 DS2).
+# The Sail transcription is aarch64_tlb.v (from aarch64_tlb.sail); the proofs
+# over the generated model live in aarch64_tlb_proofs.v.
+axiom_free aarch64_tlb_proofs aa_refill_lookup_covers
+axiom_free aarch64_tlb_proofs aa_flush_clears
+axiom_free aarch64_tlb_proofs aa_unmap_without_flush_breaks_coherence
+axiom_free aarch64_tlb_proofs aa_refill_flush_composes
+axiom_free aarch64_tlb_proofs aa_shootdown_correct
+axiom_free aarch64_tlb_proofs test_vector_translation_4k_page
+axiom_free aarch64_tlb_proofs test_vector_translation_2m_block
+axiom_free aarch64_tlb_proofs test_vector_translation_1g_block
+axiom_free aarch64_tlb_proofs test_vector_translation_512g_block
+axiom_free aarch64_tlb_proofs test_vector_translation_16k_page
+axiom_free aarch64_tlb_proofs test_vector_translation_64k_page
+axiom_free aarch64_tlb_proofs test_vector_translation_lpa2_4k
+axiom_free aarch64_tlb_proofs test_vector_translation_lpa2_1m_block
+axiom_free aarch64_tlb_proofs test_vector_contig_4k
+axiom_free aarch64_tlb_proofs test_vector_contig_16k_l2
+axiom_free aarch64_tlb_proofs test_vector_contig_16k_l3
+axiom_free aarch64_tlb_proofs test_vector_contig_64k
+axiom_free aarch64_tlb_proofs test_vector_contig_lpa2_4k_l1
+axiom_free aarch64_tlb_proofs test_vector_contig_lpa2_4k_l3
+axiom_free aarch64_tlb_proofs test_vector_contig_lpa2_64k_l2
+axiom_free aarch64_tlb_proofs test_vector_contig_lpa2_64k_l3
+axiom_free aarch64_tlb_proofs test_vector_contig_reserved_l0
+axiom_free aarch64_tlb_proofs test_vector_aa_4k_covers
+axiom_free aarch64_tlb_proofs test_vector_aa_4k_next_page
+axiom_free aarch64_tlb_proofs test_vector_aa_2m_covers
+axiom_free aarch64_tlb_proofs test_vector_aa_2m_hi_edge
+axiom_free aarch64_tlb_proofs test_vector_aa_2m_next_block
+axiom_free aarch64_tlb_proofs test_vector_aa_4k_not_super
+axiom_free aarch64_tlb_proofs test_vector_aa_contig_covers
+axiom_free aarch64_tlb_proofs test_vector_aa_contig_hi_edge
+axiom_free aarch64_tlb_proofs test_vector_aa_contig_next
+axiom_free aarch64_tlb_proofs test_vector_aa_pa_4k
+axiom_free aarch64_tlb_proofs test_vector_aa_pa_2m
+axiom_free aarch64_tlb_proofs test_vector_aa_pa_contig
+axiom_free aarch64_tlb_proofs test_vector_aa_refill
+axiom_free aarch64_tlb_proofs test_vector_aa_flush
+axiom_free aarch64_tlb_proofs test_vector_aa_flush_preserves_other
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.

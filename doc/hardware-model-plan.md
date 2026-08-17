@@ -79,6 +79,12 @@ skeleton and the Iris proofs are variant-parameterized (mirrors arch-coverage.md
   the generated model.
 - H4 — second MMU variant (AArch64 from the vendored model, or software-refill mips)
   behind the same interface; prove the skeleton proofs are variant-parameterized.
+  ✅ **Done** (2026-08-17): three additional variants landed behind the same
+  walk/refill/flush/lookup interface — MIPS software-refill (+1 KiB PageGrain),
+  LoongArch software-refill (odd/even pair), and AArch64 VMSAv8-64 (block
+  descriptors + contpte + LPA2) — each with the refill-handler/coherence/shootdown
+  twins proved axiom-free, so the skeleton proofs are variant-parameterized across
+  hardware-walker and software-refill regimes.
 - H5 — isla/islaris for symbolic execution / verified page-table-manipulation assembly.
 
 ## Open questions / next
@@ -164,6 +170,27 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   `hardware/qemu-diff/run_loongarch_diff.sh` extracts `check_ps` verbatim and
   runs an independent C transcription of the match/PA on the same vectors;
   wired into `ci.sh`. See `loongarch-software-refill.md`.
+- **AArch64 (VMSAv8-64)** — the **fourth** MMU variant and the second *hardware-walker*
+  one (alongside RISC-V Sv39), but with a richer page-size menu: **block
+  descriptors** (a level < 3 descriptor is a superpage, size =
+  `granulebits + (3-level)·(granulebits − descsizelog2)`) and **contpte** (the
+  CONT bit extends the page by `ContiguousSize` extra address bits, incl. the
+  `FEAT_LPA2` DS2 16-byte-descriptor encoding). **Done** (2026-08-17):
+  `hardware/src/aarch64_tlb.sail` (generated into `aarch64_tlb.v`/
+  `aarch64_tlb_types.v`) transcribes the vendored `sail-arm` model's
+  `ContiguousSize`/`TGxGranuleBits`/`TranslationSize`/`StageOA` (near-verbatim
+  from `v8_base.sail` ll. 19962-20042), with the only deviations being totality
+  (no `undefined`/`assert` → no axioms). `aarch64_tlb_proofs.v` proves
+  `aa_refill_lookup_covers` (the walker's TLB-fill guarantee) and the
+  coherence/shootdown twins (`aa_flush_clears`,
+  `aa_unmap_without_flush_breaks_coherence`, `aa_refill_flush_composes`,
+  `aa_shootdown_correct` — the TLBI analog), plus 35 `vm_compute` vectors pinning
+  the size spectrum (4 KB page / 2 MB / 1 GB / 512 GB blocks, 16 KB / 64 KB
+  granules, LPA2 1 MB block), the CONT table (both DS2 modes, incl. the reserved
+  level-0 → 0), and page-size-aware match/PA (4 KB page, 2 MB block, 64 KB
+  contpte). See `aarch64-translation.md`. The contpte fold (#9) and TLBI stride
+  (#10) pgcl failure modes are the natural test vectors for a future
+  sail-arm differential equivalence.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the
