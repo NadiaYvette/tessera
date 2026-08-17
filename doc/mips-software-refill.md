@@ -105,6 +105,18 @@ The decode is **diff-tested** against QEMU's `compute_pagemask`
   esp-lvl2), PA translation (1k/4k/16k/esp-4k) and page-size-aware match
   (1 KiB pairing, 4 KiB next-page, 16 KiB superpage).
 
+### Live QEMU diff-test (`hardware/qemu-diff/run_mips_decode_diff.sh`)
+
+The `vm_compute` diff vectors above compare the model against a *transcription*;
+the live test closes the loop the other way.  It `sed`-extracts `compute_pagemask`
+— and `extract32`/`ctz32`/`cto32` — **verbatim** from the live QEMU source
+(`target/mips/tcg/system/cp0_helper.c`, `include/qemu/{host-utils,bitops}.h`),
+compiles them with a minimal `CPUMIPSState` shim, and runs the *same six* decode
+vectors, checking that real QEMU code produces exactly the model's
+`compute_mask_level` accept/reject + level (Some 0/2/4, None, None, Some 2).
+Wired into `ci.sh` (skipped when `~/src/QEMU` or `cc` is absent), so a QEMU
+change fails CI loudly instead of drifting from the model.
+
 ## Shootdown integration (`mips_tlb_proofs.v`)
 
 The MIPS variant now composes with the coherence/shootdown story.  On MIPS there

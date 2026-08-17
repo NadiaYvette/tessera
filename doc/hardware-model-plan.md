@@ -138,7 +138,11 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   (2026-08-17): `mips_flush` (software TLB invalidate) added to the Sail model;
   the MIPS twins of the coherence/shootdown theorems are proved axiom-free in
   `mips_tlb_proofs.v` — `mips_flush_clears`, `mips_unmap_without_flush_breaks_coherence`,
-  `mips_refill_flush_composes`, and `mips_shootdown_correct`.
+  `mips_refill_flush_composes`, and `mips_shootdown_correct`. **Live QEMU diff-test
+  done** (2026-08-17): `hardware/qemu-diff/run_mips_decode_diff.sh` extracts
+  `compute_pagemask` verbatim from `~/src/QEMU` and runs the six decode vectors,
+  confirming real QEMU code agrees with the model; wired into `ci.sh` (skipped
+  when QEMU/`cc` absent).
 - **LoongArch** — next arch of interest (telix target: `kernel/src/arch/loongarch64/`,
   QEMU runner present). Software-refill (MIPS-like) → reuse the refill-handler
   theorem; but **no upstream Sail model exists**, so hand-write from the manual and

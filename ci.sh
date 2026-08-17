@@ -27,6 +27,15 @@ else
   overall=1
 fi
 
+# 1b. Live QEMU differential test for the MIPS decode (skips if ~/src/QEMU absent).
+step "hardware/qemu-diff (live MIPS compute_pagemask differential test)"
+if bash hardware/qemu-diff/run_mips_decode_diff.sh; then
+  echo "PASS: hardware/qemu-diff"
+else
+  echo "FAIL: hardware/qemu-diff"
+  overall=1
+fi
+
 # 2. Property-2 Iris proofs (Coq 8.20, 'surd' switch)
 step "property2/coq (Iris)"
 if (cd property2/coq && bash build.sh); then
