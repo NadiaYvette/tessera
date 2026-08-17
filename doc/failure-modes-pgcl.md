@@ -76,3 +76,13 @@ Lower-novelty also seen: `pgcl_page_folio` partial conversion → double-free (`
 - **TLB/TSB over-insertion during promotion:** #12 — bogus entries with no backing PTE violate inv7 (TLB ⊆ mapping).
 - **PTE-vector vs single-entry, the recurring spine:** #1,#2,#5,#13 — because all c sub-PTEs share one `struct page`, every op must treat the per-KAU answer (refcount, mapcount, dirty, referenced) as the correct aggregation over the c-vector (inv2, inv5). The Option-A/B fracture (#5) is the purest case.
 - **Partially-populated KAU:** #3,#14,#19 — gapped sub-PTEs within a KAU; the proof must let a KAU be a *partial* map over its c slots and still refine Layer S.
+
+## E) Executable vectors (AArch64, 2026-08-17)
+
+#9 and #10 are now pinned as executable, axiom-free `vm_compute` vectors in
+`hardware/rocq/aarch64_pgcl.v` (over the `aarch64_tlb` variant):
+
+- `test_vector_pgcl9_*` — the contpte fold re-points sub-page 1 at sub-page 0's
+  frame + offset (the lost per-sub-page frame / wrong-page read, inv3 + M3).
+- `test_vector_pgcl10_*` — a single-page flush leaves the adjacent page's entry
+  stale, and the MMUPAGE-stride flush clears it (Property 1 / inv7).

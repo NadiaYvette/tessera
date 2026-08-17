@@ -86,11 +86,46 @@ failure modes.
    proofs.~~ **Done** — `aa_refill_lookup_covers`, `aa_flush_clears`,
    `aa_unmap_without_flush_breaks_coherence`, `aa_refill_flush_composes`,
    `aa_shootdown_correct`, all axiom-free.
-3. Differential-test against the vendored `sail-arm` model (the `TranslationSize`/
-   `StageOA`/`ContiguousSize` fragments are already Sail, so the transcription is
-   near-verbatim rather than a re-reading); the pgcl #9/#10 failure modes become
-   the contpte/TLBI test vectors. **Remaining** — a full sail-arm differential
-   equivalence (importing the vendored generated model and proving the fragments
-   agree) is the next increment.
+3. ~~Differential-test against the vendored `sail-arm` model...~~ **Done**
+   (2026-08-17): `hardware/src/sail_arm_tlb.sail` extracts
+   `ContiguousSize`/`TGxGranuleBits`/`TranslationSize` *verbatim* (modulo
+   totality + the `SaTGx` rename) and is generated into `sail_arm_tlb.v`;
+   `aarch64_sail_oracle.v` imports it (qualified) and proves the two
+   transcriptions agree — `sa_tgx_granule_bits_conforms`,
+   `sa_translation_size_conforms`, `sa_contiguous_size_conforms` (general, all
+   d128/tgx/level) and `sa_ia_msb_conforms` (the StageOA `ia_msb` boundary),
+   plus 4 StageOA `vm_compute` vectors pinning `baseaddress[55..ia_msb] @
+   ia[ia_msb-1..0]` against the shift-based `aa_pa`.  The one thing *not* proved
+   generally is the StageOA bit-slicing identity — blocked on SailStdpp's
+   abstract `MachineWord` interface (see loongarch-software-refill.md).
+
+## pgcl #9/#10 vectors (`aarch64_pgcl.v`, done 2026-08-17)
+
+- **#9 contpte fold loses sub-page offset** — `test_vector_pgcl9_prefold_page0/1`
+  pin the two distinct pre-fold 4 KB frames; `..._contig_fold_loses_offset` +
+  `..._mismatch` pin that folding into a CONT entry re-points sub-page 1 at
+  sub-page 0's frame + the offset (a wrong-page read, inv3 + M3).
+- **#10 TLBI stride = PAGE** — `test_vector_pgcl10_page_stride_leaves_stale` pins
+  that a single-page flush leaves the adjacent page's entry live, and
+  `..._full_flush_clears` pins that the MMUPAGE-stride flush clears all of them
+  (Property 1 / inv7).
+
+## Primary-source cross-check (Arm ARM, pending)
+
+The sail-arm equivalence (#3) is a *secondary*-source check (against the vendored
+ISA model's ASL).  The *primary* source is the **Arm Architecture Reference
+Manual for A-profile (DDI 0487)** — pending; it needs a (free) Arm account to
+download.  Sections to cross-check once available:
+
+- **VMSA (AArch64 Virtual Memory System Architecture)** — translation granule
+  sizes (4 KB/16 KB/64 KB), block descriptors at walk levels 0-2, and the
+  **Contiguous bit** (the `contiguous_size` table).
+- **FEAT_LPA2** — 52-bit VA/PA, 16-byte descriptors (the `d128`/DS2 encoding).
+- **TLBI maintenance** (`TLBI VALE1/VALE2/VALE3` + IS/OS variants) — the
+  range/stride semantics behind `aa_flush` (#10).
+- **Translation fault** decoding — for the fault model.
+
+Fallback if DDI 0487 is unavailable: the public Arm "Learn the Architecture"
+AArch64 MMU pages plus the `sail-arm` ASL (already the oracle).
 
 See `mmu-variants.md` (axis 1/2 table) and `failure-modes-pgcl.md` (#9, #10).

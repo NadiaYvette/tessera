@@ -188,9 +188,16 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   the size spectrum (4 KB page / 2 MB / 1 GB / 512 GB blocks, 16 KB / 64 KB
   granules, LPA2 1 MB block), the CONT table (both DS2 modes, incl. the reserved
   level-0 → 0), and page-size-aware match/PA (4 KB page, 2 MB block, 64 KB
-  contpte). See `aarch64-translation.md`. The contpte fold (#9) and TLBI stride
-  (#10) pgcl failure modes are the natural test vectors for a future
-  sail-arm differential equivalence.
+  contpte). See `aarch64-translation.md`. **sail-arm differential equivalence
+  done** (2026-08-17): `hardware/src/sail_arm_tlb.sail` extracts the vendored
+  `ContiguousSize`/`TGxGranuleBits`/`TranslationSize` verbatim (modulo totality
+  + the `SaTGx` rename) and `aarch64_sail_oracle.v` proves general agreement
+  (`sa_tgx_granule_bits_conforms`/`sa_translation_size_conforms`/
+  `sa_contiguous_size_conforms`/`sa_ia_msb_conforms`) plus StageOA `vm_compute`
+  vectors. **pgcl #9/#10 vectors done** (2026-08-17): `aarch64_pgcl.v` pins the
+  contpte fold (#9, wrong-page read) and TLBI stride (#10, stale entry) failure
+  modes. **Primary-source cross-check (Arm ARM DDI 0487) pending** — needs the
+  manual (free Arm account); sections listed in `aarch64-translation.md`.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the

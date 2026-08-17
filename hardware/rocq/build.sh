@@ -10,6 +10,7 @@ SRC="$HW/src/machine.sail"
 MIPS_SRC="$HW/src/mips_tlb.sail"
 LA_SRC="$HW/src/loongarch_tlb.sail"
 AA_SRC="$HW/src/aarch64_tlb.sail"
+SA_SRC="$HW/src/sail_arm_tlb.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -35,19 +36,21 @@ sail --just-check "$SRC"
 sail --just-check "$MIPS_SRC"
 sail --just-check "$LA_SRC"
 sail --just-check "$AA_SRC"
+sail --just-check "$SA_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
 sail "$MIPS_SRC" --rocq --rocq-output-dir "$HERE" -o mips_tlb
 sail "$LA_SRC" --rocq --rocq-output-dir "$HERE" -o loongarch_tlb
 sail "$AA_SRC" --rocq --rocq-output-dir "$HERE" -o aarch64_tlb
+sail "$SA_SRC" --rocq --rocq-output-dir "$HERE" -o sail_arm_tlb
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -70,6 +73,10 @@ rocq compile $FLAGS loongarch_qemu_oracle.v
 rocq compile $FLAGS aarch64_tlb_types.v
 rocq compile $FLAGS aarch64_tlb.v
 rocq compile $FLAGS aarch64_tlb_proofs.v
+rocq compile $FLAGS sail_arm_tlb_types.v
+rocq compile $FLAGS sail_arm_tlb.v
+rocq compile $FLAGS aarch64_sail_oracle.v
+rocq compile $FLAGS aarch64_pgcl.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -332,6 +339,23 @@ axiom_free aarch64_tlb_proofs test_vector_aa_pa_contig
 axiom_free aarch64_tlb_proofs test_vector_aa_refill
 axiom_free aarch64_tlb_proofs test_vector_aa_flush
 axiom_free aarch64_tlb_proofs test_vector_aa_flush_preserves_other
+# sail-arm differential oracle: the size machinery agrees (general theorems) and
+# the StageOA address concat is pinned against aa_pa (vm_compute vectors).
+axiom_free aarch64_sail_oracle sa_tgx_granule_bits_conforms
+axiom_free aarch64_sail_oracle sa_translation_size_conforms
+axiom_free aarch64_sail_oracle sa_contiguous_size_conforms
+axiom_free aarch64_sail_oracle sa_ia_msb_conforms
+axiom_free aarch64_sail_oracle diff_stage_oa_2m
+axiom_free aarch64_sail_oracle diff_stage_oa_4k
+axiom_free aarch64_sail_oracle diff_stage_oa_contig
+axiom_free aarch64_sail_oracle diff_stage_oa_2m_next
+# pgcl failure-mode vectors: #9 (contpte fold) and #10 (TLBI stride).
+axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page0
+axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page1
+axiom_free aarch64_pgcl test_vector_pgcl9_contig_fold_loses_offset
+axiom_free aarch64_pgcl test_vector_pgcl9_contig_fold_mismatch
+axiom_free aarch64_pgcl test_vector_pgcl10_page_stride_leaves_stale
+axiom_free aarch64_pgcl test_vector_pgcl10_full_flush_clears
 axiom_free_drain "$FLAGS"
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
