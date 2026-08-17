@@ -70,8 +70,14 @@ transcription:
 11 executable diff vectors pin match/PA agreement on both halves of the 4 KiB
 and 16 KiB pairs and the next-pair rejections, plus the odd/even selection.  The
 general `shiftr (shiftl x 13) (ps+1) = shiftr x (ps+1-13)` bitvector identity
-(which would give the unconditional `la_covers_conforms`) is a noted follow-up;
-the vectors pin the agreement concretely.
+(which would give the unconditional `la_covers_conforms`) is a noted follow-up:
+SailStdpp's `mword`/`shiftr`/`shiftl` sit over an *abstract* `MachineWord`
+interface that does not expose `word_to_N`-distribution lemmas for
+`logical_shift_left/right`, and `stdpp.bitvector`'s `bv_solve`/`bv_simplify` do
+not unfold those abstract operations — so the identity needs new
+`MachineWord`-level lemmas before the general conformance closes.  The
+`vm_compute` diff vectors (and the live C test below) pin the agreement
+concretely in the meantime.
 
 ### Live QEMU diff-test (`hardware/qemu-diff/run_loongarch_diff.sh`)
 
