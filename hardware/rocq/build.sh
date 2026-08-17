@@ -11,6 +11,7 @@ MIPS_SRC="$HW/src/mips_tlb.sail"
 LA_SRC="$HW/src/loongarch_tlb.sail"
 AA_SRC="$HW/src/aarch64_tlb.sail"
 SA_SRC="$HW/src/sail_arm_tlb.sail"
+INTC_SRC="$HW/src/intc.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -37,6 +38,7 @@ sail --just-check "$MIPS_SRC"
 sail --just-check "$LA_SRC"
 sail --just-check "$AA_SRC"
 sail --just-check "$SA_SRC"
+sail --just-check "$INTC_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
@@ -44,13 +46,14 @@ sail "$MIPS_SRC" --rocq --rocq-output-dir "$HERE" -o mips_tlb
 sail "$LA_SRC" --rocq --rocq-output-dir "$HERE" -o loongarch_tlb
 sail "$AA_SRC" --rocq --rocq-output-dir "$HERE" -o aarch64_tlb
 sail "$SA_SRC" --rocq --rocq-output-dir "$HERE" -o sail_arm_tlb
+sail "$INTC_SRC" --rocq --rocq-output-dir "$HERE" -o intc
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -82,6 +85,9 @@ rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
 rocq compile $FLAGS ipi.v
+rocq compile $FLAGS intc_types.v
+rocq compile $FLAGS intc.v
+rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS shootdown_iris.v
 
@@ -185,6 +191,24 @@ axiom_free ipi              test_vector_deliver_ipi
 axiom_free ipi              test_vector_receive_before_delivery
 axiom_free ipi              test_vector_receive_after_delivery
 axiom_free ipi              test_vector_ipi_broadcast
+# interrupt controller (SSG-3): the intc.sail device model reifies machine.sail's
+# IPI mailbox — send latches pending, ack (pending & unmasked) rings the doorbell,
+# and send+ack is exactly deliver_ipi's mailbox update.
+axiom_free intc_proofs      intc_send_sets_pending
+axiom_free intc_proofs      intc_send_preserves_ipi
+axiom_free intc_proofs      intc_mask_sets_masked
+axiom_free intc_proofs      intc_unmask_clears_masked
+axiom_free intc_proofs      intc_ack_unmasked_clears_pending
+axiom_free intc_proofs      intc_ack_unmasked_rings
+axiom_free intc_proofs      intc_ack_masked_noop
+axiom_free intc_proofs      intc_ack_no_pending_noop
+axiom_free intc_proofs      intc_unmask_then_ack_delivers
+axiom_free intc_proofs      intc_send_ack_refines_deliver_ipi
+axiom_free intc_proofs      intc_delivery_enables_receive_ipi
+axiom_free intc_proofs      test_vector_intc_send_ack_delivers
+axiom_free intc_proofs      test_vector_intc_masked_holds
+axiom_free intc_proofs      test_vector_intc_unmask_delivers
+axiom_free intc_proofs      test_vector_intc_ack_clears_pending
 axiom_free conformance      translate_conforms
 axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
 axiom_free conformance      test_vector_mapping_ok
