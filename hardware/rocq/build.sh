@@ -80,30 +80,62 @@ rocq compile $FLAGS shootdown_iris.v
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
 # context (no Axiom / Parameter / Admitted / admit). This is the machine-checked
 # "axiom-free" claim, enforced on every build rather than by hand. ---
-axiom_free() { # $1 = module (no .v), $2 = theorem, $3 = optional flags
-  local mod="$1" thm="$2" flags="${3:-$FLAGS}" out
-  cat > _axioms.v <<EOF
-Require Import $mod.
-Print Assumptions $thm.
-EOF
-  if ! out="$(rocq compile $flags _axioms.v 2>&1)"; then
-    echo "CHECK FAILED: $mod.$thm did not compile:" >&2
-    printf '%s\n' "$out" >&2
-    rm -f _axioms.v _axioms.vo _axioms.vos _axioms.vok _axioms.glob ._axioms.aux
+# The axiom-hygiene checks are independent of one another but each re-loads the
+# module's .vo dependency graph, so they dominate the build wall-clock.  They are
+# queued by `axiom_free` and drained in parallel by `axiom_free_drain` (bounded
+# by $AXIOM_JOBS).  Each worker uses a unique temp .v in $HERE so sibling .vo
+# files still resolve via the implicit loadpath, and reporting stays per-theorem.
+# Set AXIOM_JOBS=1 to restore the old sequential behaviour.
+AXIOM_JOBS="${AXIOM_JOBS:-8}"
+_axiom_jobs="$(mktemp /tmp/axiom-jobs.XXXXXX)"
+_axiom_worker="$(mktemp /tmp/axiom-worker.XXXXXX)"
+trap 'rm -f "$_axiom_jobs" "$_axiom_worker" _axioms_*.v _axioms_*.vo _axioms_*.vos _axioms_*.vok _axioms_*.glob ._axioms_*.aux 2>/dev/null' EXIT
+
+# The worker is a standalone script rather than an exported function: a heredoc
+# inside an `export -f`-ed function is not reliably re-parsed by child shells
+# (the positional-parameter expansion differs), so we write the script once and
+# let xargs spawn it directly.  It uses `printf` (not a heredoc) to build the
+# .v file, and $AXIOM_FLAGS (exported by axiom_free_drain) for the load path.
+cat > "$_axiom_worker" <<'WORKER'
+#!/usr/bin/env bash
+set -euo pipefail
+mod="$1"; thm="$2"; base="_axioms_${mod}_${thm}"
+printf 'Require Import %s.\nPrint Assumptions %s.\n' "$mod" "$thm" > "$base.v"
+if ! out="$(rocq compile $AXIOM_FLAGS "$base.v" 2>&1)"; then
+  echo "CHECK FAILED: $mod.$thm did not compile:" >&2
+  printf '%s\n' "$out" >&2
+  rm -f "$base.v" "$base.vo" "$base.vos" "$base.vok" "$base.glob" ".$base.aux"
+  exit 1
+fi
+rm -f "$base.v" "$base.vo" "$base.vos" "$base.vok" "$base.glob" ".$base.aux"
+if printf '%s' "$out" | grep -q "Axioms:"; then
+  echo "AXIOM LEAK: $mod.$thm is not axiom-free:" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q "Closed under the global context"; then
+  echo "CHECK FAILED: could not confirm $mod.$thm is closed under the global context" >&2
+  printf '%s\n' "$out" >&2
+  exit 1
+fi
+echo "  axiom-free: $mod.$thm"
+WORKER
+chmod +x "$_axiom_worker"
+
+axiom_free() { # $1 = module (no .v), $2 = theorem (queued; the flags are given at drain time)
+  printf '%s %s\n' "$1" "$2" >> "$_axiom_jobs"
+}
+
+axiom_free_drain() { # $1 = flags to compile the queued checks with
+  local flags="$1"
+  [ -s "$_axiom_jobs" ] || return 0
+  export AXIOM_FLAGS="$flags"
+  if ! xargs -a "$_axiom_jobs" -n 2 -P "$AXIOM_JOBS" "$_axiom_worker"; then
+    echo "AXIOM CHECK FAILURE (see above)" >&2
+    : > "$_axiom_jobs"
     return 1
   fi
-  rm -f _axioms.v _axioms.vo _axioms.vos _axioms.vok _axioms.glob ._axioms.aux
-  if printf '%s' "$out" | grep -q "Axioms:"; then
-    echo "AXIOM LEAK: $mod.$thm is not axiom-free:" >&2
-    printf '%s\n' "$out" >&2
-    return 1
-  fi
-  if ! printf '%s' "$out" | grep -q "Closed under the global context"; then
-    echo "CHECK FAILED: could not confirm $mod.$thm is closed under the global context" >&2
-    printf '%s\n' "$out" >&2
-    return 1
-  fi
-  echo "  axiom-free: $mod.$thm"
+  : > "$_axiom_jobs"
 }
 
 echo "--- axiom hygiene ---"
@@ -300,6 +332,7 @@ axiom_free aarch64_tlb_proofs test_vector_aa_pa_contig
 axiom_free aarch64_tlb_proofs test_vector_aa_refill
 axiom_free aarch64_tlb_proofs test_vector_aa_flush
 axiom_free aarch64_tlb_proofs test_vector_aa_flush_preserves_other
+axiom_free_drain "$FLAGS"
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
 # gpfsl is built in-tree by third_party/build.sh (step 1 above); reference it via -Q.
@@ -333,6 +366,7 @@ if [ -d "$GP" ]; then
   # per-cell coupling: the ack cell's released branch carries the va-flushed TLB
   # entry (flush_tlb_entry (Some (leaf_entry va)) va), bridged to encode_tlb None
   # via tlb_tags.flush_tlb_entry_leaf (checked in the pure section above).
+  axiom_free_drain "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2
 fi
