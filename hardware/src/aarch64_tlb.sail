@@ -3,8 +3,8 @@ default Order dec
 $include <prelude.sail>
 
 // ============================================================
-// Tessera — fourth MMU variant: the AArch64 VMSAv8-64 TLB
-// (block descriptors + contpte + FEAT_LPA2 DS2).
+// Tessera — fourth MMU variant: the AArch64 TLB
+// (block descriptors + contpte + FEAT_D128).
 //
 // Variants 1 (`machine.sail`, RISC-V Sv39) and this one are
 // *hardware-walker* architectures: on a TLB miss the MMU walks the page
@@ -51,9 +51,10 @@ function tgx_granule_bits(tgx) = match tgx {
   TGx_64KB => 16
 }
 
-// DS2 (FEAT_LPA2): 16-byte descriptors (descsizelog2 = 4) vs the base
-// 8-byte descriptors (descsizelog2 = 3).  `d128` is the descriptor-format
-// flag carried by the translation regime.
+// FEAT_D128: 16-byte (128-bit) descriptors (descsizelog2 = 4) — the
+// VMSAv9-128 translation system — vs the base 8-byte descriptors
+// (descsizelog2 = 3).  `d128` is the descriptor-width flag.  Note this is
+// *not* TCR_ELx.DS == 1: DS is FEAT_LPA2, which keeps 8-byte descriptors.
 val desc_size_log2 : bool -> int
 function desc_size_log2(d128) = if d128 then 4 else 3
 
@@ -92,7 +93,7 @@ struct AaEntry = {
   oabase : bits(44),  // OA[55:12] — the output-address base
   tgx    : TGx,       // translation granule (4 KB / 16 KB / 64 KB)
   level  : int,       // walk level (0,1,2,3); < 3 is a block/superpage
-  d128   : bool,      // DS2 / FEAT_LPA2 16-byte descriptor
+  d128   : bool,      // FEAT_D128 16-byte descriptor (VMSAv9-128)
   contig : bool       // CONT bit set (contiguous hint)
 }
 

@@ -119,23 +119,53 @@ failure modes.
   `..._overinsert_count` pins the exact c−1 = 3 stale entries (inv7: TLB ⊄
   mapping).
 
-## Primary-source cross-check (Arm ARM, now available)
+## Primary-source cross-check (Arm ARM DDI 0487, done 2026-08-17)
 
 The sail-arm equivalence (#3) is a *secondary*-source check (against the vendored
 ISA model's ASL).  The *primary* source is the **Arm Architecture Reference
-Manual for A-profile (DDI 0487)** — now available locally as
-`~/Dokumente/DDI0487M_c_a-profile_architecture_reference_manual.pdf`
-(issue M.c).  Sections to cross-check (in-progress):
+Manual for A-profile (DDI 0487, issue M.c)** —
+`~/Dokumente/DDI0487M_c_a-profile_architecture_reference_manual.pdf`.  Cross-checked
+against the transcription with **all functions confirmed to match**:
 
-- **VMSA (AArch64 Virtual Memory System Architecture)** — translation granule
-  sizes (4 KB/16 KB/64 KB), block descriptors at walk levels 0-2, and the
-  **Contiguous bit** (the `contiguous_size` table).
-- **FEAT_LPA2** — 52-bit VA/PA, 16-byte descriptors (the `d128`/DS2 encoding).
-- **TLBI maintenance** (`TLBI VALE1/VALE2/VALE3` + IS/OS variants) — the
-  range/stride semantics behind `aa_flush` (#10).
-- **Translation fault** decoding — for the fault model.
+- **Granule sizes** (`tgx_granule_bits` = 12/14/16) — 4 KB (D8-16: page resolved
+  by a level-3 Page descriptor, `IA[11:0]→OA[11:0]`), 16 KB and 64 KB (D8-46).
+- **Block/page sizes** (`translation_size` = `granulebits + (3−level)·(granulebits−descsizelog2)`) —
+  matches **Table D8-17** (4 KB granule: L1 = 1 GB, L2 = 2 MB, L0 = 512 GB at
+  DS=1) and **Table D8-46** (VMSAv9-128: 4 KB L2 = 1 MB, 16 KB L2 = 16 MB,
+  64 KB L2 = 256 MB, …, L3 = the page size).
+- **Contiguous bit** (`contiguous_size`) — matches **Table D8-104** (VMSAv8-64,
+  `d128=0`) and **Table D8-105** (VMSAv9-128, `d128=1`) entry-for-entry: all 16
+  (level, granule) rows agree (4 KB {1,2,3}→16; 16 KB {2,3}→{32,128};
+  64 KB {2,3}→{32,32}; and the DS=1 table 4 KB {1,2,3}→{4,16,16}, 16 KB
+  {1,2,3}→{4,16,64}, 64 KB {2,3}→{64,16}).  The reserved levels (D8.7.1 RHMQXG:
+  CONT is RES0 in 4 KB L0@DS=1, 16 KB L1@DS=1, 64 KB L1) are the ones the
+  transcription returns 0 for.
+- **StageOA / `aa_pa`** — matches the “Final address” column of **Table D8-46**
+  (`OAB[55:36]:IA[35:0]`, …, `OAB[55:12]:IA[11:0]`) and **Figure D8-3**: the
+  high bits come from the descriptor OA base, the low `ia_msb` bits from the IA.
+- **`aa_flush` (TLBI by VA)** — matches **C5.5.68** `TLBI VALE1/VALE2/VALE3`
+  (“Invalidates … entries … that would be required to translate the specified
+  VA”).  The model drops *every* covering entry (the whole Contiguous range),
+  which is exactly what IVNXYF requires: “software is required to perform TLB
+  maintenance on the entire address region that results from using the
+  Contiguous bit” — the pgcl #10 failure mode.
 
-Fallback if DDI 0487 is unavailable: the public Arm "Learn the Architecture"
-AArch64 MMU pages plus the `sail-arm` ASL (already the oracle).
+One terminology correction recorded for rigour: the model’s `d128` flag is
+**FEAT_D128** — the 128-bit (16-byte) translation-table descriptor, which the
+manual names the **VMSAv9-128 translation system** (D8-46/D8-105).  It is *not*
+`TCR_ELx.DS == 1`: DS is **FEAT_LPA2**, which extends the 4 KB/16 KB OA to 52
+bits while keeping **8-byte descriptors** (the DS=1 columns of D8-16/17/26/27/
+35/36).  The Sail comments’ “DS2/LPA2” shorthand is therefore imprecise; the
+size machinery’s selector is descriptor width (D128), not DS.  Concretely,
+`d128=0` = 8-byte descriptors (both DS=0 and DS=1-with-LPA2, so the D8.7.1 RHMQXG
+“DS=1” RES0 notes — 4 KB L0, 16 KB L1, 64 KB L1 — all map to `d128=0` and return
+0), and `d128=1` = FEAT_D128’s 16-byte descriptors (D8-46/D8-105).  This also
+reconciles the apparent D8-104-vs-D8-105 tension: RHMQXG’s 16 KB L1 “DS=1 RES0”
+is the 8-byte-descriptor case (`d128=0`), while D8-105’s 16 KB L1 = 4 entries is
+the FEAT_D128 case (`d128=1`).
+
+Not modelled (documented simplifications, out of scope for the TLB-encoding
+layer): ASID/VMID/global/nXS matching in TLBI, translation-fault decode, stage-2
+regimes, and `FEAT_XS`.  See `mmu-variants.md` and `failure-modes-pgcl.md`.
 
 See `mmu-variants.md` (axis 1/2 table) and `failure-modes-pgcl.md` (#9, #10, #12).

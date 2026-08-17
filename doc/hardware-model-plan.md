@@ -198,9 +198,11 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   contpte fold (#9, wrong-page read), TLBI stride (#10, stale entry), and TSB
   over-insertion (#12, silent data loss) failure modes. **General StageOA
   identity proved** (`aa_stage_oa_spec` via `mword_lemmas.v`). **Primary-source
-  cross-check (Arm ARM DDI 0487) now available** —
-  `~/Dokumente/DDI0487M_c_a-profile_architecture_reference_manual.pdf` (issue M.c);
-  sections listed in `aarch64-translation.md`.
+  cross-check done** (2026-08-17) — DDI 0487 issue M.c
+  (`~/Dokumente/DDI0487M_c_a-profile_architecture_reference_manual.pdf`) confirms
+  `tgx_granule_bits`/`translation_size` (D8-16/17/46), `contiguous_size`
+  (D8-104/105), StageOA (D8-46 “Final address”), and TLBI-by-VA (C5.5.68); see
+  `aarch64-translation.md`.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the

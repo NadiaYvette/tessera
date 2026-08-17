@@ -25,13 +25,17 @@ keep consistent), `tessera-verification-kickoff.md` (the brief, esp. §5 trust l
 | `SailStdpp` (`mword` bitvectors) | REMS (`coq-sail`) | upstream CI | **Upstream-maintained (REMS)** — trusted to model machine words |
 | Sail→Rocq backend | REMS | upstream CI | **Upstream-maintained (REMS)** — trusted to lower Sail faithfully |
 | Iris, stdpp | MPI-SWS | upstream CI | **Upstream-maintained (MPI-SWS)** — trusted logic/typeclass substrate |
-| `sail-riscv`, `sail-arm`, `sail-cheri-mips`, `sail-x86-from-acl2` | REMS / CTSRD-CHERI | upstream | **Upstream-maintained / conformance-tested ISA models — vendored but NOT used** by any build today |
+| `sail-riscv`, `sail-arm`, `sail-cheri-mips`, `sail-x86-from-acl2` | REMS / CTSRD-CHERI | upstream | **Upstream-maintained / conformance-tested ISA models — vendored; only sail-arm's page-size fragment is referenced** (verbatim in `sail_arm_tlb.sail`), the rest are not yet used |
 
-The only things `hardware/rocq/build.sh` consumes are: `machine.sail` (ours),
-the opam `sail`/`rocq-sail-stdpp` toolchain, and Iris/stdpp. The vendored
-`third_party/sail-*` submodules are pinned for reproducibility and future use
-(`third_party/README.md`), but **none of their ISA semantics is currently
-referenced**, so none of their rigour is inherited.
+The things `hardware/rocq/build.sh` consumes are: `machine.sail` (ours), the
+opam `sail`/`rocq-sail-stdpp` toolchain, Iris/stdpp, and — for the AArch64
+variant — the verbatim `sail_arm_tlb.sail` fragment extracted from
+`third_party/sail-arm` (`v8_base.sail` `ContiguousSize`/`TGxGranuleBits`/
+`TranslationSize`). The remaining vendored `third_party/sail-*` submodules are
+pinned for reproducibility and future use (`third_party/README.md`), but **their
+ISA semantics are otherwise not referenced**. The AArch64 fragment is
+additionally cross-checked against the primary source (Arm ARM DDI 0487, issue
+M.c) — see `aarch64-translation.md`.
 
 ## 2. The trust stack (top = most trusted)
 
