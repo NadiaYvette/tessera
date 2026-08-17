@@ -134,7 +134,11 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   Key semantics encoded: enable = `Config3.SP ∧ PageGrain.ESP`; PageMask is a
   run of 1s with even count (the `{4^k·M}` spectrum); `pfn_shift = 10` (vs 12)
   under ESP; `VPN2X = EntryHi[12:11]`; MaskX stored "as if 0b11" when ESP=0.
-  See `mips-software-refill.md` (closes G1).
+  See `mips-software-refill.md` (closes G1). **Shootdown integration done**
+  (2026-08-17): `mips_flush` (software TLB invalidate) added to the Sail model;
+  the MIPS twins of the coherence/shootdown theorems are proved axiom-free in
+  `mips_tlb_proofs.v` — `mips_flush_clears`, `mips_unmap_without_flush_breaks_coherence`,
+  `mips_refill_flush_composes`, and `mips_shootdown_correct`.
 - **LoongArch** — next arch of interest (telix target: `kernel/src/arch/loongarch64/`,
   QEMU runner present). Software-refill (MIPS-like) → reuse the refill-handler
   theorem; but **no upstream Sail model exists**, so hand-write from the manual and

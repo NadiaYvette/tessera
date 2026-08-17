@@ -162,6 +162,11 @@ axiom_free tlb_tags         test_vector_tlb_napot_flush
 axiom_free mips_tlb_proofs  compute_mask_level_unfold
 axiom_free mips_tlb_proofs  compute_mask_level_some_even
 axiom_free mips_tlb_proofs  mips_refill_lookup_covers
+# MIPS shootdown integration (the software-refill twin of coherence/shootdown).
+axiom_free mips_tlb_proofs  mips_flush_clears
+axiom_free mips_tlb_proofs  mips_unmap_without_flush_breaks_coherence
+axiom_free mips_tlb_proofs  mips_refill_flush_composes
+axiom_free mips_tlb_proofs  mips_shootdown_correct
 axiom_free mips_tlb_proofs  test_vector_mask_lvl0
 axiom_free mips_tlb_proofs  test_vector_mask_lvl2
 axiom_free mips_tlb_proofs  test_vector_mask_lvl4
@@ -189,6 +194,8 @@ axiom_free mips_tlb_proofs  test_vector_mips_pa_1k
 axiom_free mips_tlb_proofs  test_vector_mips_pa_4k
 axiom_free mips_tlb_proofs  test_vector_mips_pa_16k
 axiom_free mips_tlb_proofs  test_vector_mips_refill
+axiom_free mips_tlb_proofs  test_vector_mips_flush
+axiom_free mips_tlb_proofs  test_vector_mips_flush_preserves_other
 # QEMU differential oracle: compute_mask_level transcribes compute_pagemask.
 axiom_free mips_qemu_oracle compute_mask_level_conforms
 axiom_free mips_qemu_oracle qemu_cto_cto18

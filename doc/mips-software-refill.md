@@ -105,6 +105,30 @@ The decode is **diff-tested** against QEMU's `compute_pagemask`
   esp-lvl2), PA translation (1k/4k/16k/esp-4k) and page-size-aware match
   (1 KiB pairing, 4 KiB next-page, 16 KiB superpage).
 
+## Shootdown integration (`mips_tlb_proofs.v`)
+
+The MIPS variant now composes with the coherence/shootdown story.  On MIPS there
+is no hardware walker to "drop a PTE"; unmap is a *software* decision followed by
+a software TLB invalidation — `mips_flush` (the tlbp/tlbwi/tlbwr analog of
+`sfence_vma_va`), generated from `mips_tlb.sail`.  The MIPS twins of the
+variant-1 theorems are proved axiom-free:
+
+- **`mips_flush_clears`** — after dropping every entry that covers `va`, no
+  lookup answers for `va` (the MIPS `sfence_vma_va_clears`).
+- **`mips_unmap_without_flush_breaks_coherence`** — *without* the flush, a
+  covering stale entry still answers `Some (mips_pa e va)` (the MIPS
+  `unmap_without_flush_breaks_coherence`).
+- **`mips_refill_flush_composes`** — refill an entry covering `va`, then flush
+  `va`: the refill is undone and the lookup is clean.  This is the composition
+  of the refill-handler theorem (§"refill-handler correctness") with the flush.
+- **`mips_shootdown_correct`** — broadcasting the flush to every core's TLB
+  (`mips_shootdown = map (mips_flush va)`) leaves no core answering for `va`
+  (the MIPS `shootdown_correct`).
+
+Plus two `vm_compute` vectors (`test_vector_mips_flush`,
+`test_vector_mips_flush_preserves_other`).
+
 The existing coherence/shootdown machinery (variant 1) is left untouched; this is
 an additive second module demonstrating the parameterization point (H4), now
-fully Sail-transcribed, oracle-diff-tested, and 1 KiB (VPN2X/ESP)-instantiated.
+fully Sail-transcribed, oracle-diff-tested, 1 KiB (VPN2X/ESP)-instantiated, and
+integrated with the coherence/shootdown theorems.

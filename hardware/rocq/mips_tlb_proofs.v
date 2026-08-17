@@ -83,6 +83,63 @@ Proof.
 Qed.
 
 (* ============================================================
+   Shootdown integration: the software-refill analog of
+   coherence.v / shootdown.v (RISC-V variant).
+
+   On MIPS there is no hardware walker to "drop a PTE"; unmap is a
+   *software* decision followed by a software TLB invalidation
+   (`mips_flush`, the tlbp/tlbwi/tlbwr analog of `sfence_vma_va`).
+   The coherence pair below is the MIPS twin of `unmap_correct` /
+   `unmap_without_flush_breaks_coherence`, and `mips_shootdown_correct`
+   is the MIPS twin of `shootdown_correct`.
+   ============================================================ *)
+
+(* The flush alone restores coherence: after dropping every entry that
+   covers `va`, no lookup answers for `va` (the MIPS `sfence_vma_va_clears`). *)
+Lemma mips_flush_clears (tlb : list MipsEntry) (va : mword 64) :
+  mips_lookup (mips_flush va tlb) va = None.
+Proof.
+  induction tlb as [| e rest IH]; cbn.
+  - reflexivity.
+  - destruct (mips_covers e va) eqn:Hc.
+    + exact IH.
+    + cbn. rewrite Hc. exact IH.
+Qed.
+
+(* The buggy direction: *without* the flush, a covering (stale) entry still
+   answers — the MIPS `unmap_without_flush_breaks_coherence`. *)
+Lemma mips_unmap_without_flush_breaks_coherence
+  (e : MipsEntry) (tlb : list MipsEntry) (va : mword 64) :
+  mips_covers e va = true ->
+  mips_lookup (e :: tlb) va = Some (mips_pa e va).
+Proof.
+  intro Hc. cbn. rewrite Hc. reflexivity.
+Qed.
+
+(* Composition with the refill-handler theorem: refill an entry that covers
+   `va`, then flush `va` — the refill is undone and the lookup is clean. *)
+Lemma mips_refill_flush_composes (e : MipsEntry) (tlb : list MipsEntry) (va : mword 64) :
+  mips_covers e va = true ->
+  mips_lookup (mips_flush va (mips_refill e tlb)) va = None.
+Proof.
+  intro Hc. apply mips_flush_clears.
+Qed.
+
+(* The MIPS shootdown: broadcast the software flush to every core's TLB. *)
+Definition mips_shootdown (cores : list (list MipsEntry)) (va : mword 64)
+  : list (list MipsEntry) :=
+  List.map (mips_flush va) cores.
+
+(* After the broadcast, no core translates `va` (the MIPS `shootdown_correct`). *)
+Theorem mips_shootdown_correct (cores : list (list MipsEntry)) (va : mword 64) :
+  forall tlb, List.In tlb (mips_shootdown cores va) -> mips_lookup tlb va = None.
+Proof.
+  intros tlb H. unfold mips_shootdown in H.
+  apply List.in_map_iff in H. destruct H as [t [Ht Htlbs]]. subst.
+  apply mips_flush_clears.
+Qed.
+
+(* ============================================================
    Test vectors (vm_compute pins).
    ============================================================ *)
 
@@ -199,4 +256,15 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_mips_refill :
   mips_lookup (mips_refill (mips_entry_1k mips_va) []) mips_va =
   Some (mips_pa (mips_entry_1k mips_va) mips_va).
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- the flush / shootdown integration vectors. --- *)
+(* Flushing the refilled entry at `va` leaves the TLB clean for `va`. *)
+Lemma test_vector_mips_flush :
+  mips_lookup (mips_flush mips_va (mips_refill (mips_entry_1k mips_va) [])) mips_va = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Flushing at `va` does not drop an entry that does *not* cover `va`. *)
+Lemma test_vector_mips_flush_preserves_other :
+  mips_flush mips_va [mips_entry_4k mips_va_4k_next] = [mips_entry_4k mips_va_4k_next].
 Proof. vm_compute. reflexivity. Qed.

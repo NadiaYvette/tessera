@@ -112,6 +112,13 @@ Definition mips_pa (e : MipsEntry) (va : mword 64) : mword 56 :=
 
 Definition mips_refill (e : MipsEntry) (tlb : list MipsEntry) : list MipsEntry := e :: tlb.
 
+Fixpoint mips_flush (va : mword 64) (tlb : list MipsEntry) : list MipsEntry :=
+   match tlb with
+   | [] => []
+   | e :: rest =>
+      if mips_covers (e) (va) then mips_flush (va) (rest) else e :: (mips_flush (va) (rest))
+   end.
+
 Fixpoint mips_lookup (tlb : list MipsEntry) (va : mword 64) : option (mword 56) :=
    match tlb with
    | [] => None

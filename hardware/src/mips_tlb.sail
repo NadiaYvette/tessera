@@ -114,6 +114,16 @@ function mips_pa(e, va) = {
 val mips_refill : (MipsEntry, list(MipsEntry)) -> list(MipsEntry)
 function mips_refill(e, tlb) = e :: tlb
 
+// The software invalidation: drop every entry that covers `va`.
+// This is the software-refill analog of RISC-V sfence_vma_va — on MIPS
+// the OS walks its own TLB (tlbp/tlbwi/tlbwr) and kills the covering
+// entries; QEMU's `invalidate_tlb`/`invalidate_tlb_entry` do the same.
+val mips_flush : (vaddr, list(MipsEntry)) -> list(MipsEntry)
+function mips_flush(va, tlb) = match tlb {
+  [||] => [||],
+  e :: rest => if mips_covers(e, va) then mips_flush(va, rest) else e :: mips_flush(va, rest)
+}
+
 // TLB lookup: first entry that covers the VA translates it.
 val mips_lookup : (list(MipsEntry), vaddr) -> option(paddr)
 function mips_lookup(tlb, va) = match tlb {
