@@ -95,11 +95,14 @@ failure modes.
    `sa_translation_size_conforms`, `sa_contiguous_size_conforms` (general, all
    d128/tgx/level) and `sa_ia_msb_conforms` (the StageOA `ia_msb` boundary),
    plus 4 StageOA `vm_compute` vectors pinning `baseaddress[55..ia_msb] @
-   ia[ia_msb-1..0]` against the shift-based `aa_pa`.  The one thing *not* proved
-   generally is the StageOA bit-slicing identity — blocked on SailStdpp's
-   abstract `MachineWord` interface (see loongarch-software-refill.md).
+   ia[ia_msb-1..0]` against the shift-based `aa_pa`.  The StageOA bit-slicing
+   identity is now proved **generally** (`aa_stage_oa_spec`, 2026-08-17): the
+   `uint`-distribution lemmas for `shiftr`/`shiftl`/`or_vec`/`zero_extend`/
+   `subrange_vec_dec`/`concat` live in `mword_lemmas.v` (unfolding the
+   transparent `MachineWord` instance to stdpp `bv_*`), removing the earlier
+   abstract-`MachineWord` blocker (see loongarch-software-refill.md).
 
-## pgcl #9/#10 vectors (`aarch64_pgcl.v`, done 2026-08-17)
+## pgcl #9/#10/#12 vectors (`aarch64_pgcl.v`, done 2026-08-17)
 
 - **#9 contpte fold loses sub-page offset** — `test_vector_pgcl9_prefold_page0/1`
   pin the two distinct pre-fold 4 KB frames; `..._contig_fold_loses_offset` +
@@ -109,13 +112,20 @@ failure modes.
   that a single-page flush leaves the adjacent page's entry live, and
   `..._full_flush_clears` pins that the MMUPAGE-stride flush clears all of them
   (Property 1 / inv7).
+- **#12 sparc64 TSB over-insertion (×c)** — `test_vector_pgcl12_single_demap`
+  pins that a single insert + `aa_demap_one` removes the translation entirely,
+  while `..._overinsert_stale` pins that a c=4 over-inserted TSB survives a
+  one-slot demap (c−1 stale entries → lookup still hits a now-unmapped address);
+  `..._overinsert_count` pins the exact c−1 = 3 stale entries (inv7: TLB ⊄
+  mapping).
 
-## Primary-source cross-check (Arm ARM, pending)
+## Primary-source cross-check (Arm ARM, now available)
 
 The sail-arm equivalence (#3) is a *secondary*-source check (against the vendored
 ISA model's ASL).  The *primary* source is the **Arm Architecture Reference
-Manual for A-profile (DDI 0487)** — pending; it needs a (free) Arm account to
-download.  Sections to cross-check once available:
+Manual for A-profile (DDI 0487)** — now available locally as
+`~/Dokumente/DDI0487M_c_a-profile_architecture_reference_manual.pdf`
+(issue M.c).  Sections to cross-check (in-progress):
 
 - **VMSA (AArch64 Virtual Memory System Architecture)** — translation granule
   sizes (4 KB/16 KB/64 KB), block descriptors at walk levels 0-2, and the
@@ -128,4 +138,4 @@ download.  Sections to cross-check once available:
 Fallback if DDI 0487 is unavailable: the public Arm "Learn the Architecture"
 AArch64 MMU pages plus the `sail-arm` ASL (already the oracle).
 
-See `mmu-variants.md` (axis 1/2 table) and `failure-modes-pgcl.md` (#9, #10).
+See `mmu-variants.md` (axis 1/2 table) and `failure-modes-pgcl.md` (#9, #10, #12).

@@ -79,10 +79,19 @@ Lower-novelty also seen: `pgcl_page_folio` partial conversion → double-free (`
 
 ## E) Executable vectors (AArch64, 2026-08-17)
 
-#9 and #10 are now pinned as executable, axiom-free `vm_compute` vectors in
+#9, #10 and #12 are now pinned as executable, axiom-free `vm_compute` vectors in
 `hardware/rocq/aarch64_pgcl.v` (over the `aarch64_tlb` variant):
 
 - `test_vector_pgcl9_*` — the contpte fold re-points sub-page 1 at sub-page 0's
   frame + offset (the lost per-sub-page frame / wrong-page read, inv3 + M3).
 - `test_vector_pgcl10_*` — a single-page flush leaves the adjacent page's entry
   stale, and the MMUPAGE-stride flush clears it (Property 1 / inv7).
+- `test_vector_pgcl12_*` — a c=4 over-inserted TSB survives a one-slot demap
+  (c−1 stale entries → lookup still hits), vs a single correct insert + demap
+  which removes the translation entirely (inv7: TLB ⊄ mapping).
+
+#7 (THP split phantom `_mapcount=0`) and #8 (split loop bound RSS leak) are not
+pinned as executable vectors yet: they need the sequential M1–M3 split/mapcount
+model (per-sub-slot reset + mapcount aggregation) that isn't built in this
+repo — they're documented as in-scope for the M2 split/demote work rather than
+the TLB-encoding layer.

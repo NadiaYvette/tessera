@@ -75,6 +75,7 @@ rocq compile $FLAGS aarch64_tlb.v
 rocq compile $FLAGS aarch64_tlb_proofs.v
 rocq compile $FLAGS sail_arm_tlb_types.v
 rocq compile $FLAGS sail_arm_tlb.v
+rocq compile $FLAGS mword_lemmas.v
 rocq compile $FLAGS aarch64_sail_oracle.v
 rocq compile $FLAGS aarch64_pgcl.v
 rocq compile $FLAGS shootdown.v
@@ -339,6 +340,24 @@ axiom_free aarch64_tlb_proofs test_vector_aa_pa_contig
 axiom_free aarch64_tlb_proofs test_vector_aa_refill
 axiom_free aarch64_tlb_proofs test_vector_aa_flush
 axiom_free aarch64_tlb_proofs test_vector_aa_flush_preserves_other
+# mword uint-distribution: the SailStdpp mword/shiftr/shiftl/or_vec/zero_extend
+# ops unfold to stdpp bv_* and satisfy the word_to_N distribution identities the
+# general StageOA proof needs (no axiom; the concrete MachineWord is transparent).
+axiom_free mword_lemmas uint_bv_unsigned
+axiom_free mword_lemmas uint_nonneg
+axiom_free mword_lemmas bv_wrap_mword
+axiom_free mword_lemmas bv_modulus_mword
+axiom_free mword_lemmas uint_autocast
+axiom_free mword_lemmas uint_to_word_idx
+axiom_free mword_lemmas bv_unsigned_N_to_word_mword
+axiom_free mword_lemmas uint_shiftr
+axiom_free mword_lemmas uint_shiftl
+axiom_free mword_lemmas uint_or_vec
+axiom_free mword_lemmas uint_zero_extend
+axiom_free mword_lemmas shift_mod_div
+axiom_free mword_lemmas Z_land_mul_pow2_0
+axiom_free mword_lemmas Z_lor_add_pow2
+axiom_free mword_lemmas uint_subrange_vec_dec_55_0
 # sail-arm differential oracle: the size machinery agrees (general theorems) and
 # the StageOA address concat is pinned against aa_pa (vm_compute vectors).
 axiom_free aarch64_sail_oracle sa_tgx_granule_bits_conforms
@@ -349,13 +368,19 @@ axiom_free aarch64_sail_oracle diff_stage_oa_2m
 axiom_free aarch64_sail_oracle diff_stage_oa_4k
 axiom_free aarch64_sail_oracle diff_stage_oa_contig
 axiom_free aarch64_sail_oracle diff_stage_oa_2m_next
-# pgcl failure-mode vectors: #9 (contpte fold) and #10 (TLBI stride).
+# general (not vm_compute) StageOA identity: aa_pa e va = concat(subrange baseaddr
+# 55 ia_msb)(subrange va (ia_msb-1) 0), proved via the mword_lemmas above.
+axiom_free aarch64_sail_oracle aa_stage_oa_spec
+# pgcl failure-mode vectors: #9 (contpte fold), #10 (TLBI stride), #12 (TSB over-insertion).
 axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page0
 axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page1
 axiom_free aarch64_pgcl test_vector_pgcl9_contig_fold_loses_offset
 axiom_free aarch64_pgcl test_vector_pgcl9_contig_fold_mismatch
 axiom_free aarch64_pgcl test_vector_pgcl10_page_stride_leaves_stale
 axiom_free aarch64_pgcl test_vector_pgcl10_full_flush_clears
+axiom_free aarch64_pgcl test_vector_pgcl12_single_demap
+axiom_free aarch64_pgcl test_vector_pgcl12_overinsert_stale
+axiom_free aarch64_pgcl test_vector_pgcl12_overinsert_count
 axiom_free_drain "$FLAGS"
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---

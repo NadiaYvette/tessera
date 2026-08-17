@@ -17,7 +17,16 @@
           that a single-page flush leaves the adjacent page's entry live, and
           that the MMUPAGE-stride flush (every sub-page) clears it.
 
-   See doc/failure-modes-pgcl.md (#9, #10).
+     * #12 sparc64 TSB over-insertion (x c) -> silent data loss.
+          `update_mmu_cache_range` multiplied by PAGE_MMUCOUNT though callers
+          already pass a PTE count, inserting c copies of one entry into the
+          software TSB (inv7: TLB not a subset of the mapping).  The vectors
+          model a TSB as a `list AaEntry` and the sparc64 hash-position demap
+          as `aa_demap_one` (removes *one* covering slot): a single insert is
+          fully demapped, but the x-c over-insertion leaves c-1 stale entries
+          that still translate the address.
+
+   See doc/failure-modes-pgcl.md (#9, #10, #12).
 *)
 
 From Stdlib Require Import ZArith Lia.
@@ -91,4 +100,41 @@ Lemma test_vector_pgcl10_full_flush_clears :
        (aa_flush pgcl_va_0 [aa_4k_page aa_vatag0 pgcl_f0; aa_4k_page aa_vatag1 pgcl_f1]))
     pgcl_va_4k
   = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   #12: sparc64 TSB over-insertion (x c) leaves stale entries.
+   ============================================================ *)
+
+(* A TSB demap that removes *one* covering slot (the sparc64 hash-position
+   demap), unlike `aa_flush` which removes every covering entry.  This is what
+   makes an over-inserted TSB lose: the c-1 duplicate slots survive. *)
+Fixpoint aa_demap_one (va : mword 64) (tlb : list AaEntry) : list AaEntry :=
+  match tlb with
+  | [] => []
+  | e :: rest => if aa_covers e va then rest else e :: aa_demap_one va rest
+  end.
+
+(* Correct TSB: one entry per PTE. *)
+Definition pgcl12_single : list AaEntry := [aa_4k_page aa_vatag0 pgcl_f0].
+(* Buggy TSB: c = 4 over-inserted copies of the same PTE. *)
+Definition pgcl12_over : list AaEntry :=
+  List.repeat (aa_4k_page aa_vatag0 pgcl_f0) 4.
+
+(* Correct: a single insert + demap removes the translation entirely. *)
+Lemma test_vector_pgcl12_single_demap :
+  aa_lookup (aa_demap_one pgcl_va_0 pgcl12_single) pgcl_va_0 = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Buggy: x-c over-insertion + one-slot demap leaves c-1 stale entries, so a
+   lookup still returns a translation for the now-unmapped address — silent
+   data loss / suppressed fault (inv7: TLB not a subset of the mapping). *)
+Lemma test_vector_pgcl12_overinsert_stale :
+  aa_lookup (aa_demap_one pgcl_va_0 pgcl12_over) pgcl_va_0
+  = Some (aa_pa (aa_4k_page aa_vatag0 pgcl_f0) pgcl_va_0).
+Proof. vm_compute. reflexivity. Qed.
+
+(* The over-insertion leaves exactly c-1 = 3 stale entries after a demap. *)
+Lemma test_vector_pgcl12_overinsert_count :
+  List.length (aa_demap_one pgcl_va_0 pgcl12_over) = 3%nat.
 Proof. vm_compute. reflexivity. Qed.

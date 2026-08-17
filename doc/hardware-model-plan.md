@@ -194,10 +194,13 @@ Remembered so they are not lost; each lists its conformance oracle / fidelity ri
   + the `SaTGx` rename) and `aarch64_sail_oracle.v` proves general agreement
   (`sa_tgx_granule_bits_conforms`/`sa_translation_size_conforms`/
   `sa_contiguous_size_conforms`/`sa_ia_msb_conforms`) plus StageOA `vm_compute`
-  vectors. **pgcl #9/#10 vectors done** (2026-08-17): `aarch64_pgcl.v` pins the
-  contpte fold (#9, wrong-page read) and TLBI stride (#10, stale entry) failure
-  modes. **Primary-source cross-check (Arm ARM DDI 0487) pending** — needs the
-  manual (free Arm account); sections listed in `aarch64-translation.md`.
+  vectors. **pgcl #9/#10/#12 vectors done** (2026-08-17): `aarch64_pgcl.v` pins the
+  contpte fold (#9, wrong-page read), TLBI stride (#10, stale entry), and TSB
+  over-insertion (#12, silent data loss) failure modes. **General StageOA
+  identity proved** (`aa_stage_oa_spec` via `mword_lemmas.v`). **Primary-source
+  cross-check (Arm ARM DDI 0487) now available** —
+  `~/Dokumente/DDI0487M_c_a-profile_architecture_reference_manual.pdf` (issue M.c);
+  sections listed in `aarch64-translation.md`.
 - **Toolchain reconciliation (S2.2)** — gpfsl onto rocq-9.2 (dev iris) or the machine
   onto coq 8.20; see `rigor-trust-line.md` §6.
 - **Compiler-verification / trust-boundary relocation (far future)** — the
