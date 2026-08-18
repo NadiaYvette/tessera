@@ -98,6 +98,15 @@ carved out of.
 - **Proof needed.** A second walker + IOTLB shootdown — the CPU-TLB problem replayed,
   reusing the whole Stage 1/2 machinery (coherence + concurrent shootdown).
   Self-contained, later.
+- **Primary source available.** `~/Dokumente/PCI-Express-6_0-Specification-PCIE_SIG.pdf`
+  (PCIe Base Spec **Rev 6.0** — the user notes it is *only* 6.0, not 6.1/7.0).
+  It is the device↔IOMMU *interface*: **ATS** (Address Translation Services —
+  translation requests/completions, the IOTLB), **PRI** (Page Request Interface —
+  device-side page faults), and **PASID/TLP prefixes** (shared virtual memory).
+  The *IOMMU walker/invalidation* semantics themselves live in the platform specs
+  (Intel VT-d / Arm SMMUv3), which are the second half of this track and still to
+  be sourced. So the replay reuses Stage 1/2 for the CPU side, and ATS/PRI for the
+  device side of the same `IOTLB ⊆ mapping` invariant.
 
 ### SSG-5 — Timer device(s)
 
