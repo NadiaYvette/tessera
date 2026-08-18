@@ -348,15 +348,15 @@ Definition bc_inv_intc_ctx (γp γtok γack : nat → gname) (pending ack tlb : 
 
 Lemma bc_remote_intc_spec (γp γtok γack : nat → gname)
     (pending masked delivery ipi ack tlb : loc) (i n : nat) :
-  ∀ (ζp : absHist) (t_i : positive) (Vp V_i : view) tid,
+  ∀ (ζp : absHist) (t_i : positive) (V : view) tid,
   {{{ ⌜i < n⌝ ∗ bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
-      (pending >> i) sy⊒{γp i} ζp ∗ ⊒Vp ∗ ⊒V_i ∗
+      (pending >> i) sy⊒{γp i} ζp ∗ ⊒V ∗
       (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #1 ∗ (ipi >> i) ↦ #0 ∗
-      (ack >> i) sw⊒{γack i} {[t_i := (#0, V_i)]} ∗ (tlb >> i) ↦ #☠ }}}
+      (ack >> i) sw⊒{γack i} {[t_i := (#0, V)]} ∗ (tlb >> i) ↦ #☠ }}}
     bc_remote_intc_at pending masked delivery ipi ack tlb i @ tid; ⊤
   {{{ RET #☠; True }}}.
 Proof.
-  iIntros (ζp t_i Vp V_i tid Φ) "(%Hi & #HI & #Sp & #SVp & #SVi & Hm & Hd & Hq & SWack & Htlb) HΦ".
+  iIntros (ζp t_i V tid Φ) "(%Hi & #HI & #Sp & #SV & Hm & Hd & Hq & SWack & Htlb) HΦ".
   rewrite /bc_remote_intc_at /bc_remote_intc.
   wp_lam.
   (* -------- acquire pending[i] (repeat until #1) -------- *)
@@ -370,7 +370,7 @@ Proof.
   iDestruct "Hcell" as "[Hrel Hack]".
   rewrite go_released_eq.
   iDestruct "Hrel" as (ζ t0 t1 V0 V1 Vx) "[>Pts Hpure]".
-  iApply (AtomicSeen_acquire_read with "[$Pts $SVp]"); [solve_ndisj|..].
+  iApply (AtomicSeen_acquire_read with "[$Pts $SV]"); [solve_ndisj|..].
   { by iApply (AtomicSync_AtomicSeen with "Sp"). }
   iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Pts)".
   iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
@@ -433,21 +433,67 @@ Proof.
   iDestruct (AtomicPtsTo_AtomicSWriter_agree_1 with "Ptsa SWack") as %->.
   destruct b.
   + iDestruct "Own" as (tb Vb [Ltb Hb]) "_".
-    exfalso. exact (singleton_ne_released t_i ta0 tb V_i Va0 Vb Ltb Hb).
+    exfalso. exact (singleton_ne_released t_i ta0 tb V Va0 Vb Ltb Hb).
   + iDestruct "Own" as %Hown0.
-    iApply (AtomicSWriter_release_write _ _ _ _ V_i Vax #1
+    iApply (AtomicSWriter_release_write _ _ _ _ V Vax #1
               ((tlb >> i) ↦{1} #(encode_tlb None))%I
-              with "[$SWack $Ptsa $Htlb $SVi]"); [solve_ndisj|..].
+              with "[$SWack $Ptsa $Htlb $SV]"); [solve_ndisj|..].
     iIntros "!>" (t1' V1') "(%MAX & SeenV1' & [Htlb SWack'] & Ptsa')".
     iMod ("Close" with "[Hrel INV_rest Ptsa' Htlb]"); last first.
     { iIntros "!>". by iApply "HΦ". }
     iIntros "!>". rewrite /bc_inv_intc_def. iApply (big_sepS_delete _ (all_cores n) i).
     { rewrite elem_of_all_cores. exact Hi. }
     rewrite go_released_eq. rewrite ack_cell_eq. iFrame "INV_rest". iSplitL "Hrel"; [done|].
-    iExists _, true, t_i, V_i, _. iFrame "Ptsa'".
+    iExists _, true, t_i, V, _. iFrame "Ptsa'".
     iExists t1', V1'. iSplit.
     { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
     iRight. rewrite (flush_tlb_entry_leaf va). by iFrame "Htlb".
+Qed.
+
+(* ============================================================
+   Fork one remote per core, handing each the controller cells (masked/delivery/
+   ipi) and the ack/tlb cells, plus the shared pending reader-sync and view.
+   ============================================================ *)
+
+Lemma bc_fork_remotes_intc_spec (γp γtok γack : nat → gname)
+    (pending masked delivery ipi ack tlb : loc) :
+  ∀ (t : nat → positive) (V : nat → view) (i n : nat) tid,
+  {{{ bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
+      bc_sync_ctx γack ack t V n ∗
+      [∗ set] j ∈ (all_cores n ∖ all_cores i),
+        (pending >> j) sy⊒{γp j} {[t j := (#0, V j)]} ∗
+        (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 ∗
+        (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠ }}}
+    bc_fork_remotes_intc_at pending masked delivery ipi ack tlb i n @ tid; ⊤
+  {{{ RET #☠; True }}}.
+Proof.
+  iIntros (t V i n tid Φ) "(#HI & #Sctx & Hrest) HΦ".
+  rewrite /bc_fork_remotes_intc_at /bc_fork_remotes_intc.
+  iLöb as "IH" forall (i Φ).
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    rewrite (all_cores_step n i Hin).
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton.
+    iDestruct "Hrest" as "[Hrest_i Hrest']".
+    iDestruct "Hrest_i" as "(#S_i & Hm_i & Hd_i & Hq_i & SWack_i & Htlb_i)".
+    iDestruct (big_sepS_elem_of _ (all_cores n) i with "Sctx") as "#[_ SV_i]".
+    { rewrite elem_of_all_cores. exact Hin. }
+    wp_apply (wp_fork with "[Hm_i Hd_i Hq_i SWack_i Htlb_i]"); [done|..].
+    + iIntros "!>" (tid').
+      iApply (bc_remote_intc_spec γp γtok γack pending masked delivery ipi ack tlb i n
+                {[t i := (#0, V i)]} (t i) (V i) tid'
+                with "[$HI $S_i $SV_i $Hm_i $Hd_i $Hq_i $SWack_i $Htlb_i]").
+      { iPureIntro. exact Hin. }
+      iIntros "!> _". done.
+    + iIntros "_". wp_seq.
+      wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+      iApply ("IH" $! (i + 1)%nat Φ with "Hrest'").
+      iIntros "!> _". by iApply "HΦ".
+  - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    by iApply "HΦ".
 Qed.
 
 End bc_remote_intc.
