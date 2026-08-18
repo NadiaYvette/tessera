@@ -86,10 +86,10 @@ Soundness: no core translates through `va` after the protocol completes.
   `deliver_ipi`, and `bc_machine_ipi_step_via_intc`
   (`hardware/rocq/intc_weak_broadcast.v`) composes it with S2.4's
   `bc_machine_ipi_step`, so the weak-memory broadcast's per-step ghost
-  `receive_ipi (deliver_ipi _ i)` *is* the controller's send+ack.  The remaining
-  lift is the *device-in-the-loop Iris program* — the remote's flush gated on
-  the controller's doorbell rather than the hand-set mailbox — which composes
-  this bridge with S2.2c's `bc_remote_spec`/`bc_wait_all_spec`.
+  `receive_ipi (deliver_ipi _ i)` *is* the controller's send+ack.  The
+  *device-in-the-loop Iris program* — the remote's flush gated on the
+  controller's doorbell rather than the hand-set mailbox — composes this bridge
+  with S2.2c's `bc_remote_spec`/`bc_wait_all_spec`; it is proved below.
 
   **S2.5 program (full controller in the loop, `shootdown_weak_broadcast_intc.v`).**
   The controller's four bit-vectors (`Intc_pending` / `Intc_masked` /
@@ -115,6 +115,27 @@ Soundness: no core translates through `va` after the protocol completes.
   and never change across the broadcast, so the ack's gate `pending ∧ ¬masked ∧
   delivery` is live; the interrupt-context delivery gate (`intc_enter_context`)
   is where `delivery[i] := 0` would suppress delivery, left as the next increment.
+
+  **S2.5 done (axiom-free).**  `shootdown_weak_broadcast_intc.v` proves the full
+  program, threading the abstract controller ghost (`intc_ctx`) alongside the
+  machine ghost in lockstep:
+
+  - `bc_init_intc_arrays_spec` / `bc_send_all_spec` — initialise the four
+    per-hart arrays, then release-send `pending[i]` to every core.
+  - `bc_remote_intc_spec` — the remote acquires `pending[i]`, runs the ack (gate
+    `pending ∧ ¬masked ∧ delivery`), observes its own doorbell `ipi[i]`, clears
+    its TLB, releases `ack[i]` (depositing the cleared TLB).  It takes the
+    pending history/view (`ζp`, `Vp`) and the ack history/view (`t`, `V`)
+    separately, exactly as S2.2c's `bc_remote_spec` separates `ζgo Vgo` from
+    `t V`.
+  - `bc_fork_remotes_intc_spec` — one remote per core, handing each the
+    controller cells and the pending sync+seen views.
+  - `bc_wait_all_intc_spec` — the leader's ack wait steps the machine via
+    `bc_machine_ipi_step_via_intc` and the `Intc` ghost via `intc_ack ∘
+    intc_send` (`intc_step_ok`: `Intc_ipi = ipi_prefix n i` advances one per ack).
+  - `bc_broadcast_intc_spec` — the whole device-in-the-loop broadcast, from
+    `broadcast_pre_machine` to `bc_post_machine`, with the controller ghost
+    stepped from `intc_step_ok _ _ 0` to `intc_step_ok _ _ n`.
 
 ## Concrete-value encoding (S2.1)
 

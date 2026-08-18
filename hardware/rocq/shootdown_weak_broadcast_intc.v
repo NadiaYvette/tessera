@@ -436,15 +436,15 @@ Definition bc_inv_intc_ctx (γp γtok γack : nat → gname) (pending ack tlb : 
 
 Lemma bc_remote_intc_spec (γp γtok γack : nat → gname)
     (pending masked delivery ipi ack tlb : loc) (i n : nat) :
-  ∀ (ζp : absHist) (t_i : positive) (V : view) tid,
+  ∀ (ζp : absHist) (t_i : positive) (Vp V : view) tid,
   {{{ ⌜i < n⌝ ∗ bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
-      (pending >> i) sy⊒{γp i} ζp ∗ ⊒V ∗
+      (pending >> i) sy⊒{γp i} ζp ∗ ⊒Vp ∗ ⊒V ∗
       (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #1 ∗ (ipi >> i) ↦ #0 ∗
       (ack >> i) sw⊒{γack i} {[t_i := (#0, V)]} ∗ (tlb >> i) ↦ #☠ }}}
     bc_remote_intc_at pending masked delivery ipi ack tlb i @ tid; ⊤
   {{{ RET #☠; True }}}.
 Proof.
-  iIntros (ζp t_i V tid Φ) "(%Hi & #HI & #Sp & #SV & Hm & Hd & Hq & SWack & Htlb) HΦ".
+  iIntros (ζp t_i Vp V tid Φ) "(%Hi & #HI & #Sp & #SVp & #SV & Hm & Hd & Hq & SWack & Htlb) HΦ".
   rewrite /bc_remote_intc_at /bc_remote_intc.
   wp_lam.
   (* -------- acquire pending[i] (repeat until #1) -------- *)
@@ -458,7 +458,7 @@ Proof.
   iDestruct "Hcell" as "[Hrel Hack]".
   rewrite go_released_eq.
   iDestruct "Hrel" as (ζ t0 t1 V0 V1 Vx) "[>Pts Hpure]".
-  iApply (AtomicSeen_acquire_read with "[$Pts $SV]"); [solve_ndisj|..].
+  iApply (AtomicSeen_acquire_read with "[$Pts $SVp]"); [solve_ndisj|..].
   { by iApply (AtomicSync_AtomicSeen with "Sp"). }
   iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Pts)".
   iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
@@ -545,17 +545,17 @@ Qed.
 
 Lemma bc_fork_remotes_intc_spec (γp γtok γack : nat → gname)
     (pending masked delivery ipi ack tlb : loc) :
-  ∀ (t : nat → positive) (V : nat → view) (i n : nat) tid,
+  ∀ (tp : nat → positive) (Vp : nat → view) (t : nat → positive) (V : nat → view) (i n : nat) tid,
   {{{ bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
       bc_sync_ctx γack ack t V n ∗
       [∗ set] j ∈ (all_cores n ∖ all_cores i),
-        (pending >> j) sy⊒{γp j} {[t j := (#0, V j)]} ∗
+        (pending >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j) ∗
         (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 ∗
         (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠ }}}
     bc_fork_remotes_intc_at pending masked delivery ipi ack tlb i n @ tid; ⊤
   {{{ RET #☠; True }}}.
 Proof.
-  iIntros (t V i n tid Φ) "(#HI & #Sctx & Hrest) HΦ".
+  iIntros (tp Vp t V i n tid Φ) "(#HI & #Sctx & Hrest) HΦ".
   rewrite /bc_fork_remotes_intc_at /bc_fork_remotes_intc.
   iLöb as "IH" forall (i Φ).
   wp_lam.
@@ -566,14 +566,14 @@ Proof.
     { apply singleton_notin_diff. exact Hin. }
     rewrite big_sepS_singleton.
     iDestruct "Hrest" as "[Hrest_i Hrest']".
-    iDestruct "Hrest_i" as "(#S_i & Hm_i & Hd_i & Hq_i & SWack_i & Htlb_i)".
+    iDestruct "Hrest_i" as "(#S_i & #SVp_i & Hm_i & Hd_i & Hq_i & SWack_i & Htlb_i)".
     iDestruct (big_sepS_elem_of _ (all_cores n) i with "Sctx") as "#[_ SV_i]".
     { rewrite elem_of_all_cores. exact Hin. }
     wp_apply (wp_fork with "[Hm_i Hd_i Hq_i SWack_i Htlb_i]"); [done|..].
     + iIntros "!>" (tid').
       iApply (bc_remote_intc_spec γp γtok γack pending masked delivery ipi ack tlb i n
-                {[t i := (#0, V i)]} (t i) (V i) tid'
-                with "[$HI $S_i $SV_i $Hm_i $Hd_i $Hq_i $SWack_i $Htlb_i]").
+                {[tp i := (#0, Vp i)]} (t i) (Vp i) (V i) tid'
+                with "[$HI $S_i $SVp_i $SV_i $Hm_i $Hd_i $Hq_i $SWack_i $Htlb_i]").
       { iPureIntro. exact Hin. }
       iIntros "!> _". done.
     + iIntros "_". wp_seq.
@@ -712,6 +712,195 @@ Proof.
       - intros j Hjn. apply (Hm j Hjn).
       - intros j Hjn. apply (Hd j Hjn). }
     by iApply ("HΦ" with "[$Hmach' $Hpost]").
+Qed.
+
+(* ============================================================
+   The full device-in-the-loop broadcast: allocate the four controller arrays
+   + pte/ack/tlb, initialise, break-before-make, send (release pending[i]),
+   init acks, fork one remote per core, and wait for the acks — with the
+   interrupt-controller ghost stepped in lockstep with the machine ghost.
+   ============================================================ *)
+
+(* Reverse of big_sepS_all_cores_n_diff_0: the init/setup lemmas build resources
+   over all_cores n ∖ all_cores 0, but the send/fork specs consume all_cores n. *)
+Lemma big_sepS_all_cores_diff_0 (P : nat → vProp) (n : nat) :
+  ([∗ set] j ∈ all_cores n ∖ all_cores 0, P j) ⊢ ([∗ set] j ∈ all_cores n, P j).
+Proof. rewrite -all_cores_n_diff_0. done. Qed.
+
+(* From the pending atomic cells, derive the persistent sync+seen views for the
+   fork while keeping the writer + pts-to for the leader's send. *)
+Lemma big_sepS_sw_sync_dup (l : loc) (γp : nat → gname) (tp : nat → positive) (Vp : nat → view) (n : nat) :
+  ([∗ set] j ∈ all_cores n,
+      (l >> j) sw⊒{γp j} {[tp j := (#0, Vp j)]} ∗
+      (l >> j) sw↦{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j)) ⊢
+  ([∗ set] j ∈ all_cores n,
+      (l >> j) sw⊒{γp j} {[tp j := (#0, Vp j)]} ∗
+      (l >> j) sw↦{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j)) ∗
+  ([∗ set] j ∈ all_cores n,
+      (l >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j)).
+Proof.
+  iIntros "H".
+  iDestruct (big_sepS_mono
+    (λ j, (l >> j) sw⊒{γp j} {[tp j := (#0, Vp j)]} ∗
+          (l >> j) sw↦{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j))%I
+    (λ j, ((l >> j) sw⊒{γp j} {[tp j := (#0, Vp j)]} ∗
+            (l >> j) sw↦{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j)) ∗
+           ((l >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j)))%I
+    (all_cores n) with "H") as "Hboth".
+  { iIntros (j Hj) "(SW & Pts & #SeenV)".
+    iDestruct (AtomicSWriter_AtomicSync with "SW") as "#S".
+    iSplitL "SW Pts"; [iFrame "SW Pts SeenV"|iFrame "S SeenV"]. }
+  iDestruct (big_sepS_sep
+    (λ j, (l >> j) sw⊒{γp j} {[tp j := (#0, Vp j)]} ∗
+          (l >> j) sw↦{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j))%I
+    (λ j, (l >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j))%I
+    (all_cores n) with "Hboth") as "[HpendA #Hsync]".
+  iFrame "HpendA Hsync".
+Qed.
+
+Lemma bc_broadcast_intc_spec (γic : gname) (n : nat) (ic0 : intc_types.Intc) :
+  ∀ tid,
+  {{{ machine_ctx γm (broadcast_pre_machine root va mem n) ∗
+      intc_ctx γic ic0 ∗ ⌜intc_step_ok ic0 n 0⌝ }}}
+    bc_broadcast_intc_at n @ tid; ⊤
+  {{{ RET #☠; ∃ (γp γtok γack : nat → gname) (pte pending masked delivery ipi ack tlb : loc)
+        (ic : intc_types.Intc),
+      bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
+      pte ↦ #(encode_pte invalid_pte) ∗
+      machine_ctx γm (bc_post_machine root va mem n) ∗
+      intc_ctx γic ic ∗ ⌜intc_step_ok ic n n⌝ }}}.
+Proof.
+  iIntros (tid Φ) "(Hm0 & Hic0 & %Hok0) HΦ".
+  rewrite /bc_broadcast_intc_at /bc_broadcast_intc.
+  cbn beta.
+  (* ---- allocate pte + the six per-core arrays ---- *)
+  wp_apply wp_new; [done..|]. iIntros (pte) "(_ & Hpte & _)".
+  rewrite own_loc_na_vec_singleton.
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (pending) "(_ & Hpending & _)".
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (masked) "(_ & Hmasked & _)".
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (delivery) "(_ & Hdelivery & _)".
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (ipi) "(_ & Hipi & _)".
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (ack) "(_ & Hack & _)".
+  wp_let.
+  wp_apply (wp_new_nat n tid); [done..|]. iIntros (tlb) "(_ & Htlb & _)".
+  wp_let.
+  (* ---- initialise the controller arrays ---- *)
+  iDestruct (own_loc_na_vec_repeat_all_cores pending #☠ n with "Hpending") as "HpendNA".
+  iDestruct (own_loc_na_vec_repeat_all_cores masked #☠ n with "Hmasked") as "HmaskNA".
+  iDestruct (own_loc_na_vec_repeat_all_cores delivery #☠ n with "Hdelivery") as "HdelNA".
+  iDestruct (own_loc_na_vec_repeat_all_cores ipi #☠ n with "Hipi") as "HipiNA".
+  iDestruct (big_sepS_sep_2 (λ j, (delivery >> j) ↦ #☠)%I (λ j, (ipi >> j) ↦ #☠)%I
+              (all_cores n) with "HdelNA HipiNA") as "HdqNA".
+  iDestruct (big_sepS_sep_2 (λ j, (masked >> j) ↦ #☠)%I
+                            (λ j, (delivery >> j) ↦ #☠ ∗ (ipi >> j) ↦ #☠)%I
+              (all_cores n) with "HmaskNA HdqNA") as "HmdqNA".
+  iDestruct (big_sepS_sep_2 (λ j, (pending >> j) ↦ #☠)%I
+                            (λ j, (masked >> j) ↦ #☠ ∗ (delivery >> j) ↦ #☠ ∗ (ipi >> j) ↦ #☠)%I
+              (all_cores n) with "HpendNA HmdqNA") as "H4NA".
+  iDestruct (big_sepS_all_cores_n_diff_0
+              (λ j, (pending >> j) ↦ #☠ ∗ (masked >> j) ↦ #☠ ∗
+                    (delivery >> j) ↦ #☠ ∗ (ipi >> j) ↦ #☠)%I n
+              with "H4NA") as "H4NA0".
+  wp_apply (bc_init_intc_arrays_spec pending masked delivery ipi 0 n tid with "H4NA0").
+  iIntros "Harr0".
+  wp_seq.
+  (* ---- break-before-make: pte <- invalid ---- *)
+  wp_op. rewrite shift_0. wp_write.
+  iMod (machine_ctx_update γm (broadcast_pre_machine root va mem n)
+          (bc_machine root va mem n 0) with "Hm0") as "Hm1".
+  (* ---- split the initialised arrays; convert pending to atomic ---- *)
+  iDestruct (big_sepS_all_cores_diff_0
+              (λ j, (pending >> j) ↦ #0 ∗ (masked >> j) ↦ #0 ∗
+                    (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0)%I n
+              with "Harr0") as "Harr".
+  iDestruct (big_sepS_sep (λ j, (pending >> j) ↦ #0)%I
+                          (λ j, (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0)%I
+                          (all_cores n) with "Harr") as "[Hpend Hmdq]".
+  iDestruct (big_sepS_sep (λ j, (masked >> j) ↦ #0)%I
+                          (λ j, (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0)%I
+                          (all_cores n) with "Hmdq") as "[Hmask Hdq]".
+  iDestruct (big_sepS_sep (λ j, (delivery >> j) ↦ #1)%I
+                          (λ j, (ipi >> j) ↦ #0)%I
+                          (all_cores n) with "Hdq") as "[Hdel Hipi0]".
+  iMod (big_sepS_atomic_from_na pending #0 (all_cores n) with "Hpend") as (γp tp Vp) "HpendA".
+  iDestruct (big_sepS_sw_sync_dup pending γp tp Vp n with "HpendA") as "[HpendA #HpendSync]".
+  (* ---- send: release pending[i] for every core ---- *)
+  iDestruct (big_sepS_all_cores_n_diff_0
+              (λ j, (pending >> j) sw⊒{γp j} {[tp j := (#0, Vp j)]} ∗
+                    (pending >> j) sw↦{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j))%I n
+              with "HpendA") as "HpendA0".
+  wp_apply (bc_send_all_spec pending γp tp Vp 0 n tid with "HpendA0").
+  iIntros "Hrel".
+  iDestruct (big_sepS_all_cores_diff_0 (λ j, go_released (pending >> j) (γp j)) n with "Hrel") as "Hrel".
+  wp_seq.
+  (* ---- ack array: write #0, then convert to atomic cells ---- *)
+  iDestruct (own_loc_na_vec_repeat_all_cores ack #☠ n with "Hack") as "HackNA".
+  rewrite all_cores_n_diff_0.
+  wp_apply (bc_init_acks_spec ack 0 n tid with "HackNA").
+  iIntros "Hack0".
+  wp_seq.
+  rewrite -all_cores_n_diff_0.
+  iMod (bc_ack_setup va ack tlb γp n with "Hack0") as (γack t V) "HackAll".
+  iDestruct (big_sepS_sep (λ j, (ack_cell va (ack >> j) (tlb >> j) (γp j) (γack j) ∗
+                                  (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]})%I)
+                          (λ j, ((ack >> j) sy⊒{γack j} {[t j := (#0, V j)]} ∗ ⊒(V j))%I)
+                          (all_cores n) with "HackAll") as "[HackSW #Sctx]".
+  iDestruct (big_sepS_sep (λ j, ack_cell va (ack >> j) (tlb >> j) (γp j) (γack j))%I
+                          (λ j, (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]})%I
+                          (all_cores n) with "HackSW") as "[HackCells Hack_sw]".
+  (* ---- establish the invariant ---- *)
+  iDestruct (big_sepS_sep_2 (λ j, go_released (pending >> j) (γp j))%I
+                            (λ j, ack_cell va (ack >> j) (tlb >> j) (γp j) (γack j))%I
+                            (all_cores n) with "Hrel HackCells") as "Hinv".
+  iMod (inv_alloc (bc_N_intc pending) _ (bc_inv_intc γp γp γack pending ack tlb n)
+          with "[Hinv]") as "#HI".
+  { rewrite bc_inv_intc_eq. iIntros "!>". iFrame "Hinv". }
+  (* ---- the fork premises: combine pending sync+seen, masked/delivery/ipi NA, ack sw⊒, tlb NA ---- *)
+  iDestruct (own_loc_na_vec_repeat_all_cores tlb #☠ n with "Htlb") as "HtlbNA".
+  iDestruct (big_sepS_sep (λ j, (pending >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]})%I
+                          (λ j, ⊒(Vp j))%I
+                          (all_cores n) with "HpendSync") as "[#HpendS #HpendV]".
+  iDestruct (big_sepS_sep_2 (λ j, (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]})%I
+                            (λ j, (tlb >> j) ↦ #☠)%I
+                            (all_cores n) with "Hack_sw HtlbNA") as "Hf".
+  iDestruct (big_sepS_sep_2 (λ j, (ipi >> j) ↦ #0)%I
+                            (λ j, (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I
+                            (all_cores n) with "Hipi0 Hf") as "Hf".
+  iDestruct (big_sepS_sep_2 (λ j, (delivery >> j) ↦ #1)%I
+                            (λ j, (ipi >> j) ↦ #0 ∗ (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I
+                            (all_cores n) with "Hdel Hf") as "Hf".
+  iDestruct (big_sepS_sep_2 (λ j, (masked >> j) ↦ #0)%I
+                            (λ j, (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 ∗ (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I
+                            (all_cores n) with "Hmask Hf") as "Hf".
+  iDestruct (big_sepS_sep_2 (λ j, ⊒(Vp j))%I
+                            (λ j, (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 ∗ (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I
+                            (all_cores n) with "HpendV Hf") as "Hf".
+  iDestruct (big_sepS_sep_2 (λ j, (pending >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]})%I
+                            (λ j, ⊒(Vp j) ∗ (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 ∗ (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I
+                            (all_cores n) with "HpendS Hf") as "Hfork".
+  iDestruct (big_sepS_all_cores_n_diff_0
+              (λ j, (pending >> j) sy⊒{γp j} {[tp j := (#0, Vp j)]} ∗ ⊒(Vp j) ∗
+                    (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 ∗
+                    (ack >> j) sw⊒{γack j} {[t j := (#0, V j)]} ∗ (tlb >> j) ↦ #☠)%I n
+              with "Hfork") as "Hfork0".
+  wp_apply (bc_fork_remotes_intc_spec γp γp γack pending masked delivery ipi ack tlb
+              tp Vp t V 0 n tid with "[$HI $Sctx $Hfork0]").
+  iIntros "_".
+  wp_seq.
+  (* ---- the wait, with the machine + Intc ghosts in lockstep ---- *)
+  wp_apply (bc_wait_all_intc_spec γic γp γp γack pending ack tlb ic0 t V 0 n tid
+              with "[$Hm1 $Hic0 $HI $Sctx]").
+  { iPureIntro. exact Hok0. }
+  iIntros "(Hmpost & Hicpost)".
+  iDestruct "Hicpost" as (ic) "(Hic & %Hok)".
+  iApply "HΦ".
+  iExists γp, γp, γack, pte, pending, masked, delivery, ipi, ack, tlb, ic.
+  iFrame "HI Hpte Hmpost Hic". iPureIntro. exact Hok.
 Qed.
 
 End bc_remote_intc.
