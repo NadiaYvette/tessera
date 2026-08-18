@@ -488,6 +488,7 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak_broadcast_intc bc_send_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc bc_remote_intc_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc bc_fork_remotes_intc_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast_intc bc_wait_all_intc_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"

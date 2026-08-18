@@ -317,6 +317,94 @@ End bc_send.
    invariant and are transferred to the remote at fork time.
    ============================================================ *)
 
+(* ============================================================
+   Pure lemmas for the leader's controller-ghost step: [intc_ack ∘ intc_send]
+   advances the delivered-bit prefix and preserves the pending/masked/delivery
+   shape.  [intc_step_ok] is the loop invariant threaded through bc_wait_all.
+   ============================================================ *)
+
+(* [intc_set_bit] is structurally recursive on the list, so it preserves length. *)
+Lemma intc_set_bit_length (l : list bool) (i : Z) (v : bool) :
+  length (intc.intc_set_bit l i v) = length l.
+Proof.
+  revert i. induction l as [| b bs IH]; intros i; cbn [intc.intc_set_bit length].
+  - reflexivity.
+  - destruct (Z.eqb i 0); cbn [length]; [reflexivity | f_equal; apply IH].
+Qed.
+
+(* [intc_ack] copies the masked/delivery fields verbatim (it only touches
+   pending and ipi), so it preserves both. *)
+Lemma intc_ack_preserves_masked (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_masked (intc.intc_ack ic i) = intc_types.Intc_masked ic.
+Proof.
+  unfold intc.intc_ack.
+  destruct (andb (intc.intc_get_bit (intc_types.Intc_pending ic) i false)
+                 (andb (negb (intc.intc_get_bit (intc_types.Intc_masked ic) i false))
+                       (intc.intc_get_bit (intc_types.Intc_delivery ic) i false)));
+  cbn; reflexivity.
+Qed.
+
+Lemma intc_ack_preserves_delivery (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_delivery (intc.intc_ack ic i) = intc_types.Intc_delivery ic.
+Proof.
+  unfold intc.intc_ack.
+  destruct (andb (intc.intc_get_bit (intc_types.Intc_pending ic) i false)
+                 (andb (negb (intc.intc_get_bit (intc_types.Intc_masked ic) i false))
+                       (intc.intc_get_bit (intc_types.Intc_delivery ic) i false)));
+  cbn; reflexivity.
+Qed.
+
+(* The abstract interrupt-controller state at broadcast step i: core i's mailbox
+   is exactly the delivered-bit prefix, every pending line is flat, and every
+   hart is unmasked with delivery enabled (the state bc_broadcast initialises). *)
+Definition intc_step_ok (ic : intc_types.Intc) (n i : nat) : Prop :=
+  intc_types.Intc_ipi ic = ipi_prefix n i ∧
+  length (intc_types.Intc_pending ic) = n ∧
+  (∀ (j : nat), Nat.lt j n → intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat j) false = false) ∧
+  (∀ (j : nat), Nat.lt j n → intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat j) false = true).
+
+(* One controller step: send (latch pending) then ack (deliver) core i advances
+   the delivered-bit prefix by one and preserves the invariant. *)
+Lemma intc_step_ok_step (ic : intc_types.Intc) (n i : nat) (Hin : Nat.lt i n) :
+  intc_step_ok ic n i →
+  intc_step_ok (intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i)) n (i + 1).
+Proof.
+  intros (Hipi & Hlen & Hm & Hd).
+  set (ic' := intc.intc_send ic (Z.of_nat i)).
+  set (ic'' := intc.intc_ack ic' (Z.of_nat i)).
+  split; [| split; [| split ]].
+  - subst ic'' ic'. rewrite (intc_ack_unmasked_rings (intc.intc_send ic (Z.of_nat i)) i).
+    + rewrite (intc_send_preserves_ipi ic (Z.of_nat i)). rewrite Hipi.
+      rewrite (intc_set_bit_eq_list_update_bool (ipi_prefix n i) (Z.of_nat i) true).
+      assert (Hinz : Z.lt (Z.of_nat i) (Z.of_nat n)) by lia.
+      rewrite <- (ipi_prefix_step n i Hinz). reflexivity.
+    + apply intc_send_sets_pending. rewrite Hlen. exact Hin.
+    + rewrite (intc_send_preserves_masked ic (Z.of_nat i)). apply Hm. exact Hin.
+    + rewrite (intc_send_preserves_delivery ic (Z.of_nat i)). apply Hd. exact Hin.
+  - subst ic'' ic'. rewrite (intc_ack_unmasked_clears_pending (intc.intc_send ic (Z.of_nat i)) i).
+    + rewrite intc_set_bit_length.
+      unfold intc.intc_send. cbn.
+      rewrite intc_set_bit_length. exact Hlen.
+    + apply intc_send_sets_pending. rewrite Hlen. exact Hin.
+    + rewrite (intc_send_preserves_masked ic (Z.of_nat i)). apply Hm. exact Hin.
+    + rewrite (intc_send_preserves_delivery ic (Z.of_nat i)). apply Hd. exact Hin.
+  - intros j Hjn. subst ic'' ic'.
+    rewrite (intc_ack_preserves_masked (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_send_preserves_masked ic (Z.of_nat i)). apply Hm. exact Hjn.
+  - intros j Hjn. subst ic'' ic'.
+    rewrite (intc_ack_preserves_delivery (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_send_preserves_delivery ic (Z.of_nat i)). apply Hd. exact Hjn.
+Qed.
+
+(* The delivered-bit prefix is saturated for i ≥ n, so [intc_step_ok n i]
+   coincides with [intc_step_ok n n] once the loop is exhausted. *)
+Lemma ipi_prefix_ge (n i : nat) (H : n ≤ i) : ipi_prefix n i = ipi_prefix n n.
+Proof.
+  unfold ipi_prefix. apply List.map_ext_in. intros j Hj.
+  apply in_seq in Hj as [_ Hjn].
+  rewrite !bool_decide_true; [reflexivity | lia | lia].
+Qed.
+
 Section bc_remote_intc.
 Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ, !bcG Σ, !intcG Σ}.
 Context (γm : gname) (root : mword 44) (va : mword 64) (mem : list MemEntry).
@@ -494,6 +582,136 @@ Proof.
       iIntros "!> _". by iApply "HΦ".
   - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
     by iApply "HΦ".
+Qed.
+
+(* ============================================================
+   The leader's ack wait, with the interrupt controller in the loop: as each
+   core acks, the leader steps the machine ghost through the controller's
+   send+ack (bc_machine_ipi_step_via_intc) and the abstract Intc ghost in
+   lockstep.
+   ============================================================ *)
+
+Lemma bc_wait_all_intc_spec (γic : gname) (γp γtok γack : nat → gname)
+    (pending ack tlb : loc) :
+  ∀ (ic : intc_types.Intc) (t : nat → positive) (V : nat → view) (i n : nat) tid,
+  {{{ machine_ctx γm (bc_machine root va mem n i) ∗
+      intc_ctx γic ic ∗ ⌜intc_step_ok ic n i⌝ ∗
+      bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
+      bc_sync_ctx γack ack t V n }}}
+    bc_wait_all_at ack i n @ tid; ⊤
+  {{{ RET #☠; machine_ctx γm (bc_post_machine root va mem n) ∗
+      ∃ ic', intc_ctx γic ic' ∗ ⌜intc_step_ok ic' n n⌝ }}}.
+Proof.
+  iIntros (ic t V i n tid Φ) "(Hmach & Hic & Hok & #HI & #Sctx) HΦ".
+  rewrite /bc_wait_all_at /bc_wait_all.
+  iLöb as "IH" forall (ic i Φ) "Hok".
+  iDestruct "Hok" as %Hok.
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - (* i < n: acquire ack[i], then recurse *)
+    assert (HinN : Nat.lt i n) by lia.
+    wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    iDestruct (big_sepS_elem_of _ (all_cores n) i with "Sctx") as "#[S_i SV_i]".
+    { rewrite elem_of_all_cores. exact Hin. }
+    (* -------- acquire ack[i] (repeat until #1) -------- *)
+    wp_bind (repeat: !ᵃᶜ(#ack +ₗ #i))%E.
+    iLöb as "IHack".
+    iApply wp_repeat; [done|].
+    wp_op. rewrite Nat2Z.id.
+    iInv (bc_N_intc pending) as "INV" "Close". rewrite bc_inv_intc_eq.
+    iDestruct (big_sepS_delete _ (all_cores n) i with "INV") as "[Hcell INV_rest]".
+    { rewrite elem_of_all_cores. exact Hin. }
+    iDestruct "Hcell" as "[Hrel Hack]".
+    rewrite ack_cell_eq.
+    iDestruct "Hack" as (ζa b ta0 Va0 Vax) "[>Ptsa >Own]".
+    iApply (AtomicSeen_acquire_read with "[$Ptsa $SV_i]"); [solve_ndisj|..].
+    { by iApply (AtomicSync_AtomicSeen with "S_i"). }
+    iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Ptsa)".
+    iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
+    case (decide (t' = ta0)) => [Hta0 | NEqta0].
+    + (* read #0 — keep looping *)
+      subst t'.
+      iAssert (⌜v' = #0⌝)%I as %Eq0.
+      { destruct b.
+        - iDestruct "Own" as (t1 V1 [Lt1 Eqζ']) "_".
+          iPureIntro.
+          rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_ne in Sub2.
+          + rewrite lookup_insert_eq in Sub2. by inversion Sub2.
+          + clear -Lt1. intros ?. subst. lia.
+        - iDestruct "Own" as %Eqζ'. iPureIntro.
+          rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_eq in Sub2. by inversion Sub2. }
+      iMod ("Close" with "[Hrel INV_rest Ptsa Own]").
+      { iIntros "!>". rewrite /bc_inv_intc_def. iApply (big_sepS_delete _ (all_cores n) i).
+        { rewrite elem_of_all_cores. exact Hin. }
+        rewrite go_released_eq. rewrite ack_cell_eq.
+        iFrame "INV_rest". iSplitL "Hrel"; [done|].
+        iExists _, b, ta0, Va0, _. iFrame "Ptsa Own". }
+      iIntros "!>". iExists 0. iSplit; [done|].
+      iIntros "!> !>". by iApply ("IHack" with "Hmach Hic HΦ").
+    + (* read #1 — proceed *)
+      destruct b; last first.
+      { iDestruct "Own" as %Eqζ'. exfalso.
+        rewrite Eqζ' in Sub2.
+        apply (lookup_weaken _ _ _ _ Eqt'), lookup_singleton_Some in Sub2 as [].
+        by apply NEqta0. }
+      iClear "IHack".
+      iDestruct "Own" as (t1 V1 [Lt1 Eqζ']) "Own".
+      rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+      have ? : t' = t1.
+      { case (decide (t' = t1)) => [//|NEqt1].
+        exfalso. by rewrite !lookup_insert_ne // in Sub2. }
+      subst t'. rewrite lookup_insert_eq in Sub2. inversion Sub2. subst v' V'.
+      iMod ("Close" with "[Hrel INV_rest Ptsa Own]").
+      { iIntros "!>". rewrite /bc_inv_intc_def. iApply (big_sepS_delete _ (all_cores n) i).
+        { rewrite elem_of_all_cores. exact Hin. }
+        rewrite go_released_eq. rewrite ack_cell_eq.
+        iFrame "INV_rest". iSplitL "Hrel"; [done|].
+        iExists _, true, ta0, Va0, _. iFrame "Ptsa".
+        iExists t1, V1. iSplit.
+        { iPureIntro. split; [exact Lt1 | exact Eqζ']. }
+        iFrame "Own". }
+      iIntros "!>". iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
+      (* core i has acked: step the machine ghost through the controller's
+         send+ack, and the abstract Intc ghost in lockstep. *)
+      destruct Hok as (Hipi & Hlen & Hm & Hd).
+      assert (Hinz : Z.lt (Z.of_nat i) (Z.of_nat n)) by lia.
+      assert (Hleni : Nat.lt i (length (intc_types.Intc_pending ic))) by (rewrite Hlen; exact HinN).
+      assert (Hmi : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+        by (apply Hm; exact HinN).
+      assert (Hdi : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true)
+        by (apply Hd; exact HinN).
+      set (ic' := intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i)).
+      iMod (machine_ctx_update γm (bc_machine root va mem n i)
+              (receive_ipi (Machine_with_ipi (bc_machine root va mem n i)
+                 (intc_types.Intc_ipi ic')) (Z.of_nat i) va)
+              with "Hmach") as "Hmach'".
+      iMod (intc_ctx_update γic ic ic' with "Hic") as "Hic'".
+      iAssert (machine_ctx γm (bc_machine root va mem n (i + 1)%nat)) with "[Hmach']" as "Hmach''".
+      { rewrite (bc_machine_ipi_step_via_intc root va mem ic n i Hinz Hipi Hleni Hmi Hdi).
+        subst ic'. iFrame "Hmach'". }
+      iAssert (⌜intc_step_ok ic' n (i + 1)%nat⌝)%I as "Hok'".
+      { iPureIntro. subst ic'.
+        apply (intc_step_ok_step ic n i HinN).
+        exact (conj Hipi (conj Hlen (conj Hm Hd))). }
+      wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+      iApply ("IH" $! ic' (i + 1)%nat Φ with "Hmach'' Hic' HΦ Hok'").
+  - (* i ≥ n: return *)
+    iMod (machine_ctx_update γm (bc_machine root va mem n i) (bc_post_machine root va mem n)
+            with "Hmach") as "Hmach'".
+    wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    iAssert (∃ ic', intc_ctx γic ic' ∗ ⌜intc_step_ok ic' n n⌝)%I with "[Hic]" as "Hpost".
+    { iExists ic. iFrame "Hic".
+      iPureIntro. rewrite /intc_step_ok.
+      destruct Hok as (Hipi & Hlen & Hm & Hd).
+      assert (Hge : n ≤ i) by lia.
+      repeat split.
+      - rewrite Hipi. apply (ipi_prefix_ge n i Hge).
+      - exact Hlen.
+      - intros j Hjn. apply (Hm j Hjn).
+      - intros j Hjn. apply (Hd j Hjn). }
+    by iApply ("HΦ" with "[$Hmach' $Hpost]").
 Qed.
 
 End bc_remote_intc.
