@@ -485,6 +485,7 @@ if [ -d "$GP" ]; then
   # definitions (pending/masked/delivery/ipi as per-hart arrays).  No theorems
   # yet; compiled so the program stays in the build and regressions are caught.
   rocq compile $WFLAGS shootdown_weak_broadcast_intc.v
+  axiom_free shootdown_weak_broadcast_intc bc_init_intc_arrays_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"

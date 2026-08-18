@@ -192,3 +192,61 @@ Definition intc_cell `{!noprolG Σ} (pending masked delivery ipi : loc) (ic : in
   (masked >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false)) ∗
   (delivery >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false)) ∗
   (ipi >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_ipi ic) (Z.of_nat i) false)).
+
+(* Application helpers for the remaining program phases. *)
+Definition bc_init_intc_arrays_at (pending masked delivery ipi : loc) (i n : nat) : expr :=
+  App bc_init_intc_arrays [Lit (LitLoc pending); Lit (LitLoc masked); Lit (LitLoc delivery);
+                           Lit (LitLoc ipi); Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
+Definition bc_send_all_at (pending : loc) (i n : nat) : expr :=
+  App bc_send_all [Lit (LitLoc pending); Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
+Definition bc_fork_remotes_intc_at (pending masked delivery ipi ack tlb : loc) (i n : nat) : expr :=
+  App bc_fork_remotes_intc [Lit (LitLoc pending); Lit (LitLoc masked); Lit (LitLoc delivery);
+                            Lit (LitLoc ipi); Lit (LitLoc ack); Lit (LitLoc tlb);
+                            Lit (LitInt (Z.of_nat i)); Lit (LitInt (Z.of_nat n))].
+
+(* ============================================================
+   The controller-array initialisation: pending := 0, masked := 0 (unmasked),
+   delivery := 1 (delivery enabled), ipi := 0, for each core.  Mirrors
+   bc_init_acks_spec, with four cells per core instead of one.
+   ============================================================ *)
+
+Section bc_inv_intc.
+Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ, !bcG Σ, !intcG Σ}.
+
+Lemma bc_init_intc_arrays_spec (pending masked delivery ipi : loc) :
+  ∀ (i n : nat) tid,
+  {{{ [∗ set] j ∈ (all_cores n ∖ all_cores i),
+        (pending >> j) ↦ #☠ ∗ (masked >> j) ↦ #☠ ∗ (delivery >> j) ↦ #☠ ∗ (ipi >> j) ↦ #☠ }}}
+    bc_init_intc_arrays_at pending masked delivery ipi i n @ tid; ⊤
+  {{{ RET #☠; [∗ set] j ∈ (all_cores n ∖ all_cores i),
+        (pending >> j) ↦ #0 ∗ (masked >> j) ↦ #0 ∗ (delivery >> j) ↦ #1 ∗ (ipi >> j) ↦ #0 }}}.
+Proof.
+  iIntros (i n tid Φ) "Harr HΦ".
+  rewrite /bc_init_intc_arrays_at /bc_init_intc_arrays.
+  iLöb as "IH" forall (i Φ).
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    rewrite (all_cores_step n i Hin).
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton.
+    iDestruct "Harr" as "[Hcell Hrest]".
+    iDestruct "Hcell" as "(Hp & Hm & Hd & Hq)".
+    wp_op. rewrite Nat2Z.id. wp_write. (* pending[i] := 0 *)
+    wp_op. rewrite Nat2Z.id. wp_write. (* masked[i] := 0 *)
+    wp_op. rewrite Nat2Z.id. wp_write. (* delivery[i] := 1 *)
+    wp_op. rewrite Nat2Z.id. wp_write. (* ipi[i] := 0 *)
+    wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+    iApply ("IH" $! (i + 1)%nat Φ with "Hrest").
+    iIntros "!> Hrest'".
+    iApply "HΦ".
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton. iFrame.
+  - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    rewrite (all_cores_diff_empty n i); [|lia].
+    rewrite big_sepS_empty. by iApply "HΦ".
+Qed.
+
+End bc_inv_intc.
