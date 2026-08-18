@@ -90,9 +90,13 @@ carved out of.
   (`masked` = inverted `eie`/`GICR_ICENABLER0`) from the per-hart delivery gate
   (`delivery` = `eidelivery`/`sstatus.SIE`); a hart in interrupt context holds
   its interrupt pending and takes it only on exit (`intc_ack_in_context_noop`,
-  `test_vector_intc_exit_delivers`). Interrupt priority/EOI remain deliberate
-  omissions (outside the shootdown-IPI subset). The per-core "delivery precedes
-  ack" crux and the composed-broadcast refinement are done.
+  `test_vector_intc_exit_delivers`). **Interrupt priority selection modeled**
+  (`hardware/rocq/intc_priority.v`): `topei` = the least eligible identity
+  (`pending ∧ enabled ∧ below eithreshold`), with soundness/minimality/
+  completeness/priority proved and `vm_compute` vectors pinning the picks.
+  EOI/deactivation remain deliberate omissions (outside the shootdown-IPI
+  subset). The per-core "delivery precedes ack" crux and the
+  composed-broadcast refinement are done.
 
 ### SSG-4 — IOMMU / DMA controller
 

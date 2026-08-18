@@ -137,22 +137,30 @@ Verified `sail --just-check` passes and `intc.v` regenerates byte-identically.
 
 The interrupt-controller model is now cross-checked against both primary
 specifications (Arm IHI 0069 H.b and RISC-V AIA). The model abstracts away the
-parts Tessera does not yet reason about — interrupt priority, groups/security
-state, the active state and explicit deactivation (EOI), and distributor
-routing mode — and records them here as deliberate omissions, not silent
-assumptions:
+parts Tessera does not yet reason about — groups/security state, the active
+state and explicit deactivation (EOI), and distributor routing mode — and
+records them here as deliberate omissions, not silent assumptions. Interrupt
+**priority selection** (the `*topei` / ICC_IAR highest-priority pick) is now
+modeled separately in `hardware/rocq/intc_priority.v` (below).
 
 - **Active state / deactivation.** Real SGIs "have an active state and therefore
   require explicit deactivation" (IHI 0069 §1.2). The model collapses
   ack→deactivate into the single pending-clear: correct for the
   doorbell-delivery property, but not a model of interrupt nesting/priority.
-- **Priority & groups.** No priority, group (Group 0/1), or security-state
+- **Priority — now modeled.** `hardware/rocq/intc_priority.v` models the
+  `*topei` / ICC_IAR selection as a pure function over the per-hart file: the
+  *least* identity `i` such that `pending[i] ∧ enabled[i] ∧ (threshold = 0 ∨
+  i < threshold)` ("interrupts with lower identity numbers have higher
+  priorities", AIA IMSIC.adoc `*topei`; Arm ICC_IAR returns the INTID of the
+  highest-priority pending interrupt above ICC_PMR/ICC_BPR). Proved:
+  soundness (`topei_some_eligible`), minimality (`topei_minimal`),
+  completeness (`topei_none_no_eligible`), and priority over lower identities
+  (`topei_priority`), plus `vm_compute` vectors. The shootdown-IPI doorbell
+  (one pending bit) does not exercise this, so the `intc.sail` reification is
+  unaffected.
+- **Groups & security state.** No group (Group 0/1) or security-state
   distinction; `intc_ack` takes any pending, unmasked, delivery-enabled
-  interrupt. Real `*topei`/ICC_IAR additionally select the *highest-priority*
-  pending-and-enabled interrupt above the threshold — "Interrupts with lower
-  identity numbers have higher priorities" (AIA IMSIC.adoc, `*topei`) — which
-  the single-shootdown-IPI doorbell does not need. This is the SGI-IPI subset,
-  not the full GIC.
+  interrupt. This is the SGI-IPI subset, not the full GIC.
 - **Delivery ordering.** The model is sequential; the weak-memory ordering of
   the MSI/IPI write against the data it announces is the S2.4 concern
   (`shootdown_weak_broadcast.v`), left to that track, not to the device model.

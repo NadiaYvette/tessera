@@ -89,6 +89,7 @@ rocq compile $FLAGS ipi.v
 rocq compile $FLAGS intc_types.v
 rocq compile $FLAGS intc.v
 rocq compile $FLAGS intc_proofs.v
+rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS shootdown_iris.v
 
@@ -227,6 +228,17 @@ axiom_free intc_proofs      test_vector_intc_exit_delivers
 axiom_free intc_proofs      intc_receive_ipi_eq_deliver
 axiom_free intc_proofs      intc_receive_ipi_cores_eq_deliver
 axiom_free intc_proofs      test_vector_intc_receive_ipi_eq_deliver
+# interrupt priority selection (`*topei` / ICC_IAR): the least eligible identity
+# (lowest identity number = highest priority), threshold via `eithreshold`.
+axiom_free intc_priority    topei_some_eligible
+axiom_free intc_priority    topei_minimal
+axiom_free intc_priority    topei_none_no_eligible
+axiom_free intc_priority    topei_priority
+axiom_free intc_priority    test_vector_topei_highest_priority
+axiom_free intc_priority    test_vector_topei_skips_disabled
+axiom_free intc_priority    test_vector_topei_threshold
+axiom_free intc_priority    test_vector_topei_threshold_masks_all
+axiom_free intc_priority    test_vector_topei_none
 axiom_free conformance      translate_conforms
 axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
 axiom_free conformance      test_vector_mapping_ok
