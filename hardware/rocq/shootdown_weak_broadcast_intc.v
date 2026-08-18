@@ -70,30 +70,32 @@ Import ListNotations.
    leader's send loop and the remote's ack → observe-doorbell → flush.
    ============================================================ *)
 
-(* The controller's delivery step (`intc.intc_ack`): read pending[i], masked[i],
-   delivery[i]; if pending ∧ ¬masked ∧ delivery then clear pending[i] and ring
-   the doorbell ipi[i] (release), returning 1 (delivered); else return 0 (no
-   delivery).  The expression language has no `&&`/`¬` operators, so the gate is
-   three nested `if:` (each `if: c then A else B` runs A iff c is nonzero). *)
+(* The controller's delivery step (`intc.intc_ack`): read masked[i], delivery[i];
+   if ¬masked ∧ delivery then ring the doorbell ipi[i] (set #1), returning 1
+   (delivered); else return 0 (no delivery).  The `pending` conjunct of
+   intc.intc_ack's gate is established by the remote's prior `!ᵃᶜ` of pending[i]
+   (it reads #1, so the IPI is pending), and intc.intc_ack's *clear* of pending
+   is a ghost effect: no one re-reads pending[i] after the ack, so the heap
+   write is unobservable and the leader applies intc_ack to the ghost Intc at
+   wait time (reifying the mailbox).  The expression language has no `&&`/`¬`
+   operators, so the gate is two nested `if:` (each `if: c then A else B` runs A
+   iff c is nonzero). *)
 Definition intc_ack_op : val :=
-  λ: ["pending"; "masked"; "delivery"; "ipi"; "i"],
-    let: "p" := !("pending" +ₗ "i") in
+  λ: ["masked"; "delivery"; "ipi"; "i"],
     let: "m" := !("masked" +ₗ "i") in
     let: "d" := !("delivery" +ₗ "i") in
-    if: "p" then
-      if: "m" then #0
-      else if: "d"
-           then ("pending" +ₗ "i") <- #0 ;; ("ipi" +ₗ "i") <-ʳᵉˡ #1 ;; #1
-           else #0
-    else #0.
+    if: "m" then #0
+    else if: "d" then ("ipi" +ₗ "i") <- #1 ;; #1
+         else #0.
 
 (* The remote: acquire pending[i] (the IPI is sent), ack via the controller
-   (delivery), acquire its doorbell ipi[i], clear its TLB, release ack[i]. *)
+   (delivery, gated on ¬masked ∧ delivery), observe its doorbell ipi[i], clear
+   its TLB, release ack[i]. *)
 Definition bc_remote_intc : val :=
   λ: ["pending"; "masked"; "delivery"; "ipi"; "ack"; "tlb"; "i"],
     (repeat: !ᵃᶜ("pending" +ₗ "i")) ;;
-    intc_ack_op ["pending"; "masked"; "delivery"; "ipi"; "i"] ;;
-    (repeat: !ᵃᶜ("ipi" +ₗ "i")) ;;
+    intc_ack_op ["masked"; "delivery"; "ipi"; "i"] ;;
+    (repeat: !("ipi" +ₗ "i")) ;;
     ("tlb" +ₗ "i") <- #(encode_tlb None) ;;
     ("ack" +ₗ "i") <-ʳᵉˡ #1.
 
@@ -307,3 +309,145 @@ Proof.
 Qed.
 
 End bc_send.
+
+(* ============================================================
+   The broadcast invariant (device-in-the-loop): the sent pending cells
+   (go_released, one per core) and the per-core ack cells.  masked/delivery/ipi
+   are NA cells held by the remote (not shared), so they live outside the
+   invariant and are transferred to the remote at fork time.
+   ============================================================ *)
+
+Section bc_remote_intc.
+Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ, !bcG Σ, !intcG Σ}.
+Context (γm : gname) (root : mword 44) (va : mword 64) (mem : list MemEntry).
+#[local] Abbreviation vProp := (vProp Σ).
+
+Definition bc_inv_intc_def (γp γtok γack : nat → gname) (pending ack tlb : loc) (n : nat) : vProp :=
+  ([∗ set] j ∈ all_cores n,
+     go_released (pending >> j) (γp j) ∗
+     ack_cell va (ack >> j) (tlb >> j) (γtok j) (γack j))%I.
+Definition bc_inv_intc_aux : seal (@bc_inv_intc_def). Proof. by eexists. Qed.
+Definition bc_inv_intc := unseal bc_inv_intc_aux.
+Definition bc_inv_intc_eq : @bc_inv_intc = _ := seal_eq _.
+
+#[global] Instance bc_inv_intc_objective γp γtok γack pending ack tlb n :
+  Objective (bc_inv_intc γp γtok γack pending ack tlb n).
+Proof.
+  rewrite bc_inv_intc_eq. apply _.
+Qed.
+
+Definition bc_N_intc (pending : loc) := nroot .@ "bcIntcN" .@ pending.
+Definition bc_inv_intc_ctx (γp γtok γack : nat → gname) (pending ack tlb : loc) (n : nat) :=
+  inv (bc_N_intc pending) (bc_inv_intc γp γtok γack pending ack tlb n).
+
+(* ============================================================
+   The remote: acquire pending[i] (the IPI is sent), ack via the controller
+   (gate on ¬masked ∧ delivery, then ring the doorbell), observe the doorbell,
+   clear own TLB, release ack[i].
+   ============================================================ *)
+
+Lemma bc_remote_intc_spec (γp γtok γack : nat → gname)
+    (pending masked delivery ipi ack tlb : loc) (i n : nat) :
+  ∀ (ζp : absHist) (t_i : positive) (Vp V_i : view) tid,
+  {{{ ⌜i < n⌝ ∗ bc_inv_intc_ctx γp γtok γack pending ack tlb n ∗
+      (pending >> i) sy⊒{γp i} ζp ∗ ⊒Vp ∗ ⊒V_i ∗
+      (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #1 ∗ (ipi >> i) ↦ #0 ∗
+      (ack >> i) sw⊒{γack i} {[t_i := (#0, V_i)]} ∗ (tlb >> i) ↦ #☠ }}}
+    bc_remote_intc_at pending masked delivery ipi ack tlb i @ tid; ⊤
+  {{{ RET #☠; True }}}.
+Proof.
+  iIntros (ζp t_i Vp V_i tid Φ) "(%Hi & #HI & #Sp & #SVp & #SVi & Hm & Hd & Hq & SWack & Htlb) HΦ".
+  rewrite /bc_remote_intc_at /bc_remote_intc.
+  wp_lam.
+  (* -------- acquire pending[i] (repeat until #1) -------- *)
+  wp_bind (repeat: !ᵃᶜ(#pending +ₗ #i))%E.
+  iLöb as "IH".
+  iApply wp_repeat; [done|].
+  wp_op. rewrite Nat2Z.id.
+  iInv (bc_N_intc pending) as "INV" "Close". rewrite bc_inv_intc_eq.
+  iDestruct (big_sepS_delete _ (all_cores n) i with "INV") as "[Hcell INV_rest]".
+  { rewrite elem_of_all_cores. exact Hi. }
+  iDestruct "Hcell" as "[Hrel Hack]".
+  rewrite go_released_eq.
+  iDestruct "Hrel" as (ζ t0 t1 V0 V1 Vx) "[>Pts Hpure]".
+  iApply (AtomicSeen_acquire_read with "[$Pts $SVp]"); [solve_ndisj|..].
+  { by iApply (AtomicSync_AtomicSeen with "Sp"). }
+  iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Pts)".
+  iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
+  case (decide (t' = t0)) => [Ht0|NEqt0].
+  - subst t'. (* read #0 — keep looping *)
+    iAssert (⌜v' = #0⌝)%I as %Eq0.
+    { iDestruct "Hpure" as "[%Lt1 %Hζ]".
+      iPureIntro.
+      rewrite Hζ in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+      rewrite lookup_insert_ne in Sub2.
+      + rewrite lookup_insert_eq in Sub2. by inversion Sub2.
+      + clear -Lt1. intros ?. subst. lia. }
+    iMod ("Close" with "[Pts Hpure INV_rest Hack]").
+    { iIntros "!>". rewrite /bc_inv_intc_def. iApply (big_sepS_delete _ (all_cores n) i).
+      { rewrite elem_of_all_cores. exact Hi. }
+      rewrite go_released_eq. iFrame "INV_rest". iSplitL "Pts Hpure"; [|iFrame "Hack"].
+      iExists ζ, t0, t1, V0, V1, _. iFrame "Pts Hpure". }
+    iIntros "!>". iExists 0. iSplit; [done|].
+    iIntros "!> !>". by iApply ("IH" with "Hm Hd Hq SWack Htlb HΦ").
+  - (* read #1 — proceed *)
+    iDestruct "Hpure" as "[%Lt1 %Hζ]".
+    rewrite Hζ in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+    have Ht1 : t' = t1.
+    { case (decide (t' = t1)) => [//|NEqt1].
+      exfalso. by rewrite !lookup_insert_ne // in Sub2. }
+    subst t'.
+    rewrite lookup_insert_eq in Sub2. inversion Sub2. subst v'.
+    iMod ("Close" with "[Pts INV_rest Hack]").
+    { iIntros "!>". rewrite /bc_inv_intc_def. iApply (big_sepS_delete _ (all_cores n) i).
+      { rewrite elem_of_all_cores. exact Hi. }
+      rewrite go_released_eq. iFrame "INV_rest". iSplitL "Pts"; [|iFrame "Hack"].
+      iExists ζ, t0, t1, V0, V1, _. iFrame "Pts".
+      iPureIntro. split; [exact Lt1|exact Hζ]. }
+    iIntros "!>". iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
+  (* -------- the ack: read masked[i], delivery[i], ring the doorbell -------- *)
+  rewrite /intc_ack_op.
+  wp_lam.
+  wp_op. rewrite Nat2Z.id. wp_read. wp_let.   (* m := !(masked+i) = #0 *)
+  wp_op. rewrite Nat2Z.id. wp_read. wp_let.   (* d := !(delivery+i) = #1 *)
+  wp_if.                                     (* m = #0 → else branch *)
+  wp_if.                                     (* d = #1 → then branch *)
+  wp_op. rewrite Nat2Z.id. wp_write.         (* ipi[i] := #1 *)
+  wp_seq.
+  (* -------- observe the doorbell (repeat ! ipi[i]) -------- *)
+  wp_bind (repeat: !(#ipi +ₗ #i))%E.
+  iLöb as "IHq".
+  iApply wp_repeat; [done|].
+  wp_op. rewrite Nat2Z.id. wp_read.
+  iExists 1. iSplit; [done|]. iIntros "!> !>". wp_seq.
+  (* -------- clear own TLB -------- *)
+  wp_op. rewrite Nat2Z.id. wp_write.
+  (* -------- release ack[i] (deposit the cleared tlb) -------- *)
+  wp_op. rewrite Nat2Z.id.
+  iInv (bc_N_intc pending) as "INV" "Close". rewrite bc_inv_intc_eq.
+  iDestruct (big_sepS_delete _ (all_cores n) i with "INV") as "[Hcell INV_rest]".
+  { rewrite elem_of_all_cores. exact Hi. }
+  iDestruct "Hcell" as "[Hrel Hack]".
+  rewrite ack_cell_eq.
+  iDestruct "Hack" as (ζa b ta0 Va0 Vax) "[>Ptsa >Own]".
+  iDestruct (AtomicPtsTo_AtomicSWriter_agree_1 with "Ptsa SWack") as %->.
+  destruct b.
+  + iDestruct "Own" as (tb Vb [Ltb Hb]) "_".
+    exfalso. exact (singleton_ne_released t_i ta0 tb V_i Va0 Vb Ltb Hb).
+  + iDestruct "Own" as %Hown0.
+    iApply (AtomicSWriter_release_write _ _ _ _ V_i Vax #1
+              ((tlb >> i) ↦{1} #(encode_tlb None))%I
+              with "[$SWack $Ptsa $Htlb $SVi]"); [solve_ndisj|..].
+    iIntros "!>" (t1' V1') "(%MAX & SeenV1' & [Htlb SWack'] & Ptsa')".
+    iMod ("Close" with "[Hrel INV_rest Ptsa' Htlb]"); last first.
+    { iIntros "!>". by iApply "HΦ". }
+    iIntros "!>". rewrite /bc_inv_intc_def. iApply (big_sepS_delete _ (all_cores n) i).
+    { rewrite elem_of_all_cores. exact Hi. }
+    rewrite go_released_eq. rewrite ack_cell_eq. iFrame "INV_rest". iSplitL "Hrel"; [done|].
+    iExists _, true, t_i, V_i, _. iFrame "Ptsa'".
+    iExists t1', V1'. iSplit.
+    { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
+    iRight. rewrite (flush_tlb_entry_leaf va). by iFrame "Htlb".
+Qed.
+
+End bc_remote_intc.

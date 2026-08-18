@@ -482,11 +482,11 @@ if [ -d "$GP" ]; then
   rocq compile $WFLAGS shootdown_weak_broadcast.v
   rocq compile $WFLAGS intc_weak_broadcast.v
   # S2.5 (program, full controller in the loop): the device-in-the-loop program
-  # definitions (pending/masked/delivery/ipi as per-hart arrays).  No theorems
-  # yet; compiled so the program stays in the build and regressions are caught.
+  # (pending/masked/delivery/ipi as per-hart arrays) and its specs.
   rocq compile $WFLAGS shootdown_weak_broadcast_intc.v
   axiom_free shootdown_weak_broadcast_intc bc_init_intc_arrays_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc bc_send_all_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast_intc bc_remote_intc_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"
