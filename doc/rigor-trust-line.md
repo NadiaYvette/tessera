@@ -47,6 +47,19 @@ source of the *proforma* ISA-specification discipline and the conformance
 "proof obligations" Tessera's `conformance.v` (G1) restates at the leaf level;
 see §5 G1 below.
 
+**The hardware-RTL template (out of scope for now, noted for the
+compiler/`frankenstein`-`organ-bank` angle).** Sail models the *ISA* (what the
+architecture specifies); it does not verify the *RTL* that implements it. The
+reference for the latter — parametric, modular hardware verification in Coq —
+is *"Kami: A Platform for High-Level Parametric Hardware Specification and its
+Modular Verification"* (Choi, Vijayaraghavan, Sherman, Chlipala, Arvind —
+**ICFP 2017**), on hand as `~/Dokumente/Kami.pdf`. Tessera currently stops at the
+ISA level (the Sail models *are* the specification, not the implementation); if
+an RTL-verification track is ever opened (e.g. for the radically modified
+compilers in `~/src/frankenstein/` + `~/src/organ-bank/`), Kami is the template
+to mirror. Not on the current trust line — the trust line only reaches the ISA
+model, never silicon.
+
 ## 2. The trust stack (top = most trusted)
 
 ```
