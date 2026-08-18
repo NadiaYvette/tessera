@@ -250,3 +250,60 @@ Proof.
 Qed.
 
 End bc_inv_intc.
+
+(* ============================================================
+   The leader's send: release (send) pending[i] for every core, mirroring the
+   single `go <-ʳᵉˡ #1` in bc_broadcast_spec.  Each release leaves the cell in
+   go_released (history {t0:#0} extended with {t1:#1}), which the remote then
+   acquires.  The controller's Intc_pending bit is latched by this release (the
+   intc_send); the ghost is stepped by the leader in the broadcast spec.
+   ============================================================ *)
+
+Section bc_send.
+Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ, !bcG Σ, !intcG Σ}.
+
+Lemma bc_send_all_spec (pending : loc) :
+  ∀ (γp : nat → gname) (t : nat → positive) (V : nat → view) (i n : nat) tid,
+  {{{ [∗ set] j ∈ (all_cores n ∖ all_cores i),
+        (pending >> j) sw⊒{γp j} {[t j := (#0, V j)]} ∗
+        (pending >> j) sw↦{γp j} {[t j := (#0, V j)]} ∗
+        ⊒(V j) }}}
+    bc_send_all_at pending i n @ tid; ⊤
+  {{{ RET #☠; [∗ set] j ∈ (all_cores n ∖ all_cores i),
+        go_released (pending >> j) (γp j) }}}.
+Proof.
+  iIntros (γp t V i n tid Φ) "Hp HΦ".
+  rewrite /bc_send_all_at /bc_send_all.
+  iLöb as "IH" forall (i Φ).
+  wp_lam.
+  destruct (decide (i < n)) as [Hin | Hnot].
+  - wp_op. rewrite bool_decide_true; [|lia]. wp_if.
+    rewrite (all_cores_step n i Hin).
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton.
+    iDestruct "Hp" as "[Hcell Hrest]".
+    iDestruct "Hcell" as "(SW_i & Pts_i & SV_i)".
+    iDestruct (view_at_intro with "Pts_i") as (Vx) "[_ Pts_i]".
+    wp_op. rewrite Nat2Z.id.
+    wp_apply (AtomicSWriter_release_write _ _ _ _ (V i) Vx #1 True%I
+                with "[$SW_i $Pts_i $SV_i]"); [solve_ndisj|..].
+    iIntros (t1 V1) "(%MAX & _ & [_ SW_i'] & Pts_i')".
+    iAssert (go_released (pending >> i) (γp i))%I with "[Pts_i']" as "Hrel".
+    { rewrite go_released_eq. iExists _, (t i), t1, (V i), V1, _. iFrame "Pts_i'".
+      iPureIntro. split; [|done]. destruct MAX as [Hfresh _]. apply Hfresh.
+      rewrite lookup_insert_eq. by eexists. }
+    wp_seq.
+    wp_op. replace (Z.of_nat i + 1)%Z with (Z.of_nat (i + 1))%Z by lia.
+    iApply ("IH" $! (i + 1)%nat Φ with "Hrest").
+    iIntros "!> Hrest'".
+    iApply "HΦ".
+    rewrite big_sepS_union; last first.
+    { apply singleton_notin_diff. exact Hin. }
+    rewrite big_sepS_singleton. iFrame.
+  - wp_op. rewrite bool_decide_false; [|lia]. wp_if.
+    rewrite (all_cores_diff_empty n i); [|lia].
+    rewrite big_sepS_empty. by iApply "HΦ".
+Qed.
+
+End bc_send.
