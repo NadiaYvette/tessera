@@ -77,7 +77,7 @@ Lower-novelty also seen: `pgcl_page_folio` partial conversion → double-free (`
 - **PTE-vector vs single-entry, the recurring spine:** #1,#2,#5,#13 — because all c sub-PTEs share one `struct page`, every op must treat the per-KAU answer (refcount, mapcount, dirty, referenced) as the correct aggregation over the c-vector (inv2, inv5). The Option-A/B fracture (#5) is the purest case.
 - **Partially-populated KAU:** #3,#14,#19 — gapped sub-PTEs within a KAU; the proof must let a KAU be a *partial* map over its c slots and still refine Layer S.
 
-## E) Executable vectors (AArch64, 2026-08-17)
+## E) Executable vectors (2026-08-18)
 
 #9, #10 and #12 are now pinned as executable, axiom-free `vm_compute` vectors in
 `hardware/rocq/aarch64_pgcl.v` (over the `aarch64_tlb` variant):
@@ -90,8 +90,15 @@ Lower-novelty also seen: `pgcl_page_folio` partial conversion → double-free (`
   (c−1 stale entries → lookup still hits), vs a single correct insert + demap
   which removes the translation entirely (inv7: TLB ⊄ mapping).
 
-#7 (THP split phantom `_mapcount=0`) and #8 (split loop bound RSS leak) are not
-pinned as executable vectors yet: they need the sequential M1–M3 split/mapcount
-model (per-sub-slot reset + mapcount aggregation) that isn't built in this
-repo — they're documented as in-scope for the M2 split/demote work rather than
-the TLB-encoding layer.
+#7 (THP split phantom `_mapcount=0`) and #8 (`__split_huge_zero_page_pmd` loop
+bound / RSS leak) are now also pinned, in `hardware/rocq/pgcl_split.v` — the
+sequential M1–M3 split/mapcount model (plain `list Z`/`bool`, no Sail types):
+
+- `test_vector_pgcl7_*` — `split_correct` (the fixed `__split_folio_to_order`)
+  yields the invariant "mapped iff a live PTE/migration entry references the
+  sub-page" (`split_correct_sound`); the pre-fix `split_buggy` leaves the head
+  phantom-mapped (`_mapcount = 0`, no PTE) — the free-while-mapped UAF, inv4.
+- `test_vector_pgcl8_*` — the correct huge-zero-page split populates all
+  HPAGE_PMD_MMUNR = 512 slots (`pte_none` count 0), while the buggy loop
+  (HPAGE_PMD_NR = 32 iterations) leaves 480 of 512 slots `pte_none` — the
+  commit's own numbers, i.e. `n_kau*(c-1)` RSS-leak slots (`huge_zero_split_buggy_none_count`).

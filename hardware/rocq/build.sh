@@ -81,6 +81,7 @@ rocq compile $FLAGS sail_arm_tlb.v
 rocq compile $FLAGS mword_lemmas.v
 rocq compile $FLAGS aarch64_sail_oracle.v
 rocq compile $FLAGS aarch64_pgcl.v
+rocq compile $FLAGS pgcl_split.v
 rocq compile $FLAGS shootdown.v
 rocq compile $FLAGS machine_reify.v
 rocq compile $FLAGS data_ram.v
@@ -416,6 +417,23 @@ axiom_free aarch64_pgcl test_vector_pgcl10_full_flush_clears
 axiom_free aarch64_pgcl test_vector_pgcl12_single_demap
 axiom_free aarch64_pgcl test_vector_pgcl12_overinsert_stale
 axiom_free aarch64_pgcl test_vector_pgcl12_overinsert_count
+# pgcl failure-mode vectors #7 (THP split phantom _mapcount) and #8
+# (__split_huge_zero_page_pmd loop bound / RSS leak): the sequential M1-M3
+# split/mapcount model in pgcl_split.v (plain lists, no Sail types).
+axiom_free pgcl_split split_correct_sound
+axiom_free pgcl_split huge_zero_split_correct_no_none
+axiom_free pgcl_split huge_zero_split_buggy_none_count
+axiom_free pgcl_split test_vector_pgcl7_buggy_head_phantom
+axiom_free pgcl_split test_vector_pgcl7_buggy_head_no_pte
+axiom_free pgcl_split test_vector_pgcl7_buggy_unsound
+axiom_free pgcl_split test_vector_pgcl7_correct_head_unmapped
+axiom_free pgcl_split test_vector_pgcl7_correct_sound
+axiom_free pgcl_split test_vector_pgcl7_buggy_head_phantom_c16
+axiom_free pgcl_split test_vector_pgcl8_correct_no_none
+axiom_free pgcl_split test_vector_pgcl8_buggy_480_none
+axiom_free pgcl_split test_vector_pgcl8_buggy_rss_leak
+axiom_free pgcl_split test_vector_pgcl8_correct_rss_leak
+axiom_free pgcl_split test_vector_pgcl8_buggy_small_none
 axiom_free_drain "$FLAGS"
 
 # --- 6. S2.2: the weak-memory (gpfsl/ORC11) shootdown, over the generated machine ---
