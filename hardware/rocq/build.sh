@@ -91,6 +91,7 @@ rocq compile $FLAGS intc.v
 rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
+rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS shootdown_iris.v
 
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
@@ -264,6 +265,16 @@ axiom_free conformance      test_vector_napot_conforms
 axiom_free conformance      test_vector_napot_bad_conforms
 axiom_free conformance      test_vector_napot_nonleaf_faults
 axiom_free conformance      test_vector_napot_nonleaf_conforms
+# IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
+# unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
+# from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
+axiom_free iommu_proofs      iotlb_invalidate_removes
+axiom_free iommu_proofs      iommu_unmap_faults
+axiom_free iommu_proofs      iommu_unmap_correct
+axiom_free iommu_proofs      iommu_unmap_without_invalidate_breaks
+axiom_free iommu_proofs      test_vector_iommu_invalidate_va0
+axiom_free iommu_proofs      test_vector_iommu_invalidate_va4096
+axiom_free iommu_proofs      test_vector_iommu_walk_empty_faults
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf
