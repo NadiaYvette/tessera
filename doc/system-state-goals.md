@@ -63,18 +63,28 @@ carved out of.
   **shootdown IPI** — plus masking and interrupt context.
 - **Integrity.** An IPI is delivered exactly once to each target; an ack is observed
   only after delivery; no lost or duplicated shootdown.
-- **Modeled today.** *Mostly (S2.3 done).* `Machine.ipi` (per-core mailbox),
+- **Modeled today.** *Mostly (S2.3 + SSG-3 device done).* `Machine.ipi` (per-core mailbox),
   `deliver_ipi`/`receive_ipi` transitions added, and "delivery precedes ack" proved
   (`hardware/rocq/ipi.v`: `receive_ipi_before_delivery_noop` — an undelivered remote
   cannot flush; `receive_ipi_after_delivery_sfences` — a delivered remote flushes
   its own core). The composed `ipi_broadcast` (invalidate the leaf PTE, deliver to,
   then receive from, every core) is proven to refine the functional
   `invalidate_shootdown` (`ipi_broadcast_refines_invalidate_shootdown`,
-  `ipi_broadcast_correct`). telix's real mechanism is `broadcast_tlb_flush` (LAPIC
-  vec 0xFC / PLIC).
-- **Proof needed.** The concurrent/weak-memory lift of the IPI-based protocol
-  (S2.4), plus masking and interrupt context (SSG-3's other half). The per-core
-  "delivery precedes ack" crux and the composed-broadcast refinement are done.
+  `ipi_broadcast_correct`). The *device* that produces those delivered bits is
+  modeled in `hardware/src/intc.sail` (a GIC-SGI / RISC-V-AIA-IPI subset:
+  `intc_send`/`intc_mask`/`intc_unmask`/`intc_ack`), and `intc_proofs.v` proves
+  send+ack refines `deliver_ipi` (`intc_send_ack_refines_deliver_ipi`) and a
+  controller-produced mailbox flushes exactly core i
+  (`intc_delivery_enables_receive_ipi`). **Primary-source cross-check done** —
+  `doc/interrupt-controller.md` maps each stage to Arm IHI 0069 H.b (§1.2, §2.2.1,
+  §4.4, §4.7.1) and RISC-V AIA (IPIs.adoc / IMSIC.adoc). telix's real mechanism is
+  `broadcast_tlb_flush` (LAPIC vec 0xFC / PLIC).
+- **Proof needed.** The concurrent/weak-memory lift of the IPI-based protocol with
+  the *device* (intc.sail's send/ack) in the loop rather than the pure mailbox
+  (S2.4 threaded `Machine_ipi`; the remaining lift swaps `deliver_ipi` for the
+  controller's `intc_send`+`intc_ack`), plus masking and interrupt context (SSG-3's
+  other half). The per-core "delivery precedes ack" crux and the
+  composed-broadcast refinement are done.
 
 ### SSG-4 — IOMMU / DMA controller
 
