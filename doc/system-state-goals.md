@@ -112,10 +112,20 @@ carved out of.
   It is the device↔IOMMU *interface*: **ATS** (Address Translation Services —
   translation requests/completions, the IOTLB), **PRI** (Page Request Interface —
   device-side page faults), and **PASID/TLP prefixes** (shared virtual memory).
-  The *IOMMU walker/invalidation* semantics themselves live in the platform specs
-  (Intel VT-d / Arm SMMUv3), which are the second half of this track and still to
-  be sourced. So the replay reuses Stage 1/2 for the CPU side, and ATS/PRI for the
-  device side of the same `IOTLB ⊆ mapping` invariant.
+  The *IOMMU walker/invalidation* semantics themselves are now sourced too:
+  `~/Dokumente/D51397-019-vt-directed-io-spec.pdf` (**Intel VT-d, Rev 5.20,
+  April 2026**, order D51397-019). Relevant chapters for the `IOTLB ⊆ mapping`
+  replay: §3 (domains + address translation — legacy §3.4.2 / scalable §3.4.3
+  first-level+second-level), §6.2 (address-translation caches — context-cache
+  §6.2.2, PASID-cache §6.2.3, **IOTLB §6.2.4**), §6.5 (invalidation of
+  translation caches — the queued-invalidation descriptors: **IOTLB Invalidate
+  §6.5.2.3**, PASID-based IOTLB §6.5.2.4, **Device-TLB Invalidate §6.5.2.5**, and
+  the Invalidation-Wait descriptor §6.5.2.9 — i.e. the IOMMU shootdown), §4
+  (ATS: invalidation request/completion §4.1.4, device-TLB invalidations §4.3),
+  and §7 (address-translation faults + page-request handling §7.4.1 — the PRI
+  side). So the replay reuses Stage 1/2 for the CPU side, ATS/PRI for the device
+  side, and VT-d §3/§6.2/§6.5 for the IOMMU walker + invalidation, all on the
+  same `IOTLB ⊆ mapping` invariant. (Arm SMMUv3 remains the cross-check source.)
 
 ### SSG-5 — Timer device(s)
 
