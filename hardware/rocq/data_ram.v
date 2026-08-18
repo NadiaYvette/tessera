@@ -77,7 +77,8 @@ Definition store_byte (m : Machine) (pa : paddr) (v : mword 8) : Machine :=
   | RAM  => {| Machine_cores := m.(Machine_cores);
                Machine_mem   := m.(Machine_mem);
                Machine_ram   := write_byte (Machine_ram m) pa v;
-               Machine_ipi   := m.(Machine_ipi) |}
+               Machine_ipi   := m.(Machine_ipi);
+               Machine_iotlb := m.(Machine_iotlb) |}
   | MMIO => m
   end.
 
@@ -102,7 +103,8 @@ Lemma store_byte_ram_writes (m : Machine) (pa : paddr) (v : mword 8) :
   store_byte m pa v = {| Machine_cores := m.(Machine_cores);
                          Machine_mem   := m.(Machine_mem);
                          Machine_ram   := write_byte (Machine_ram m) pa v;
-                         Machine_ipi   := m.(Machine_ipi) |}.
+                         Machine_ipi   := m.(Machine_ipi);
+                         Machine_iotlb := m.(Machine_iotlb) |}.
 Proof. intros H. unfold store_byte. rewrite H. reflexivity. Qed.
 
 (* Load-after-store through the decode (RAM window): the byte is visible. *)

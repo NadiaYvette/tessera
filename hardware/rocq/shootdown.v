@@ -31,7 +31,8 @@ Definition shootdown (m : Machine) (root : mword 44) (va : mword 64) : Machine :
   {| Machine_mem := unmap_leaf_mem (core_with_root root) m.(Machine_mem) va;
      Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
      Machine_ram := m.(Machine_ram);
-     Machine_ipi := m.(Machine_ipi) |}.
+     Machine_ipi := m.(Machine_ipi);
+     Machine_iotlb := m.(Machine_iotlb) |}.
 
 (* ============================================================
    Lemmas.
@@ -128,7 +129,8 @@ Proof.
     {| Machine_mem := mem;
        Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
        Machine_ram := [];
-       Machine_ipi := [] |}
+       Machine_ipi := [];
+       Machine_iotlb := [] |}
     root va Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.
@@ -162,7 +164,8 @@ Definition invalidate_shootdown (m : Machine) (root : mword 44) (va : mword 64) 
   {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
      Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
      Machine_ram := m.(Machine_ram);
-     Machine_ipi := m.(Machine_ipi) |}.
+     Machine_ipi := m.(Machine_ipi);
+     Machine_iotlb := m.(Machine_iotlb) |}.
 
 Theorem invalidate_shootdown_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
   p.(Pte_valid) = false ->
@@ -198,7 +201,8 @@ Proof.
     {| Machine_mem := mem;
        Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
        Machine_ram := [];
-       Machine_ipi := [] |}
+       Machine_ipi := [];
+       Machine_iotlb := [] |}
     root va p Hinv Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.

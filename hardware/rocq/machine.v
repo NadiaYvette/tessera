@@ -110,6 +110,18 @@ Definition undefined_Byte '(tt : unit) : M (Byte) :=
    (undefined_bitvector (8)) >>= fun (w__1 : mword 8) =>
    returnM (({| Byte_addr := w__0;  Byte_data := w__1 |})).
 
+Definition undefined_IotlbEntry '(tt : unit) : M (IotlbEntry) :=
+   (undefined_int (tt)) >>= fun (w__0 : Z) =>
+   (undefined_int (tt)) >>= fun (w__1 : Z) =>
+   (undefined_bitvector (64)) >>= fun (w__2 : mword 64) =>
+   (undefined_bitvector (56)) >>= fun (w__3 : mword 56) =>
+   (undefined_Perm (tt)) >>= fun (w__4 : Perm) =>
+   returnM (({| IotlbEntry_did := w__0;
+                IotlbEntry_pasid := w__1;
+                IotlbEntry_iova := w__2;
+                IotlbEntry_pa := w__3;
+                IotlbEntry_perm := w__4 |})).
+
 Definition vpn2 (va : mword 64) : mword 9 := subrange_vec_dec (va) (38) (30).
 
 Definition vpn1 (va : mword 64) : mword 9 := subrange_vec_dec (va) (29) (21).
@@ -210,6 +222,19 @@ Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
       else None
    end.
 
+Definition iommu_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
+: option ((mword 56 * Perm)) :=
+   translate (({| Core_satp_ppn := root;  Core_tlb := [];  Core_hart := 0;  Core_node := 0 |}))
+     (mem) (iova).
+
+Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=
+   match entries with
+   | [] => []
+   | e :: rest =>
+      if eq_vec ((vpn_of (e.(IotlbEntry_iova)))) ((vpn_of (va))) then iotlb_invalidate (rest) (va)
+      else e :: (iotlb_invalidate (rest) (va))
+   end.
+
 Definition tag_eq (e : TlbEntry) (vpn : mword 27) : bool :=
    if e.(TlbEntry_napot) then
      eq_vec ((subrange_vec_dec (e.(TlbEntry_vpn)) (26) (4))) ((subrange_vec_dec (vpn) (26) (4)))
@@ -268,7 +293,8 @@ Definition deliver_ipi (m : Machine) (i : Z) : Machine :=
    {| Machine_cores := m.(Machine_cores);
       Machine_mem := m.(Machine_mem);
       Machine_ram := m.(Machine_ram);
-      Machine_ipi := list_update_bool (m.(Machine_ipi)) (i) (true) |}.
+      Machine_ipi := list_update_bool (m.(Machine_ipi)) (i) (true);
+      Machine_iotlb := m.(Machine_iotlb) |}.
 
 Fixpoint receive_ipi_cores (cores : list Core) (i : Z) (delivered : bool) (va : mword 64)
 : list Core :=
@@ -285,7 +311,8 @@ Definition receive_ipi (m : Machine) (i : Z) (va : mword 64) : Machine :=
           (va);
       Machine_mem := m.(Machine_mem);
       Machine_ram := m.(Machine_ram);
-      Machine_ipi := m.(Machine_ipi) |}.
+      Machine_ipi := m.(Machine_ipi);
+      Machine_iotlb := m.(Machine_iotlb) |}.
 
 Definition initialize_registers '(tt : unit) : unit := tt.
 

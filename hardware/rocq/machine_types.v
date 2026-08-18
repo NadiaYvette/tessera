@@ -324,55 +324,119 @@ Instance dummy_Byte : Inhabited (Byte) := {
 
 Definition Ram : Type := list Byte.
 
+Record IotlbEntry := {
+  IotlbEntry_did : Z;
+  IotlbEntry_pasid : Z;
+  IotlbEntry_iova : vaddr_typ;
+  IotlbEntry_pa : paddr;
+  IotlbEntry_perm : Perm;
+}.
+Arguments IotlbEntry : clear implicits.
+#[export]
+Instance Decidable_eq_IotlbEntry : EqDecision IotlbEntry.
+   intros [x0 x1 x2 x3 x4].
+   intros [y0 y1 y2 y3 y4].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
+  cmp_record_field x4 y4.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_IotlbEntry : Countable IotlbEntry.
+refine {|
+  encode x := encode (IotlbEntry_did x, IotlbEntry_pasid x, IotlbEntry_iova x, IotlbEntry_pa x, IotlbEntry_perm x);
+  decode x := '(x0, x1, x2, x3, x4) ← decode x;
+              mret (Build_IotlbEntry x0 x1 x2 x3 x4)
+|}.
+abstract (
+  intros [x0 x1 x2 x3 x4];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'IotlbEntry_did' := e ]}" :=
+  match r with Build_IotlbEntry _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) =>
+    Build_IotlbEntry e f1 f2 f3 f4 end (at level 0).
+Notation "{[ r 'with' 'IotlbEntry_pasid' := e ]}" :=
+  match r with Build_IotlbEntry (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) =>
+    Build_IotlbEntry f0 e f2 f3 f4 end (at level 0).
+Notation "{[ r 'with' 'IotlbEntry_iova' := e ]}" :=
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) =>
+    Build_IotlbEntry f0 f1 e f3 f4 end (at level 0).
+Notation "{[ r 'with' 'IotlbEntry_pa' := e ]}" :=
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) =>
+    Build_IotlbEntry f0 f1 f2 e f4 end (at level 0).
+Notation "{[ r 'with' 'IotlbEntry_perm' := e ]}" :=
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ =>
+    Build_IotlbEntry f0 f1 f2 f3 e end (at level 0).
+#[export]
+Instance dummy_IotlbEntry : Inhabited (IotlbEntry) := {
+  inhabitant := {|
+    IotlbEntry_did := inhabitant;
+    IotlbEntry_pasid := inhabitant;
+    IotlbEntry_iova := inhabitant;
+    IotlbEntry_pa := inhabitant;
+    IotlbEntry_perm := inhabitant
+|} }.
+
+
 Record Machine := {
   Machine_cores : list Core;
   Machine_mem : PageTable;
   Machine_ram : Ram;
   Machine_ipi : list bool;
+  Machine_iotlb : list IotlbEntry;
 }.
 Arguments Machine : clear implicits.
 #[export]
 Instance Decidable_eq_Machine : EqDecision Machine.
-   intros [x0 x1 x2 x3].
-   intros [y0 y1 y2 y3].
+   intros [x0 x1 x2 x3 x4].
+   intros [y0 y1 y2 y3 y4].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
   cmp_record_field x3 y3.
+  cmp_record_field x4 y4.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_Machine : Countable Machine.
 refine {|
-  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x);
-  decode x := '(x0, x1, x2, x3) ← decode x;
-              mret (Build_Machine x0 x1 x2 x3)
+  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x, Machine_iotlb x);
+  decode x := '(x0, x1, x2, x3, x4) ← decode x;
+              mret (Build_Machine x0 x1 x2 x3 x4)
 |}.
 abstract (
-  intros [x0 x1 x2 x3];
+  intros [x0 x1 x2 x3 x4];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
-  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) =>
-    Build_Machine e f1 f2 f3 end (at level 0).
+  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) =>
+    Build_Machine e f1 f2 f3 f4 end (at level 0).
 Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
-  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) =>
-    Build_Machine f0 e f2 f3 end (at level 0).
+  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) =>
+    Build_Machine f0 e f2 f3 f4 end (at level 0).
 Notation "{[ r 'with' 'Machine_ram' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) =>
-    Build_Machine f0 f1 e f3 end (at level 0).
+  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) =>
+    Build_Machine f0 f1 e f3 f4 end (at level 0).
 Notation "{[ r 'with' 'Machine_ipi' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ =>
-    Build_Machine f0 f1 f2 e end (at level 0).
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) =>
+    Build_Machine f0 f1 f2 e f4 end (at level 0).
+Notation "{[ r 'with' 'Machine_iotlb' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ =>
+    Build_Machine f0 f1 f2 f3 e end (at level 0).
 #[export]
 Instance dummy_Machine : Inhabited (Machine) := {
   inhabitant := {|
     Machine_cores := inhabitant;
     Machine_mem := inhabitant;
     Machine_ram := inhabitant;
-    Machine_ipi := inhabitant
+    Machine_ipi := inhabitant;
+    Machine_iotlb := inhabitant
 |} }.
 
 

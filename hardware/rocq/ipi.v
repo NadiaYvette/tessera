@@ -284,7 +284,8 @@ Definition ipi_broadcast (m : Machine) (root : mword 44) (va : mword 64) (p : Pt
   let m1 := {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
                Machine_cores := m.(Machine_cores);
                Machine_ram := m.(Machine_ram);
-               Machine_ipi := m.(Machine_ipi) |} in
+               Machine_ipi := m.(Machine_ipi);
+               Machine_iotlb := m.(Machine_iotlb) |} in
   ipi_broadcast_cores m1 (length m.(Machine_cores)) va.
 
 (* The composed broadcast refines the functional `invalidate_shootdown`: same
@@ -302,7 +303,8 @@ Proof.
   set (m1 := {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
                 Machine_cores := m.(Machine_cores);
                 Machine_ram := m.(Machine_ram);
-                Machine_ipi := m.(Machine_ipi) |}).
+                Machine_ipi := m.(Machine_ipi);
+                Machine_iotlb := m.(Machine_iotlb) |}).
   split.
   - (* mem *)
     destruct (ipi_broadcast_cores_preserves m1 n va) as [Hmem _].
@@ -356,7 +358,8 @@ Definition ipi_machine : Machine :=
   {| Machine_cores := [ipi_stale_core; ipi_stale_core; ipi_stale_core];
      Machine_mem := [];
      Machine_ram := [];
-     Machine_ipi := [false; false; false] |}.
+     Machine_ipi := [false; false; false];
+     Machine_iotlb := [] |}.
 
 (* 1. deliver_ipi sets exactly the addressed delivered bit. *)
 Lemma test_vector_deliver_ipi :

@@ -75,13 +75,28 @@ struct Byte = {
 
 type Ram = list(Byte)
 
+// An IOMMU translation-cache (IOTLB) entry (SSG-4): the device identity
+// (StreamID / BDF), its PASID (0 = no SVM), the device virtual address (IOVA)
+// the translation was filled for, the translated physical address, and perms
+// (devices never execute).  This is the ATS translation-completion content the
+// IOMMU caches — the device-side twin of TlbEntry.
+struct IotlbEntry = {
+  did   : int,
+  pasid : int,
+  iova  : vaddr,
+  pa    : paddr,
+  perm  : Perm
+}
+
 // The machine: a set of cores sharing one physical memory (page-table
-// descriptors plus data RAM), and a per-core IPI mailbox (SSG-3 / S2.3).
+// descriptors plus data RAM), a per-core IPI mailbox (SSG-3 / S2.3), and the
+// IOMMU's translation cache (SSG-4) — the device-side twin of the per-core TLBs.
 struct Machine = {
   cores : list(Core),
   mem   : PageTable,
   ram   : Ram,
-  ipi   : list(bool)
+  ipi   : list(bool),
+  iotlb : list(IotlbEntry)
 }
 
 // ---- VPN / offset extraction (Sv39) ----
@@ -237,6 +252,28 @@ function translate(core, mem, va) = {
   }
 }
 
+// ---- IOMMU translation (SSG-4) ----
+//
+// The IOMMU's walk is the *same* Sv39 walk as `translate`, but rooted at the
+// domain's page-table root (the IOMMU is not a core) and over the device's IOVA.
+// First-level-only (one shared GPA->SPA table with the CPU); PASID/SVM
+// second-level (GVA->GPA) is a later increment.
+val iommu_walk : (bits(44), PageTable, vaddr) -> option((paddr, Perm))
+function iommu_walk(root, mem, iova) =
+  translate(struct { satp_ppn = root, tlb = [||], hart = 0, node = 0 }, mem, iova)
+
+// The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
+// IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI
+// (4.4) / AMD-Vi INVALIDATE_IOMMU_PAGES (2.4.3).  4KiB granularity for now;
+// NAPOT large-page invalidation mirrors tag_eq as a later increment.
+val iotlb_invalidate : (list(IotlbEntry), vaddr) -> list(IotlbEntry)
+function iotlb_invalidate(entries, va) = match entries {
+  [||] => [||],
+  e :: rest =>
+    if vpn_of(e.iova) == vpn_of(va) then iotlb_invalidate(rest, va)
+    else e :: iotlb_invalidate(rest, va)
+}
+
 // ---- TLB lookup / invalidation ----
 
 // TLB tag match: a 64KiB NAPOT entry tags on VA[38..16] (the high 23 VPN bits —
@@ -323,7 +360,8 @@ function deliver_ipi(m, i) = struct {
   cores = m.cores,
   mem   = m.mem,
   ram   = m.ram,
-  ipi   = list_update_bool(m.ipi, i, true)
+  ipi   = list_update_bool(m.ipi, i, true),
+  iotlb = m.iotlb
 }
 
 // Walk the cores, flushing `va` from core i's TLB iff `delivered` holds (the
@@ -344,5 +382,6 @@ function receive_ipi(m, i, va) = struct {
   cores = receive_ipi_cores(m.cores, i, list_nth_bool(m.ipi, i, false), va),
   mem   = m.mem,
   ram   = m.ram,
-  ipi   = m.ipi
+  ipi   = m.ipi,
+  iotlb = m.iotlb
 }
