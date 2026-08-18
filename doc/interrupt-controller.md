@@ -105,7 +105,11 @@ held pending, never dropped, never delivered early
 This is the "no lost or duplicated shootdown" half of SSG-3: the remote enters
 interrupt context to handle the shootdown IPI, holds any *second* shootdown
 pending, and takes it only after leaving the context
-(`test_vector_intc_exit_delivers`).
+(`test_vector_intc_exit_delivers`).  The pure composition is `intc_proofs.v`'s
+`intc_no_lost_shootdown` (held in context — pending latched, doorbell silent —
+delivered exactly once on exit); the program-level gate is
+`shootdown_weak_broadcast_intc.v`'s `intc_enter_context_op`/`intc_exit_context_op`
+with `intc_ack_op_hold_spec`/`intc_ack_op_deliver_spec`.
 
 ## The doorbell (`ipi[i] := true`) is `Machine.ipi`'s delivered bit
 

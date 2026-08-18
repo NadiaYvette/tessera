@@ -32,9 +32,12 @@
 
    `masked`/`delivery` are initialized once (all `#0` / all `#1`) and never
    change across the broadcast, so the ack's gate `pending ∧ ¬masked ∧ delivery`
-   is live.  The interrupt-context delivery gate (`intc_enter_context` sets
-   `delivery[i] := 0`) is where suppression would happen; it is left as the next
-   increment on top of this file.
+   is live.  The interrupt-context delivery gate is now also at the program level:
+   `intc_enter_context_op`/`intc_exit_context_op` toggle `delivery[i]` between
+   `#0`/`#1`, and `intc_ack_op_hold_spec`/`intc_ack_op_deliver_spec` prove the ack
+   holds the IPI when delivery is suppressed (no doorbell — no loss) and rings it
+   when delivery is enabled — the program-level `intc_ack_in_context_noop` /
+   `intc_ack_unmasked_rings` (see `intc_proofs.v`'s `intc_no_lost_shootdown`).
 
    See doc/stage2-shootdown.md (S2.5) and doc/system-state-goals.md (SSG-3). *)
 
@@ -87,6 +90,25 @@ Definition intc_ack_op : val :=
     if: "m" then #0
     else if: "d" then ("ipi" +ₗ "i") <- #1 ;; #1
          else #0.
+
+(* The per-hart delivery gate (`intc.intc_enter_context` / `intc.intc_exit_context`
+   from intc.sail): the kernel toggles `delivery[i]` as it enters/leaves interrupt
+   context.  `delivery[i] := #0` suppresses delivery (the ack becomes a no-op, so
+   the shootdown IPI is held — not lost); `delivery[i] := #1` re-enables it. *)
+Definition intc_enter_context_op : val :=
+  λ: ["delivery"; "i"], ("delivery" +ₗ "i") <- #0.
+
+Definition intc_exit_context_op : val :=
+  λ: ["delivery"; "i"], ("delivery" +ₗ "i") <- #1.
+
+(* Application helpers for the context-toggle and ack specs. *)
+Definition intc_enter_context_op_at (delivery : loc) (i : nat) : expr :=
+  App intc_enter_context_op [Lit (LitLoc delivery); Lit (LitInt (Z.of_nat i))].
+Definition intc_exit_context_op_at (delivery : loc) (i : nat) : expr :=
+  App intc_exit_context_op [Lit (LitLoc delivery); Lit (LitInt (Z.of_nat i))].
+Definition intc_ack_op_at (masked delivery ipi : loc) (i : nat) : expr :=
+  App intc_ack_op [Lit (LitLoc masked); Lit (LitLoc delivery); Lit (LitLoc ipi);
+                   Lit (LitInt (Z.of_nat i))].
 
 (* The remote: acquire pending[i] (the IPI is sent), ack via the controller
    (delivery, gated on ¬masked ∧ delivery), observe its doorbell ipi[i], clear
@@ -323,15 +345,6 @@ End bc_send.
    shape.  [intc_step_ok] is the loop invariant threaded through bc_wait_all.
    ============================================================ *)
 
-(* [intc_set_bit] is structurally recursive on the list, so it preserves length. *)
-Lemma intc_set_bit_length (l : list bool) (i : Z) (v : bool) :
-  length (intc.intc_set_bit l i v) = length l.
-Proof.
-  revert i. induction l as [| b bs IH]; intros i; cbn [intc.intc_set_bit length].
-  - reflexivity.
-  - destruct (Z.eqb i 0); cbn [length]; [reflexivity | f_equal; apply IH].
-Qed.
-
 (* [intc_ack] copies the masked/delivery fields verbatim (it only touches
    pending and ipi), so it preserves both. *)
 Lemma intc_ack_preserves_masked (ic : intc_types.Intc) (i : Z) :
@@ -404,6 +417,78 @@ Proof.
   apply in_seq in Hj as [_ Hjn].
   rewrite !bool_decide_true; [reflexivity | lia | lia].
 Qed.
+
+(* ============================================================
+   The interrupt-context delivery gate (S2.5 program level): the controller's
+   `intc_enter_context`/`intc_exit_context` become program ops on `delivery[i]`,
+   and the ack's gate `pending ∧ ¬masked ∧ delivery` is proved in both branches:
+   suppressed (hold, no doorbell — no loss) and enabled (ring the doorbell).
+   These are the standalone specs the in-loop remote relies on; `intc_ack_op_hold_spec`
+   is the program-level [intc_ack_in_context_noop], `intc_ack_op_deliver_spec` is
+   the program-level [intc_ack_unmasked_rings].
+   ============================================================ *)
+
+Section intc_context_gate.
+Context `{!noprolG Σ}.
+
+Lemma intc_enter_context_op_spec (delivery : loc) :
+  ∀ (i : nat) tid,
+  {{{ (delivery >> i) ↦ #1 }}}
+    intc_enter_context_op_at delivery i @ tid; ⊤
+  {{{ RET #☠; (delivery >> i) ↦ #0 }}}.
+Proof.
+  iIntros (i tid Φ) "Hd HΦ".
+  rewrite /intc_enter_context_op_at /intc_enter_context_op.
+  wp_lam. wp_op. rewrite Nat2Z.id. wp_write.
+  by iApply "HΦ".
+Qed.
+
+Lemma intc_exit_context_op_spec (delivery : loc) :
+  ∀ (i : nat) tid,
+  {{{ (delivery >> i) ↦ #0 }}}
+    intc_exit_context_op_at delivery i @ tid; ⊤
+  {{{ RET #☠; (delivery >> i) ↦ #1 }}}.
+Proof.
+  iIntros (i tid Φ) "Hd HΦ".
+  rewrite /intc_exit_context_op_at /intc_exit_context_op.
+  wp_lam. wp_op. rewrite Nat2Z.id. wp_write.
+  by iApply "HΦ".
+Qed.
+
+Lemma intc_ack_op_hold_spec (masked delivery ipi : loc) :
+  ∀ (i : nat) tid,
+  {{{ (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #0 ∗ (ipi >> i) ↦ #0 }}}
+    intc_ack_op_at masked delivery ipi i @ tid; ⊤
+  {{{ RET #0; (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #0 ∗ (ipi >> i) ↦ #0 }}}.
+Proof.
+  iIntros (i tid Φ) "(Hm & Hd & Hq) HΦ".
+  rewrite /intc_ack_op_at /intc_ack_op.
+  wp_lam.
+  wp_op. rewrite Nat2Z.id. wp_read. wp_let.   (* m := !(masked+i) = #0 *)
+  wp_op. rewrite Nat2Z.id. wp_read. wp_let.   (* d := !(delivery+i) = #0 *)
+  wp_if.                                     (* m = #0 → else branch *)
+  wp_if.                                     (* d = #0 → else branch → #0 *)
+  iApply "HΦ". by iFrame.
+Qed.
+
+Lemma intc_ack_op_deliver_spec (masked delivery ipi : loc) :
+  ∀ (i : nat) tid,
+  {{{ (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #1 ∗ (ipi >> i) ↦ #0 }}}
+    intc_ack_op_at masked delivery ipi i @ tid; ⊤
+  {{{ RET #1; (masked >> i) ↦ #0 ∗ (delivery >> i) ↦ #1 ∗ (ipi >> i) ↦ #1 }}}.
+Proof.
+  iIntros (i tid Φ) "(Hm & Hd & Hq) HΦ".
+  rewrite /intc_ack_op_at /intc_ack_op.
+  wp_lam.
+  wp_op. rewrite Nat2Z.id. wp_read. wp_let.   (* m := !(masked+i) = #0 *)
+  wp_op. rewrite Nat2Z.id. wp_read. wp_let.   (* d := !(delivery+i) = #1 *)
+  wp_if.                                     (* m = #0 → else branch *)
+  wp_if.                                     (* d = #1 → then branch *)
+  wp_op. rewrite Nat2Z.id. wp_write.         (* ipi[i] := #1 *)
+  iApply "HΦ". by iFrame.
+Qed.
+
+End intc_context_gate.
 
 Section bc_remote_intc.
 Context `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ, !bcG Σ, !intcG Σ}.

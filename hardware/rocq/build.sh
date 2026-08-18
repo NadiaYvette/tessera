@@ -223,6 +223,16 @@ axiom_free intc_proofs      intc_enter_context_preserves_ipi
 axiom_free intc_proofs      intc_ack_in_context_noop
 axiom_free intc_proofs      test_vector_intc_context_holds
 axiom_free intc_proofs      test_vector_intc_exit_delivers
+# the "no lost or duplicated shootdown" composition: held in context (pending
+# stays latched, doorbell silent), delivered exactly once on exit.
+axiom_free intc_proofs      intc_exit_context_preserves_pending
+axiom_free intc_proofs      intc_exit_context_preserves_ipi
+axiom_free intc_proofs      intc_exit_context_preserves_masked
+axiom_free intc_proofs      intc_enter_context_preserves_masked
+axiom_free intc_proofs      intc_set_bit_length
+axiom_free intc_proofs      intc_exit_then_ack_delivers
+axiom_free intc_proofs      intc_no_lost_shootdown
+axiom_free intc_proofs      test_vector_intc_context_holds_pending
 # intc -> S2.4 bridge: the controller's send+ack realizes the weak-memory
 # broadcast's deliver_ipi ghost step (delivery precedes ack via the device).
 axiom_free intc_proofs      intc_receive_ipi_eq_deliver
@@ -490,6 +500,13 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak_broadcast_intc bc_fork_remotes_intc_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc bc_wait_all_intc_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc bc_broadcast_intc_spec "$WFLAGS"
+  # the interrupt-context delivery gate at the program level: the ack holds the
+  # IPI when delivery[i] is suppressed (no doorbell — no loss) and rings the
+  # doorbell when delivery is enabled; the context-toggle ops move between them.
+  axiom_free shootdown_weak_broadcast_intc intc_enter_context_op_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast_intc intc_exit_context_op_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast_intc intc_ack_op_hold_spec "$WFLAGS"
+  axiom_free shootdown_weak_broadcast_intc intc_ack_op_deliver_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"

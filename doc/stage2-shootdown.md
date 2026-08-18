@@ -113,8 +113,14 @@ Soundness: no core translates through `va` after the protocol completes.
   intc_send = deliver_ipi` bridge (`bc_machine_ipi_step_via_intc`) made concrete
   in the program.  `masked`/`delivery` are initialized once (all `#0` / all `#1`)
   and never change across the broadcast, so the ack's gate `pending ∧ ¬masked ∧
-  delivery` is live; the interrupt-context delivery gate (`intc_enter_context`)
-  is where `delivery[i] := 0` would suppress delivery, left as the next increment.
+  delivery` is live.  The interrupt-context delivery gate is now also proved at
+  the program level (`intc_context_gate` section): `intc_enter_context_op` /
+  `intc_exit_context_op` toggle `delivery[i]` between `#0`/`#1`, and
+  `intc_ack_op_hold_spec` / `intc_ack_op_deliver_spec` prove the ack holds the
+  IPI when delivery is suppressed (no doorbell — no loss) and rings the doorbell
+  when it is enabled — the program-level `intc_ack_in_context_noop` /
+  `intc_ack_unmasked_rings`.  The pure "no lost or duplicated shootdown" crux is
+  `intc_proofs.v`'s `intc_no_lost_shootdown` (+ `test_vector_intc_context_holds_pending`).
 
   **S2.5 done (axiom-free).**  `shootdown_weak_broadcast_intc.v` proves the full
   program, threading the abstract controller ghost (`intc_ctx`) alongside the
@@ -136,6 +142,10 @@ Soundness: no core translates through `va` after the protocol completes.
   - `bc_broadcast_intc_spec` — the whole device-in-the-loop broadcast, from
     `broadcast_pre_machine` to `bc_post_machine`, with the controller ghost
     stepped from `intc_step_ok _ _ 0` to `intc_step_ok _ _ n`.
+  - `intc_enter_context_op_spec` / `intc_exit_context_op_spec` /
+    `intc_ack_op_hold_spec` / `intc_ack_op_deliver_spec` — the standalone
+    interrupt-context delivery-gate specs (the hold/deliver branches of the ack
+    gate, plus the context-toggle ops).
 
 ## Concrete-value encoding (S2.1)
 

@@ -131,6 +131,15 @@ Proof.
   - destruct (Z.eqb i 0) eqn:E; cbn; [reflexivity | apply IH].
 Qed.
 
+(* intc_set_bit is structurally recursive on the list, so it preserves length. *)
+Lemma intc_set_bit_length (l : list bool) (i : Z) (v : bool) :
+  length (intc.intc_set_bit l i v) = length l.
+Proof.
+  revert i. induction l as [| b bs IH]; intros i; cbn [intc.intc_set_bit length].
+  - reflexivity.
+  - destruct (Z.eqb i 0); cbn [length]; [reflexivity | f_equal; apply IH].
+Qed.
+
 (* ============================================================
    1. The send transition: latch the pending line, ring nothing.
    ============================================================ *)
@@ -299,6 +308,116 @@ Proof.
   cbn; reflexivity.
 Qed.
 
+(* exit_context also only touches delivery: it preserves pending/ipi/masked. *)
+Lemma intc_exit_context_preserves_pending (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_pending (intc.intc_exit_context ic i) = intc_types.Intc_pending ic.
+Proof. reflexivity. Qed.
+
+Lemma intc_exit_context_preserves_ipi (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_ipi (intc.intc_exit_context ic i) = intc_types.Intc_ipi ic.
+Proof. reflexivity. Qed.
+
+Lemma intc_exit_context_preserves_masked (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_masked (intc.intc_exit_context ic i) = intc_types.Intc_masked ic.
+Proof. reflexivity. Qed.
+
+Lemma intc_enter_context_preserves_masked (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_masked (intc.intc_enter_context ic i) = intc_types.Intc_masked ic.
+Proof. reflexivity. Qed.
+
+(* ============================================================
+   2.6. The "no lost or duplicated shootdown" composition.
+
+   A hart in interrupt context (delivery disabled) holds its interrupt pending
+   — the in-context ack is a no-op, so nothing is lost — and delivers it exactly
+   once after it exits the context.  This is the SSG-3 crux the per-hart delivery
+   gate exists for.
+   ============================================================ *)
+
+(* exit then ack delivers the held interrupt (generalizes
+   test_vector_intc_exit_delivers to any controller, not just intc3). *)
+Lemma intc_exit_then_ack_delivers (ic : intc_types.Intc) (i : nat)
+  (Hlenp : Nat.lt i (length (intc_types.Intc_pending ic)))
+  (Hlenm : Nat.lt i (length (intc_types.Intc_masked ic)))
+  (Hlend : Nat.lt i (length (intc_types.Intc_delivery ic)))
+  (Hleni : Nat.lt i (length (intc_types.Intc_ipi ic)))
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  intc.intc_get_bit
+    (intc_types.Intc_ipi
+       (intc.intc_ack
+          (intc.intc_exit_context
+             (intc.intc_ack (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i))
+                            (Z.of_nat i))
+             (Z.of_nat i))
+          (Z.of_nat i)))
+    (Z.of_nat i) false = true.
+Proof.
+  set (ic0 := intc.intc_enter_context ic (Z.of_nat i)).
+  set (ic1 := intc.intc_send ic0 (Z.of_nat i)).
+  (* the in-context ack is a no-op: delivery[i] = false after enter+send *)
+  assert (Hnoop : intc.intc_ack ic1 (Z.of_nat i) = ic1).
+  { apply intc_ack_in_context_noop.
+    subst ic1 ic0.
+    rewrite (intc_send_preserves_delivery (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)).
+    apply (intc_enter_context_clears_delivery ic i Hlend). }
+  subst ic1 ic0.
+  rewrite Hnoop.
+  (* exit re-enables delivery; ack now rings the doorbell *)
+  rewrite (intc_ack_unmasked_rings
+             (intc.intc_exit_context (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i))
+                                     (Z.of_nat i)) i).
+  - rewrite (intc_exit_context_preserves_ipi
+               (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_send_preserves_ipi (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_enter_context_preserves_ipi ic (Z.of_nat i)).
+    apply (intc_set_bit_get_self (intc_types.Intc_ipi ic) i true false Hleni).
+  - (* pending[i] = true: send latches it, exit preserves it *)
+    rewrite (intc_exit_context_preserves_pending
+               (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)) (Z.of_nat i)).
+    apply (intc_send_sets_pending (intc.intc_enter_context ic (Z.of_nat i)) i).
+    rewrite (intc_enter_context_preserves_pending ic (Z.of_nat i)). exact Hlenp.
+  - (* masked[i] = false: exit/send/enter all preserve the mask *)
+    rewrite (intc_exit_context_preserves_masked
+               (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_send_preserves_masked (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_enter_context_preserves_masked ic (Z.of_nat i)).
+    exact Hm.
+  - (* delivery[i] = true: exit sets it *)
+    apply (intc_exit_context_sets_delivery
+             (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)) i).
+    rewrite (intc_send_preserves_delivery (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)).
+    cbn [intc.intc_enter_context intc_types.Intc_delivery].
+    rewrite intc_set_bit_length. exact Hlend.
+Qed.
+
+(* The two halves packaged: a shootdown IPI arriving while a hart is in interrupt
+   context is held (no loss — pending stays latched, the doorbell stays silent),
+   and delivered exactly once the hart exits the context. *)
+Lemma intc_no_lost_shootdown (ic : intc_types.Intc) (i : nat)
+  (Hlenp : Nat.lt i (length (intc_types.Intc_pending ic)))
+  (Hlenm : Nat.lt i (length (intc_types.Intc_masked ic)))
+  (Hlend : Nat.lt i (length (intc_types.Intc_delivery ic)))
+  (Hleni : Nat.lt i (length (intc_types.Intc_ipi ic)))
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  intc.intc_ack (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)) (Z.of_nat i)
+    = intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i) /\
+  intc.intc_get_bit
+    (intc_types.Intc_ipi
+       (intc.intc_ack
+          (intc.intc_exit_context
+             (intc.intc_ack (intc.intc_send (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i))
+                            (Z.of_nat i))
+             (Z.of_nat i))
+          (Z.of_nat i)))
+    (Z.of_nat i) false = true.
+Proof.
+  split.
+  - apply intc_ack_in_context_noop.
+    rewrite (intc_send_preserves_delivery (intc.intc_enter_context ic (Z.of_nat i)) (Z.of_nat i)).
+    apply (intc_enter_context_clears_delivery ic i Hlend).
+  - apply (intc_exit_then_ack_delivers ic i Hlenp Hlenm Hlend Hleni Hm).
+Qed.
+
 (* masked, sent, unmasked, acked: the held interrupt is now delivered *)
 Lemma intc_unmask_then_ack_delivers (ic : intc_types.Intc) (i : nat)
   (Hlenp : Nat.lt i (length (intc_types.Intc_pending ic)))
@@ -430,6 +549,14 @@ Lemma test_vector_intc_exit_delivers :
     (intc.intc_ack
        (intc.intc_exit_context
           (intc.intc_ack (intc.intc_send (intc.intc_enter_context intc3 1) 1) 1) 1) 1)
+  = [false; true; false].
+Proof. vm_compute. reflexivity. Qed.
+
+(* ...and while still in context, the pending line stays latched (not lost): the
+   shootdown IPI is held, never dropped. *)
+Lemma test_vector_intc_context_holds_pending :
+  intc_types.Intc_pending
+    (intc.intc_ack (intc.intc_send (intc.intc_enter_context intc3 1) 1) 1)
   = [false; true; false].
 Proof. vm_compute. reflexivity. Qed.
 
