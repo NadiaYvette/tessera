@@ -61,6 +61,7 @@ Require Import shootdown_weak_broadcast. (* bc_machine, bc_wait_all, bc_init_ack
 Require Import intc.
 Require Import intc_types.
 Require Import intc_proofs.        (* intc_receive_ipi_eq_deliver, Machine_with_ipi *)
+Require Import intc_weak_broadcast. (* bc_machine_ipi_step_via_intc (the S2.5 pure reification) *)
 Require Import iris.prelude.options.
 Import ListNotations.
 
@@ -147,3 +148,47 @@ Definition bc_remote_intc_at (pending masked delivery ipi ack tlb : loc) (i : na
                       Lit (LitLoc ipi); Lit (LitLoc ack); Lit (LitLoc tlb);
                       Lit (LitInt (Z.of_nat i))].
 Definition bc_broadcast_intc_at (n : nat) : expr := bc_broadcast_intc n.
+
+(* ============================================================
+   Ghost state: the abstract interrupt controller (the Intc record from
+   intc.sail), held by the leader OUTSIDE the invariant and stepped in lockstep
+   with the machine ghost — exactly as machine_ctx is for the machine.
+
+   The pure reification is already proved in intc_weak_broadcast.v:
+   [bc_machine_ipi_step_via_intc] says the leader's per-step ghost
+   [receive_ipi (… (intc_ack (intc_send ic i) i) …)] is [bc_machine n (i+1)],
+   i.e. the controller's send+ack realizes S2.4's [deliver_ipi].
+   ============================================================ *)
+
+Class intcG Σ := IntcG { intc_icG : ghost_varG Σ intc_types.Intc; }.
+Local Existing Instance intc_icG.
+Definition intcΣ : gFunctors := #[ghost_varΣ intc_types.Intc].
+Global Instance subG_intcΣ {Σ} : subG intcΣ Σ → intcG Σ.
+Proof. solve_inG. Qed.
+
+Definition intc_ctx `{!intcG Σ} (γic : gname) (ic : intc_types.Intc) : vProp Σ :=
+  ⎡ ghost_var γic (DfracOwn 1) ic ⎤.
+
+#[global] Instance intc_ctx_objective `{!intcG Σ} γic ic : Objective (intc_ctx γic ic).
+Proof. rewrite /intc_ctx. apply _. Qed.
+
+Lemma intc_ctx_update `{!intcG Σ} (γic : gname) (ic ic' : intc_types.Intc) :
+  intc_ctx γic ic ⊢ |==> intc_ctx γic ic' : vProp Σ.
+Proof.
+  rewrite /intc_ctx. iIntros "Hic".
+  iMod (ghost_var_update ic' γic ic with "Hic") as "Hic'".
+  iIntros "!>". by iFrame.
+Qed.
+
+(* bool → Z, matching the heap cells' {0,1} encoding (intc_send/ack set/clear
+   individual bits; the program stores them as #0/#1). *)
+Definition bit_z (b : bool) : Z := if b then 1 else 0.
+
+(* The controller's per-hart heap cell: the four arrays pending/masked/delivery/
+   ipi agree, at index i, with the abstract Intc record's bits.  Held inside the
+   broadcast invariant (shared between leader and remote i). *)
+Definition intc_cell `{!noprolG Σ} (pending masked delivery ipi : loc) (ic : intc_types.Intc) (i : nat) : vProp Σ :=
+  (pending >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_pending ic) (Z.of_nat i) false)) ∗
+  (masked >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false)) ∗
+  (delivery >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false)) ∗
+  (ipi >> i)%stdpp ↦ #(bit_z (intc.intc_get_bit (intc_types.Intc_ipi ic) (Z.of_nat i) false)).
