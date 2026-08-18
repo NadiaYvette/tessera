@@ -86,25 +86,42 @@ Fixpoint intc_get_bit (l : list bool) (i : Z) (d : bool) : bool :=
 Definition intc_send (ic : Intc) (i : Z) : Intc :=
    {| Intc_pending := intc_set_bit (ic.(Intc_pending)) (i) (true);
       Intc_masked := ic.(Intc_masked);
+      Intc_delivery := ic.(Intc_delivery);
       Intc_ipi := ic.(Intc_ipi) |}.
 
 Definition intc_mask (ic : Intc) (i : Z) : Intc :=
    {| Intc_pending := ic.(Intc_pending);
       Intc_masked := intc_set_bit (ic.(Intc_masked)) (i) (true);
+      Intc_delivery := ic.(Intc_delivery);
       Intc_ipi := ic.(Intc_ipi) |}.
 
 Definition intc_unmask (ic : Intc) (i : Z) : Intc :=
    {| Intc_pending := ic.(Intc_pending);
       Intc_masked := intc_set_bit (ic.(Intc_masked)) (i) (false);
+      Intc_delivery := ic.(Intc_delivery);
+      Intc_ipi := ic.(Intc_ipi) |}.
+
+Definition intc_enter_context (ic : Intc) (i : Z) : Intc :=
+   {| Intc_pending := ic.(Intc_pending);
+      Intc_masked := ic.(Intc_masked);
+      Intc_delivery := intc_set_bit (ic.(Intc_delivery)) (i) (false);
+      Intc_ipi := ic.(Intc_ipi) |}.
+
+Definition intc_exit_context (ic : Intc) (i : Z) : Intc :=
+   {| Intc_pending := ic.(Intc_pending);
+      Intc_masked := ic.(Intc_masked);
+      Intc_delivery := intc_set_bit (ic.(Intc_delivery)) (i) (true);
       Intc_ipi := ic.(Intc_ipi) |}.
 
 Definition intc_ack (ic : Intc) (i : Z) : Intc :=
    let delivered :=
      andb ((intc_get_bit (ic.(Intc_pending)) (i) (false)))
-       ((negb ((intc_get_bit (ic.(Intc_masked)) (i) (false))))) in
+       ((andb ((negb ((intc_get_bit (ic.(Intc_masked)) (i) (false)))))
+           ((intc_get_bit (ic.(Intc_delivery)) (i) (false))))) in
    if delivered then
      {| Intc_pending := intc_set_bit (ic.(Intc_pending)) (i) (false);
         Intc_masked := ic.(Intc_masked);
+        Intc_delivery := ic.(Intc_delivery);
         Intc_ipi := intc_set_bit (ic.(Intc_ipi)) (i) (true) |}
    else ic.
 

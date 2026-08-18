@@ -210,6 +210,18 @@ axiom_free intc_proofs      test_vector_intc_send_ack_delivers
 axiom_free intc_proofs      test_vector_intc_masked_holds
 axiom_free intc_proofs      test_vector_intc_unmask_delivers
 axiom_free intc_proofs      test_vector_intc_ack_clears_pending
+# interrupt context (per-hart delivery gate): eidelivery / sstatus.SIE.  A hart
+# in context holds its interrupt pending (no loss) and takes it only on exit.
+axiom_free intc_proofs      intc_send_preserves_delivery
+axiom_free intc_proofs      intc_mask_preserves_delivery
+axiom_free intc_proofs      intc_unmask_preserves_delivery
+axiom_free intc_proofs      intc_enter_context_clears_delivery
+axiom_free intc_proofs      intc_exit_context_sets_delivery
+axiom_free intc_proofs      intc_enter_context_preserves_pending
+axiom_free intc_proofs      intc_enter_context_preserves_ipi
+axiom_free intc_proofs      intc_ack_in_context_noop
+axiom_free intc_proofs      test_vector_intc_context_holds
+axiom_free intc_proofs      test_vector_intc_exit_delivers
 # intc -> S2.4 bridge: the controller's send+ack realizes the weak-memory
 # broadcast's deliver_ipi ghost step (delivery precedes ack via the device).
 axiom_free intc_proofs      intc_receive_ipi_eq_deliver

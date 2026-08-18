@@ -8,7 +8,8 @@ per-core transitions:
 | model | hardware stage | primary source |
 |---|---|---|
 | `intc_send` | originator's MMIO write latches the pending line | GIC SGI write (IHI 0069 §4.4); AIA `seteipnum_le` / per-hart IPI address |
-| `intc_mask`/`intc_unmask` | per-PE enable/disable | GIC `GICR_ISENABLER0`/`GICR_ICENABLER0` (IHI 0069 §4.7.1); AIA `eie` array / `mie.MSIE` |
+| `intc_mask`/`intc_unmask` | per-interrupt enable/disable (`masked` = inverted `eie`) | GIC `GICR_ISENABLER0`/`GICR_ICENABLER0` (IHI 0069 §4.7.1); AIA `eie` array / `mie.MSIE` |
+| `intc_enter_context`/`intc_exit_context` | per-hart delivery gate (interrupt context) | AIA `eidelivery` (IMSIC-reg-eidelivery) / `sstatus.SIE`; GIC CPU-interface interrupt enable |
 | `intc_ack` | PE read clears pending for that PE only, rings the doorbell | GIC ICC_IAR ack (IHI 0069 §1.2 targeted-list, §2.2.1 1023); AIA `*topei` write |
 
 This document is the 2026-08-18 primary-source cross-check against
@@ -83,6 +84,29 @@ The model: if `pending[i] ∧ ¬masked[i]`, clear `pending[i]` and set `ipi[i]`
   then the interrupt file's pending bit for interrupt i is cleared" (AIA
   **IMSIC.adoc**). A zero value "has no effect" — the spurious no-op.
 
+### 2.5 `intc_enter_context`/`intc_exit_context` — the per-hart delivery gate
+
+The model splits the per-*interrupt* enable (`masked`, = inverted `eie` /
+`GICR_ICENABLER0`) from the per-*hart* delivery gate (`delivery`). A hart in
+interrupt context has `delivery = false`; a send still latches `pending`
+(edge-triggered, §1 above), and the ack is a spurious no-op — the interrupt is
+held pending, never dropped, never delivered early
+(`intc_ack_in_context_noop`).
+
+- **RISC-V.** "`eidelivery` … controls whether interrupts from this interrupt
+  file are delivered from the IMSIC to the attached hart so they appear as a
+  pending external interrupt in the hart's `mip` or `hgeip` CSR" (AIA
+  **IMSIC-reg-eidelivery**; value **0 = delivery disabled**, 1 = enabled). The
+  hart-level gate is also `sstatus.SIE` / `mie.MSIE` in the base Privileged
+  Architecture.
+- **GIC.** The per-hart gate is the CPU interface's interrupt enable / priority
+  mask, distinct from the Redistributor's per-interrupt `GICR_ICENABLER0`.
+
+This is the "no lost or duplicated shootdown" half of SSG-3: the remote enters
+interrupt context to handle the shootdown IPI, holds any *second* shootdown
+pending, and takes it only after leaving the context
+(`test_vector_intc_exit_delivers`).
+
 ## The doorbell (`ipi[i] := true`) is `Machine.ipi`'s delivered bit
 
 The model's `intc_ack` ring is exactly the mailbox bit `Machine.ipi` consumes:
@@ -123,8 +147,12 @@ assumptions:
   ack→deactivate into the single pending-clear: correct for the
   doorbell-delivery property, but not a model of interrupt nesting/priority.
 - **Priority & groups.** No priority, group (Group 0/1), or security-state
-  distinction; `intc_ack` takes any pending, unmasked interrupt. This is the
-  SGI-IPI subset, not the full GIC.
+  distinction; `intc_ack` takes any pending, unmasked, delivery-enabled
+  interrupt. Real `*topei`/ICC_IAR additionally select the *highest-priority*
+  pending-and-enabled interrupt above the threshold — "Interrupts with lower
+  identity numbers have higher priorities" (AIA IMSIC.adoc, `*topei`) — which
+  the single-shootdown-IPI doorbell does not need. This is the SGI-IPI subset,
+  not the full GIC.
 - **Delivery ordering.** The model is sequential; the weak-memory ordering of
   the MSI/IPI write against the data it announces is the S2.4 concern
   (`shootdown_weak_broadcast.v`), left to that track, not to the device model.

@@ -17,40 +17,48 @@ Definition bits (n : Z) : Type := mword n.
 Record Intc := {
   Intc_pending : list bool;
   Intc_masked : list bool;
+  Intc_delivery : list bool;
   Intc_ipi : list bool;
 }.
 Arguments Intc : clear implicits.
 #[export]
 Instance Decidable_eq_Intc : EqDecision Intc.
-   intros [x0 x1 x2].
-   intros [y0 y1 y2].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_Intc : Countable Intc.
 refine {|
-  encode x := encode (Intc_pending x, Intc_masked x, Intc_ipi x);
-  decode x := '(x0, x1, x2) ← decode x;
-              mret (Build_Intc x0 x1 x2)
+  encode x := encode (Intc_pending x, Intc_masked x, Intc_delivery x, Intc_ipi x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_Intc x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1 x2];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'Intc_pending' := e ]}" :=
-  match r with Build_Intc _ (_ as f1) (_ as f2) => Build_Intc e f1 f2 end (at level 0).
+  match r with Build_Intc _ (_ as f1) (_ as f2) (_ as f3) => Build_Intc e f1 f2 f3 end (at level 0).
 Notation "{[ r 'with' 'Intc_masked' := e ]}" :=
-  match r with Build_Intc (_ as f0) _ (_ as f2) => Build_Intc f0 e f2 end (at level 0).
+  match r with Build_Intc (_ as f0) _ (_ as f2) (_ as f3) => Build_Intc f0 e f2 f3 end (at level 0).
+Notation "{[ r 'with' 'Intc_delivery' := e ]}" :=
+  match r with Build_Intc (_ as f0) (_ as f1) _ (_ as f3) => Build_Intc f0 f1 e f3 end (at level 0).
 Notation "{[ r 'with' 'Intc_ipi' := e ]}" :=
-  match r with Build_Intc (_ as f0) (_ as f1) _ => Build_Intc f0 f1 e end (at level 0).
+  match r with Build_Intc (_ as f0) (_ as f1) (_ as f2) _ => Build_Intc f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_Intc : Inhabited (Intc) := {
-  inhabitant := {| Intc_pending := inhabitant; Intc_masked := inhabitant; Intc_ipi := inhabitant
+  inhabitant := {|
+    Intc_pending := inhabitant;
+    Intc_masked := inhabitant;
+    Intc_delivery := inhabitant;
+    Intc_ipi := inhabitant
 |} }.
 
 

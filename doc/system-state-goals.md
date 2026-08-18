@@ -85,9 +85,14 @@ carved out of.
   `bc_remote_spec`/`bc_wait_all_spec`. The ghost-level swap is now done:
   `intc_receive_ipi_eq_deliver` (intc_proofs.v) proves the controller's send+ack
   produces the same mailbox as `deliver_ipi`, so S2.4's per-step ghost
-  `receive_ipi (deliver_ipi _ i)` is realized by the device. Also remaining:
-  masking and interrupt context (SSG-3's other half). The per-core "delivery
-  precedes ack" crux and the composed-broadcast refinement are done.
+  `receive_ipi (deliver_ipi _ i)` is realized by the device. **Masking +
+  interrupt context done**: the model now distinguishes the per-interrupt enable
+  (`masked` = inverted `eie`/`GICR_ICENABLER0`) from the per-hart delivery gate
+  (`delivery` = `eidelivery`/`sstatus.SIE`); a hart in interrupt context holds
+  its interrupt pending and takes it only on exit (`intc_ack_in_context_noop`,
+  `test_vector_intc_exit_delivers`). Interrupt priority/EOI remain deliberate
+  omissions (outside the shootdown-IPI subset). The per-core "delivery precedes
+  ack" crux and the composed-broadcast refinement are done.
 
 ### SSG-4 — IOMMU / DMA controller
 

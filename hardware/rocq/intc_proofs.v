@@ -15,20 +15,28 @@
                        implementation-defined memory address that can be
                        written to signal a machine-level software interrupt",
                        riscv-aia IPIs.adoc).
-     - `intc_mask`/`intc_unmask` — GICR_ISENABLER0/ICENABLER0 (or mie.MSIE);
-                       a masked interrupt stays pending but is not signalled.
-     - `intc_ack`    — the PE reads its interrupt (ICC_IAR / mip): if pending
-                       and unmasked, the pending state is cleared *for that PE*
-                       (IHI0069 1.2 Terminology, Targeted list model) and the
-                       doorbell rings — ipi[i] := true.
+     - `intc_mask`/`intc_unmask` — the *per-interrupt* enable (GICR_ISENABLER0/
+                       ICENABLER0, IMSIC `eie`, or mie.MSIE); a masked interrupt
+                       stays pending but is not signalled.
+     - `intc_enter_context`/`intc_exit_context` — the *per-hart delivery gate*
+                       (IMSIC `eidelivery` / sstatus.SIE / the kernel's
+                       irq-disable): a hart in interrupt context holds its
+                       interrupts pending — it does not drop them — and takes
+                       them only after it leaves the context.
+     - `intc_ack`    — the PE reads its interrupt (ICC_IAR / mip / *topei): if
+                       pending, unmasked and delivery-enabled, the pending state
+                       is cleared *for that PE* (IHI0069 1.2 Terminology,
+                       Targeted list model) and the doorbell rings — ipi[i] := true.
 
    What is proved here:
 
    1. **The doorbell only rings on ack** — `intc_send_preserves_ipi`; and the
       pending line is latched by send (`intc_send_sets_pending`).
-   2. **Masking** — a masked ack is a spurious no-op (`intc_ack_masked_noop`:
-      the interrupt is held pending, nothing is delivered); unmasking then
-      acking delivers (`intc_unmask_then_ack_delivers`).
+   2. **Masking & interrupt context** — a masked ack is a spurious no-op
+      (`intc_ack_masked_noop`); unmasking then acking delivers
+      (`intc_unmask_then_ack_delivers`); a hart in interrupt context holds its
+      interrupt pending (ack is a no-op, `intc_ack_in_context_noop`) and takes
+      it only after exiting the context (`test_vector_intc_exit_delivers`).
    3. **Reification** — `intc_send_ack_refines_deliver_ipi`: when the
       controller's mailbox agrees with `Machine.ipi`, one send+ack performs
       exactly `deliver_ipi`'s update (the bridge lemmas
@@ -146,6 +154,10 @@ Lemma intc_send_preserves_masked (ic : intc_types.Intc) (i : Z) :
   intc_types.Intc_masked (intc.intc_send ic i) = intc_types.Intc_masked ic.
 Proof. reflexivity. Qed.
 
+Lemma intc_send_preserves_delivery (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_delivery (intc.intc_send ic i) = intc_types.Intc_delivery ic.
+Proof. reflexivity. Qed.
+
 (* ============================================================
    2. The mask transitions.
    ============================================================ *)
@@ -184,28 +196,74 @@ Lemma intc_unmask_preserves_ipi (ic : intc_types.Intc) (i : Z) :
   intc_types.Intc_ipi (intc.intc_unmask ic i) = intc_types.Intc_ipi ic.
 Proof. reflexivity. Qed.
 
+Lemma intc_mask_preserves_delivery (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_delivery (intc.intc_mask ic i) = intc_types.Intc_delivery ic.
+Proof. reflexivity. Qed.
+
+Lemma intc_unmask_preserves_delivery (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_delivery (intc.intc_unmask ic i) = intc_types.Intc_delivery ic.
+Proof. reflexivity. Qed.
+
 (* ============================================================
-   3. The ack transition: pending & unmasked -> clear + ring.
+   2.5. The interrupt-context (per-hart delivery gate) transitions.
    ============================================================ *)
 
-(* ack on a pending, unmasked interrupt clears the pending line for that PE *)
+(* enter_context clears the delivery gate: the hart no longer takes its
+   interrupts, but nothing pending is dropped. *)
+Lemma intc_enter_context_clears_delivery (ic : intc_types.Intc) (i : nat)
+  (H : Nat.lt i (length (intc_types.Intc_delivery ic))) :
+  intc.intc_get_bit (intc_types.Intc_delivery (intc.intc_enter_context ic (Z.of_nat i))) (Z.of_nat i) false = false.
+Proof.
+  unfold intc.intc_enter_context.
+  apply intc_set_bit_get_self with (v := false) (d := false).
+  exact H.
+Qed.
+
+(* exit_context re-enables delivery for the hart. *)
+Lemma intc_exit_context_sets_delivery (ic : intc_types.Intc) (i : nat)
+  (H : Nat.lt i (length (intc_types.Intc_delivery ic))) :
+  intc.intc_get_bit (intc_types.Intc_delivery (intc.intc_exit_context ic (Z.of_nat i))) (Z.of_nat i) false = true.
+Proof.
+  unfold intc.intc_exit_context.
+  apply intc_set_bit_get_self with (v := true) (d := false).
+  exact H.
+Qed.
+
+(* enter_context holds the interrupt: the pending line is kept, and the
+   doorbell never rings on context entry. *)
+Lemma intc_enter_context_preserves_pending (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_pending (intc.intc_enter_context ic i) = intc_types.Intc_pending ic.
+Proof. reflexivity. Qed.
+
+Lemma intc_enter_context_preserves_ipi (ic : intc_types.Intc) (i : Z) :
+  intc_types.Intc_ipi (intc.intc_enter_context ic i) = intc_types.Intc_ipi ic.
+Proof. reflexivity. Qed.
+
+(* ============================================================
+   3. The ack transition: pending & unmasked & delivery-enabled -> clear + ring.
+   ============================================================ *)
+
+(* ack on a pending, unmasked, delivery-enabled interrupt clears the pending
+   line for that PE *)
 Lemma intc_ack_unmasked_clears_pending (ic : intc_types.Intc) (i : nat)
   (Hp : intc.intc_get_bit (intc_types.Intc_pending ic) (Z.of_nat i) false = true)
-  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   intc_types.Intc_pending (intc.intc_ack ic (Z.of_nat i)) =
   intc.intc_set_bit (intc_types.Intc_pending ic) (Z.of_nat i) false.
 Proof.
-  unfold intc.intc_ack. rewrite Hp, Hm. cbn. reflexivity.
+  unfold intc.intc_ack. rewrite Hp, Hm, Hd. cbn. reflexivity.
 Qed.
 
 (* ... and rings the doorbell: the delivered bit that Machine.ipi consumes *)
 Lemma intc_ack_unmasked_rings (ic : intc_types.Intc) (i : nat)
   (Hp : intc.intc_get_bit (intc_types.Intc_pending ic) (Z.of_nat i) false = true)
-  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   intc_types.Intc_ipi (intc.intc_ack ic (Z.of_nat i)) =
   intc.intc_set_bit (intc_types.Intc_ipi ic) (Z.of_nat i) true.
 Proof.
-  unfold intc.intc_ack. rewrite Hp, Hm. cbn. reflexivity.
+  unfold intc.intc_ack. rewrite Hp, Hm, Hd. cbn. reflexivity.
 Qed.
 
 (* a masked ack is a spurious no-op: the interrupt is held pending, the
@@ -228,11 +286,26 @@ Proof.
   unfold intc.intc_ack. rewrite Hp. cbn. reflexivity.
 Qed.
 
+(* a hart in interrupt context (delivery disabled) is not signalled: the ack is
+   a no-op, the interrupt is held pending, and the doorbell does not ring — the
+   "no lost or duplicated shootdown" half of SSG-3. *)
+Lemma intc_ack_in_context_noop (ic : intc_types.Intc) (i : nat)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = false) :
+  intc.intc_ack ic (Z.of_nat i) = ic.
+Proof.
+  unfold intc.intc_ack. rewrite Hd.
+  destruct (intc.intc_get_bit (intc_types.Intc_pending ic) (Z.of_nat i) false);
+  destruct (intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false);
+  cbn; reflexivity.
+Qed.
+
 (* masked, sent, unmasked, acked: the held interrupt is now delivered *)
 Lemma intc_unmask_then_ack_delivers (ic : intc_types.Intc) (i : nat)
   (Hlenp : Nat.lt i (length (intc_types.Intc_pending ic)))
   (Hlenm : Nat.lt i (length (intc_types.Intc_masked ic)))
-  (Hleni : Nat.lt i (length (intc_types.Intc_ipi ic))) :
+  (Hlend : Nat.lt i (length (intc_types.Intc_delivery ic)))
+  (Hleni : Nat.lt i (length (intc_types.Intc_ipi ic)))
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   intc.intc_get_bit
     (intc_types.Intc_ipi (intc.intc_ack (intc.intc_unmask (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i)) (Z.of_nat i)))
     (Z.of_nat i) false = true.
@@ -246,6 +319,8 @@ Proof.
     apply intc_send_sets_pending. exact Hlenp.
   - apply (intc_unmask_clears_masked (intc.intc_send ic (Z.of_nat i)) i).
     rewrite (intc_send_preserves_masked ic (Z.of_nat i)). exact Hlenm.
+  - rewrite (intc_unmask_preserves_delivery (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i)).
+    rewrite (intc_send_preserves_delivery ic (Z.of_nat i)). exact Hd.
 Qed.
 
 (* ============================================================
@@ -258,7 +333,8 @@ Qed.
 Lemma intc_send_ack_refines_deliver_ipi (m : Machine) (ic : intc_types.Intc) (i : nat)
   (Hag : intc_types.Intc_ipi ic = Machine_ipi m)
   (Hlen : Nat.lt i (length (intc_types.Intc_pending ic)))
-  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   intc_types.Intc_ipi (intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i))
   = Machine_ipi (deliver_ipi m (Z.of_nat i)).
 Proof.
@@ -270,6 +346,7 @@ Proof.
     apply intc_set_bit_eq_list_update_bool.
   - apply intc_send_sets_pending. exact Hlen.
   - rewrite (intc_send_preserves_masked ic (Z.of_nat i)). exact Hm.
+  - rewrite (intc_send_preserves_delivery ic (Z.of_nat i)). exact Hd.
 Qed.
 
 (* ============================================================
@@ -288,7 +365,8 @@ Lemma intc_delivery_enables_receive_ipi (m : Machine) (ic : intc_types.Intc) (i 
   (Hlen : Nat.lt i (length (intc_types.Intc_pending ic)))
   (Hleni : Nat.lt i (length (intc_types.Intc_ipi ic)))
   (Hlenco : Nat.lt i (length (Machine_cores m)))
-  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   let ic' := intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i) in
   let m' := {| Machine_cores := Machine_cores m; Machine_mem := Machine_mem m;
                Machine_ram := Machine_ram m; Machine_ipi := intc_types.Intc_ipi ic' |} in
@@ -297,7 +375,7 @@ Lemma intc_delivery_enables_receive_ipi (m : Machine) (ic : intc_types.Intc) (i 
 Proof.
   intros ic' m'.
   assert (Hipi : intc_types.Intc_ipi ic' = list_update_bool (Machine_ipi m) (Z.of_nat i) true).
-  { unfold ic'. rewrite (intc_send_ack_refines_deliver_ipi m ic i Hag Hlen Hm).
+  { unfold ic'. rewrite (intc_send_ack_refines_deliver_ipi m ic i Hag Hlen Hm Hd).
     cbn [Machine_ipi deliver_ipi]. reflexivity. }
   assert (Heq : m' = deliver_ipi m (Z.of_nat i)).
   { unfold m', deliver_ipi. f_equal. exact Hipi. }
@@ -313,7 +391,8 @@ Qed.
    ============================================================ *)
 
 Definition intc3 : intc_types.Intc :=
-  intc_types.Build_Intc [false; false; false] [false; false; false] [false; false; false].
+  intc_types.Build_Intc [false; false; false] [false; false; false]
+                        [true; true; true] [false; false; false].
 
 (* unmasked send+ack to core 1: the doorbell rings (ipi[1] = true). *)
 Lemma test_vector_intc_send_ack_delivers :
@@ -335,6 +414,23 @@ Proof. vm_compute. reflexivity. Qed.
 (* ack clears the pending line for the acknowledging PE only. *)
 Lemma test_vector_intc_ack_clears_pending :
   intc_types.Intc_pending (intc.intc_ack (intc.intc_send intc3 1) 1) = [false; false; false].
+Proof. vm_compute. reflexivity. Qed.
+
+(* enter context, send, ack (still in context): the interrupt is held, nothing
+   is delivered — no loss, no spurious delivery. *)
+Lemma test_vector_intc_context_holds :
+  intc_types.Intc_ipi
+    (intc.intc_ack (intc.intc_send (intc.intc_enter_context intc3 1) 1) 1)
+  = [false; false; false].
+Proof. vm_compute. reflexivity. Qed.
+
+(* ...and exiting the context delivers the held interrupt. *)
+Lemma test_vector_intc_exit_delivers :
+  intc_types.Intc_ipi
+    (intc.intc_ack
+       (intc.intc_exit_context
+          (intc.intc_ack (intc.intc_send (intc.intc_enter_context intc3 1) 1) 1) 1) 1)
+  = [false; true; false].
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
@@ -362,13 +458,14 @@ Definition Machine_with_ipi (m : Machine) (ipi : list bool) : Machine :=
 Lemma intc_receive_ipi_eq_deliver (m : Machine) (ic : intc_types.Intc) (i : nat) (va : mword 64)
   (Hag : intc_types.Intc_ipi ic = Machine_ipi m)
   (Hlen : Nat.lt i (length (intc_types.Intc_pending ic)))
-  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   receive_ipi
     (Machine_with_ipi m (intc_types.Intc_ipi (intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i))))
     (Z.of_nat i) va
   = receive_ipi (deliver_ipi m (Z.of_nat i)) (Z.of_nat i) va.
 Proof.
-  rewrite (intc_send_ack_refines_deliver_ipi m ic i Hag Hlen Hm).
+  rewrite (intc_send_ack_refines_deliver_ipi m ic i Hag Hlen Hm Hd).
   reflexivity.
 Qed.
 
@@ -377,14 +474,15 @@ Qed.
 Lemma intc_receive_ipi_cores_eq_deliver (m : Machine) (ic : intc_types.Intc) (i : nat) (va : mword 64)
   (Hag : intc_types.Intc_ipi ic = Machine_ipi m)
   (Hlen : Nat.lt i (length (intc_types.Intc_pending ic)))
-  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false)
+  (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat i) false = true) :
   Machine_cores
     (receive_ipi
        (Machine_with_ipi m (intc_types.Intc_ipi (intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i))))
        (Z.of_nat i) va)
   = Machine_cores (receive_ipi (deliver_ipi m (Z.of_nat i)) (Z.of_nat i) va).
 Proof.
-  rewrite (intc_receive_ipi_eq_deliver m ic i va Hag Hlen Hm). reflexivity.
+  rewrite (intc_receive_ipi_eq_deliver m ic i va Hag Hlen Hm Hd). reflexivity.
 Qed.
 
 (* Executable: on the 3-core [ipi_machine] (mailbox all-false) with the all-false
