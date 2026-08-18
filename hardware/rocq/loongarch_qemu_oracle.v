@@ -22,20 +22,23 @@
    | odd/even | `(va >> ps)[0] == 1` | same (`n = (addr >> ps) & 1`) |
    | PA | `(pfn >> (ps-12)) << ps \| va[ps-1:0]` | `((pfn & ~((1<<(ps-12))-1)) << 12) \| (va & ((1<<ps)-1))` |
 
-   The match agreement is now proved **generally** (`la_covers_conforms`:
+   The match agreement is proved **generally** (`la_covers_conforms`:
    every entry/address, for `12 <= ps <= 47`) via the shift identity
    `shiftr (shiftl x 13) (ps+1) = zero_extend (shiftr x (ps+1-13)) 48`,
    unblocked by `mword_lemmas.v`'s concrete `MachineWord` instance.  The PA
-   agreement is still pinned by the executable `vm_compute` diff vectors below
-   (its general `(pfn & ~mask) << 12 = (pfn >> (ps-12)) << ps` identity is a
-   noted follow-up, needing `uint_and_vec`/`uint_not_vec` and a `Z.land`
-   clear-low-bits lemma over `Z.ldiff_ones_r`).
+   agreement is likewise proved **generally** (`la_pa_conforms`, every
+   entry/address, for `12 <= ps <= 48`): the core identity is
+   `pfn & (2^36 - 2^(ps-12)) = (pfn >> (ps-12)) << (ps-12)` (the QEMU
+   `tlb_ppn = pfn & ~((1 << (ps-12)) - 1)` clear, `Z_land_clear_low` in
+   `mword_lemmas.v`).  The `vm_compute` diff vectors below remain as
+   executable smoke tests of both directions.
 *)
 
 From Stdlib Require Import ZArith Lia.
 Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import SailStdpp.Operators_mwords.
+Require Import SailStdpp.MachineWord.
 Require Import mword_lemmas.
 From stdpp.bitvector Require Import definitions tactics.
 Require Import loongarch_tlb_types.
@@ -188,4 +191,56 @@ Proof.
   unfold la_covers, qemu_la_match.
   f_equal.
   apply la_match_shift_conforms; assumption.
+Qed.
+
+(* The high-part PA conformance, isolated: the model's `(pfn >> (ps-12)) << ps`
+   agrees with the oracle's `((pfn & ~(2^(ps-12)-1)) << 12)` as 48-bit words.
+   The core identity is `pfn & (2^36 - 2^(ps-12)) = (pfn >> (ps-12)) << (ps-12)`
+   (`Z_land_clear_low` in mword_lemmas.v), i.e. clearing the software bits
+   between bit 12 and ps equals shifting right then left. *)
+Lemma la_pa_hi_conforms (pfn : mword 36) (ps : Z) :
+  12 <= ps <= 48 ->
+  uint (shiftl (zero_extend (shiftr pfn (ps-12)) 48) ps) =
+  uint (shiftl (zero_extend (and_vec pfn (not_vec (mword_of_int (len := 36) (2^(ps-12)-1)))) 48) 12).
+Proof.
+  intros Hps. destruct Hps as [Hps0 Hps1].
+  (* LHS: (uint (shiftr pfn (ps-12)) * 2^ps) mod 2^48 *)
+  rewrite uint_shiftl; [| lia | split; lia].
+  rewrite uint_zero_extend by lia.
+  rewrite uint_shiftr; [| lia | split; lia].
+  (* RHS: (uint (and_vec pfn (not_vec swmask)) * 2^12) mod 2^48 *)
+  rewrite uint_shiftl; [| lia | split; lia].
+  rewrite uint_zero_extend by lia.
+  rewrite uint_and_vec.
+  rewrite uint_not_vec by lia.
+  rewrite (uint_swmask ps) by lia.
+  replace (2^36 - 1 - (2^(ps-12) - 1)) with (2^36 - 2^(ps-12)) by lia.
+  assert (Hu : 0 <= uint pfn < 2^36).
+  { rewrite uint_bv_unsigned.
+    pose proof (bv_unsigned_in_range (Z.to_N 36) pfn) as Hr.
+    rewrite (bv_modulus_mword (a := 36)) in Hr by lia.
+    cbn [MachineWord.Z_idx].
+    lia. }
+  assert (Hk0 : 0 <= ps - 12) by lia.
+  assert (Hk36 : ps - 12 <= 36) by lia.
+  rewrite (Z_land_clear_low (uint pfn) (ps - 12) Hk0 Hk36 Hu).
+  rewrite <- Z.mul_assoc.
+  replace (2^(ps-12) * 2^12) with (2^ps) by (rewrite <- Z.pow_add_r by lia; f_equal; lia).
+  reflexivity.
+Qed.
+
+(* General PA conformance: the model's `la_pa` and the oracle's
+   `loongarch_check_pte` transcription agree for every entry/address.
+   The two `or_vec` low parts are identical (`va[ps-1:0]`), so `f_equal`
+   reduces this to `la_pa_hi_conforms` on the high part. *)
+Lemma la_pa_conforms (e : LaEntry) (va : mword 64) :
+  12 <= e.(LaEntry_ps) <= 48 ->
+  uint (la_pa e va) = uint (qemu_la_pa e va).
+Proof.
+  intros Hps.
+  unfold la_pa, qemu_la_pa, qemu_la_pfn, qemu_la_odd.
+  rewrite !uint_or_vec.
+  f_equal.
+  exact (la_pa_hi_conforms (if eq_vec (subrange_vec_dec (shiftr va e.(LaEntry_ps)) 0 0) ('b"1")
+                           then e.(LaEntry_pfn1) else e.(LaEntry_pfn0)) e.(LaEntry_ps) Hps).
 Qed.

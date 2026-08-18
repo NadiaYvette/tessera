@@ -75,11 +75,16 @@ and the oracle's `loongarch_tlb_search_cb` transcription agree for *every*
 entry/address with `12 <= ps <= 47`, via the shift identity
 `shiftr (shiftl x 13) (ps+1) = zero_extend (shiftr x (ps+1-13)) 48` (unblocked
 by `hardware/rocq/mword_lemmas.v`, which unfolds SailStdpp's concrete
-`MachineWord` instance to stdpp `bv_*`).  The **PA** agreement is still pinned
-by the diff vectors; its general identity
-`(pfn & ~(2^(ps-12)-1)) << 12 = (pfn >> (ps-12)) << ps` is the remaining
-follow-up (needs `uint_and_vec`/`uint_not_vec` plus a `Z.land` clear-low-bits
-lemma over `Z.ldiff_ones_r`).
+`MachineWord` instance to stdpp `bv_*`).  The **PA** agreement is likewise
+proved *generally* — `la_pa_conforms` (plus `la_pa_hi_conforms`) shows the
+model's `(pfn >> (ps-12)) << ps | va[ps-1:0]` and the oracle's
+`((pfn & ~(2^(ps-12)-1)) << 12) | va[ps-1:0]` agree for *every* entry/address
+with `12 <= ps <= 48`.  The core identity is
+`pfn & (2^36 - 2^(ps-12)) = (pfn >> (ps-12)) << (ps-12)` (clearing the
+software bits between bit 12 and ps equals shifting right then left), proved
+by `Z_land_clear_low` over `Z.ldiff_ones_r`, with `uint_and_vec`/`uint_not_vec`/
+`uint_mword_of_int`/`uint_swmask` in `mword_lemmas.v` translating the bitwise
+operands to `Z.land`/`Z.lnot`.
 
 ### Live QEMU diff-test (`hardware/qemu-diff/run_loongarch_diff.sh`)
 

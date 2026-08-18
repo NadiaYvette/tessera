@@ -328,6 +328,8 @@ axiom_free loongarch_qemu_oracle diff_la_odd_even
 # (the shift identity, unblocked by mword_lemmas.v's concrete MachineWord).
 axiom_free loongarch_qemu_oracle la_match_shift_conforms
 axiom_free loongarch_qemu_oracle la_covers_conforms
+axiom_free loongarch_qemu_oracle la_pa_hi_conforms
+axiom_free loongarch_qemu_oracle la_pa_conforms
 # fourth MMU variant: AArch64 VMSAv8-64 (block descriptors + contpte + LPA2 DS2).
 # The Sail transcription is aarch64_tlb.v (from aarch64_tlb.sail); the proofs
 # over the generated model live in aarch64_tlb_proofs.v.
@@ -386,6 +388,11 @@ axiom_free mword_lemmas shift_mod_div
 axiom_free mword_lemmas Z_land_mul_pow2_0
 axiom_free mword_lemmas Z_lor_add_pow2
 axiom_free mword_lemmas uint_subrange_vec_dec_55_0
+axiom_free mword_lemmas uint_and_vec
+axiom_free mword_lemmas uint_not_vec
+axiom_free mword_lemmas uint_mword_of_int
+axiom_free mword_lemmas uint_swmask
+axiom_free mword_lemmas Z_land_clear_low
 # sail-arm differential oracle: the size machinery agrees (general theorems) and
 # the StageOA address concat is pinned against aa_pa (vm_compute vectors).
 axiom_free aarch64_sail_oracle sa_tgx_granule_bits_conforms

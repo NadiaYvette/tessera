@@ -17,7 +17,7 @@
    does not scale: it normalises the `Z_to_bv` well-formedness obligations).
 *)
 
-From Stdlib Require Import ZArith Lia.
+From Stdlib Require Import ZArith Lia Bool.
 Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import SailStdpp.Operators_mwords.
@@ -234,4 +234,117 @@ Proof.
   rewrite bv_wrap_mword by lia.
   rewrite uint_bv_unsigned.
   reflexivity.
+Qed.
+
+(* ============================================================
+   `and_vec` / `not_vec` / `mword_of_int` — the bitwise-operand
+   distribution lemmas used by the LoongArch PA conformance
+   (`la_pa_conforms`).  As above, they unfold the concrete
+   `MachineWord` instance down to stdpp `bv_*`; `uint_not_vec` needs
+   a `cbn [MachineWord.Z_idx]` to align the goal's `Z_idx a` index
+   with the `Z.to_N a` index of `bv_unsigned_in_range` (they are
+   definitionally equal, but `lia` works syntactically).
+   ============================================================ *)
+
+(* uint distributes over and_vec (bitwise AND). *)
+Lemma uint_and_vec {a} (x y : mword a) :
+  uint (and_vec x y) = Z.land (uint x) (uint y).
+Proof.
+  rewrite !uint_bv_unsigned.
+  unfold and_vec, word_binop, with_word', with_word, MachineWord.and.
+  rewrite bv_and_unsigned. reflexivity.
+Qed.
+
+(* uint of a bitwise NOT: the 2^a - 1 - x complement. *)
+Lemma uint_not_vec {a} (x : mword a) :
+  0 <= a ->
+  uint (not_vec x) = 2^a - 1 - uint x.
+Proof.
+  intros Ha.
+  rewrite !uint_bv_unsigned.
+  unfold not_vec, word_unop, with_word', with_word, MachineWord.not.
+  rewrite bv_not_unsigned.
+  rewrite bv_wrap_mword by lia.
+  pose proof (bv_unsigned_in_range (Z.to_N a) x) as Hr.
+  rewrite (bv_modulus_mword (a := a)) in Hr by lia.
+  destruct Hr as [Hr0 Hr1].
+  assert (Hnot : Z.lnot (bv_unsigned x) = - bv_unsigned x - 1) by (unfold Z.lnot, Z.pred; lia).
+  rewrite Hnot.
+  replace (- bv_unsigned x - 1) with ((2^a - 1 - bv_unsigned x) + (-1) * 2^a) by lia.
+  rewrite (Z.mod_add (2^a - 1 - bv_unsigned x) (-1) (2^a)) by lia.
+  apply Z.mod_small.
+  cbn [MachineWord.Z_idx].
+  lia.
+Qed.
+
+(* uint of mword_of_int z is z (when z is already in range). *)
+Lemma uint_mword_of_int {a} (z : Z) :
+  0 <= a -> 0 <= z < 2^a ->
+  uint (mword_of_int (len := a) z) = z.
+Proof.
+  intros Ha Hz.
+  rewrite uint_bv_unsigned.
+  unfold mword_of_int, MachineWord.Z_to_word.
+  rewrite Z_to_bv_unsigned.
+  rewrite bv_wrap_mword by lia.
+  apply Z.mod_small. exact Hz.
+Qed.
+
+(* The LoongArch software-mask value: mword_of_int (2^(ps-12)-1) : mword 36. *)
+Lemma uint_swmask (ps : Z) :
+  12 <= ps <= 48 ->
+  uint (mword_of_int (len := 36) (2^(ps-12) - 1)) = 2^(ps-12) - 1.
+Proof.
+  intros Hps.
+  apply uint_mword_of_int; [lia |].
+  assert (Hpsr : 0 <= ps - 12 <= 36) by lia.
+  split.
+  - assert (0 < 2^(ps-12)) by (apply Z.pow_pos_nonneg; lia).
+    lia.
+  - apply (Z.lt_le_trans (2^(ps-12) - 1) (2^(ps-12)) (2^36)).
+    + lia.
+    + apply Z.pow_le_mono_r; lia.
+Qed.
+
+(* Clear the low k bits of a 36-bit u: u & (2^36 - 2^k) = (u / 2^k) * 2^k.
+   This is the `tlb_ppn = pfn & ~((1 << (ps-12)) - 1)` identity from QEMU's
+   `loongarch_check_pte`, via `Z.ldiff_ones_r` (clear-low-bits = shift right
+   then left). *)
+Lemma Z_land_clear_low (u k : Z) :
+  0 <= k -> k <= 36 -> 0 <= u < 2^36 ->
+  Z.land u (2^36 - 2^k) = (u / 2^k) * 2^k.
+Proof.
+  intros Hk0 Hk36 Hu. destruct Hu as [Hu0 Hu36].
+  rewrite <- Z.shiftr_div_pow2 by lia.
+  rewrite <- Z.shiftl_mul_pow2 by lia.
+  rewrite <- (Z.ldiff_ones_r u k Hk0).
+  apply Z.bits_inj. intro n.
+  rewrite Z.land_spec. rewrite Z.ldiff_spec.
+  destruct (Z.lt_ge_cases n 0) as [Hnneg | Hn0].
+  - rewrite !Z.testbit_neg_r by lia. reflexivity.
+  - destruct (Z.lt_ge_cases n 36) as [Hn36 | Hnge36].
+    + assert (Hsub : 2^36 - 2^k = Z.shiftl (Z.ones (36 - k)) k).
+      { unfold Z.ones.
+        rewrite Z.shiftl_mul_pow2 by lia.
+        unfold Z.pred.
+        rewrite Z.mul_add_distr_r.
+        rewrite (Z.shiftl_mul_pow2 1 (36 - k)) by lia.
+        rewrite Z.mul_1_l.
+        rewrite <- Z.pow_add_r by lia.
+        replace ((36 - k) + k) with 36 by lia.
+        lia. }
+      rewrite Hsub.
+      rewrite Z.shiftl_spec by lia.
+      rewrite (Z.testbit_ones (36 - k) (n - k)) by lia.
+      rewrite (Z.testbit_ones k n) by lia.
+      assert (Hnk : (0 <=? n - k) && (n - k <? 36 - k) = negb ((0 <=? n) && (n <? k))).
+      { lia. }
+      rewrite Hnk. reflexivity.
+    + assert (Hun : Z.testbit u n = false).
+      { destruct (Z.eq_dec u 0) as [Hu0' | Hun0].
+        - subst u. apply Z.testbit_0_l.
+        - apply Z.bits_above_log2; [lia |].
+          apply (Z.lt_le_trans _ 36 _); [| exact Hnge36].
+          apply Z.log2_lt_pow2; [lia | exact Hu36]. }
+      rewrite Hun. rewrite Bool.andb_false_l. reflexivity.
 Qed.
