@@ -251,6 +251,14 @@ backed up to `*.bak.*`). Two drift fixes were required, committed in `02ce71b`:
 Smoke test `hardware/rocq/s2_smoke.v` confirms gpfsl and `machine_types.v`/`machine.v`
 import side by side with no notation/instance clash — the reconciliation frontier.
 
+**Foundational source.** The release/acquire + view-transfer idioms the S2.2c/S2.5
+proofs use (release-writer → acquire-reader view transfer; per-location protocol
+via the ack cell's one-shot history) are the GPS discipline, now on hand as
+`~/Dokumente/GPS:_Navigating_Weak_Memory_with_Ghosts,_Protocols_and_Separation.pdf`
+(Turon, Vafeiadis, Dreyer — **OOPSLA 2014**). gpfsl is the Iris mechanisation of
+that program logic; the S2.2 proofs never leave it, so GPS is the *origin* of the
+proof style, not a separately-verified artefact (see `rigor-trust-line.md`).
+
 ### The release/acquire structure (weak-memory lift of S2.1)
 
 Under ORC11, the S2.1 SC heap accesses become access-annotated. The barrier decomposes
