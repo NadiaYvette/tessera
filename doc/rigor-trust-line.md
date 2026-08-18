@@ -37,6 +37,16 @@ ISA semantics are otherwise not referenced**. The AArch64 fragment is
 additionally cross-checked against the primary source (Arm ARM DDI 0487, issue
 M.c) — see `aarch64-translation.md`.
 
+**The conformance template.** The methodology the REMS `sail-*` models (and this
+repo's G1 conformance track) mirror is pinned down by
+*"ISA Semantics for ARMv8-A, RISC-V, and CHERI-MIPS"* (Armstrong, Bauereiss,
+Campbell, Reid, Gray, Norton, Mundkur, Wassell, French, Pulte, Flur, Stark,
+Krishnaswami, Sewell — **POPL 2019**), on hand as
+`~/Dokumente/ISA_Semantics_for_ARMv8-A,_RISC-V,_and_CHERI-MIPS.pdf`. It is the
+source of the *proforma* ISA-specification discipline and the conformance
+"proof obligations" Tessera's `conformance.v` (G1) restates at the leaf level;
+see §5 G1 below.
+
 ## 2. The trust stack (top = most trusted)
 
 ```
@@ -95,7 +105,7 @@ assumption, and it is the single largest rigour gap in this development.
 
 | # | Gap | Why it matters | To close it |
 |---|---|---|---|
-| G1 | `machine.sail` is **not validated** against `sail-riscv`/`sail-cheri-mips`/etc. | The whole hardware layer rests on an unverified hand-written walk | **Conformance test done + write-only fixed** (`hardware/rocq/conformance.v`): `translate_conforms` proves exact agreement (same PA/perm/fault) with **no precondition**, after `translate` was fixed to fault on the reserved write-only encoding (R=0,W=1); 7 executable test vectors pin the walk. Remaining: the full refinement/derivation from upstream Sail (a `pt_walk`-level derivation, not just the leaf-only transcription) |
+| G1 | `machine.sail` is **not validated** against `sail-riscv`/`sail-cheri-mips`/etc. | The whole hardware layer rests on an unverified hand-written walk | **Conformance test done + write-only fixed** (`hardware/rocq/conformance.v`): `translate_conforms` proves exact agreement (same PA/perm/fault) with **no precondition**, after `translate` was fixed to fault on the reserved write-only encoding (R=0,W=1); 7 executable test vectors pin the walk. Remaining: the full refinement/derivation from upstream Sail (a `pt_walk`-level derivation, not just the leaf-only transcription). The target shape is the **Armstrong et al. (POPL 2019)** proforma conformance proof obligations (see §1) — Tessera's `conformance.v` is the leaf-only first instalment of exactly that discipline |
 | G2 | No register file / ISA semantics | The model cannot express *any* code execution, only translation | Add a register/ISA fragment once a property needs execution |
 | G3 | Memory = PTE association list | **Data RAM added** (`Machine.ram`, `read_byte`/`write_byte`) **+ address decode added** (`Region`/`decode_addr`, decode-routed `load_byte`/`store_byte` in `data_ram.v`); still no device (MMIO) model, bus, or cache | device model / bus / cache, later increment |
 | G4 | No weak-memory ordering | TLB-shootdown soundness under relaxed memory (Property 2) is un-modeled | S2.2: gpfsl/ORC11 lift (toolchain reconciliation pending — see below) |
