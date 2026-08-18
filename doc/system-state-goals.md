@@ -125,7 +125,15 @@ carved out of.
   and §7 (address-translation faults + page-request handling §7.4.1 — the PRI
   side). So the replay reuses Stage 1/2 for the CPU side, ATS/PRI for the device
   side, and VT-d §3/§6.2/§6.5 for the IOMMU walker + invalidation, all on the
-  same `IOTLB ⊆ mapping` invariant. (Arm SMMUv3 remains the cross-check source.)
+  same `IOTLB ⊆ mapping` invariant. The Arm cross-check is now sourced too:
+  `~/Dokumente/IHI0070H_a-System_Memory_Management_Unit_Architecture_Specification.pdf`
+  (**Arm SMMUv3, IHI 0070, version H.a = SMMUv3.5, March 2026**). Relevant
+  chapters: §3.3 (stream-table lookup §3.3.1, StreamID→context descriptors
+  §3.3.2, configuration + translation lookup §3.3.3 — the walker), §3.9 (PCIe,
+  PASID, PRI, ATS — §3.9.1 ATS interface), §4 (command queue + invalidation:
+  §4.3 configuration-structure invalidation, §4.4 TLB invalidation §4.4.1-4.4.4,
+  §4.5 ATS and PRI), §5.2 (STE) / §5.4 (CD) data structures, §6.3.26-6.3.28
+  (SMMU_CMDQ_* registers).
 
 ### SSG-5 — Timer device(s)
 
