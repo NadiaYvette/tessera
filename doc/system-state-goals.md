@@ -133,7 +133,24 @@ carved out of.
   PASID, PRI, ATS — §3.9.1 ATS interface), §4 (command queue + invalidation:
   §4.3 configuration-structure invalidation, §4.4 TLB invalidation §4.4.1-4.4.4,
   §4.5 ATS and PRI), §5.2 (STE) / §5.4 (CD) data structures, §6.3.26-6.3.28
-  (SMMU_CMDQ_* registers).
+  (SMMU_CMDQ_* registers). The **AMD cross-check** completes the third platform:
+  `~/Dokumente/48882_3.11_IOMMU_PUB.pdf` (**AMD I/O Virtualization Technology
+  (IOMMU) Specification, Rev 3.11, April 2026**, order 48882, 313 pp). Relevant
+  chapters: §2.2.2 (device table), §2.2.3 (I/O page tables for host translations
+  — the walker), §2.2.6/§2.2.7 (guest/nested translations, incl. GPA→SPA sharing
+  with the AMD64 page tables §2.2.4), §2.4 (command buffer — **INVALIDATE_IOMMU_
+  PAGES §2.4.3**, **INVALIDATE_IOMMU_ALL §2.4.8**, ordering rules §2.4.11 — i.e.
+  the IOMMU shootdown), §2.6 (peripheral page-request logging — the PRI side),
+  and §2.11 (secure ATS support — the device-TLB side).
+
+  **SSG-4 is now fully sourced on all three platforms**, so the `IOTLB ⊆ mapping`
+  replay can be cross-checked three ways:
+
+  | Platform | Walker + invalidation source | Device side |
+  |---|---|---|
+  | Intel | VT-d 5.20 §3/§6.2/§6.5 | PCIe 6.0 ATS/PRI + VT-d §4 |
+  | Arm | SMMUv3 H.a §3.3/§4.4 | PCIe 6.0 ATS/PRI + SMMU §3.9 |
+  | AMD | AMD-Vi 3.11 §2.2/§2.4 | PCIe 6.0 ATS/PRI + AMD-Vi §2.6/§2.11 |
 
 ### SSG-5 — Timer device(s)
 
