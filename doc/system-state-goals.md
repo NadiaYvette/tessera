@@ -106,7 +106,8 @@ carved out of.
 - **Modeled today.** *No.*
 - **Proof needed.** A second walker + IOTLB shootdown — the CPU-TLB problem replayed,
   reusing the whole Stage 1/2 machinery (coherence + concurrent shootdown).
-  Self-contained, later.
+  Scoped in `doc/iommu-shootdown-plan.md` (S4.1 coherence → S4.2 concurrent
+  shootdown → S4.3 ATS/PRI device side); launchable now.
 - **Primary source available.** `~/Dokumente/PCI-Express-6_0-Specification-PCIE_SIG.pdf`
   (PCIe Base Spec **Rev 6.0** — the user notes it is *only* 6.0, not 6.1/7.0).
   It is the device↔IOMMU *interface*: **ATS** (Address Translation Services —
