@@ -91,6 +91,31 @@ Soundness: no core translates through `va` after the protocol completes.
   the controller's doorbell rather than the hand-set mailbox — which composes
   this bridge with S2.2c's `bc_remote_spec`/`bc_wait_all_spec`.
 
+  **S2.5 program (full controller in the loop, `shootdown_weak_broadcast_intc.v`).**
+  The controller's four bit-vectors (`Intc_pending` / `Intc_masked` /
+  `Intc_delivery` / `Intc_ipi` from `intc.sail`) become four per-hart heap arrays
+  `pending/masked/delivery/ipi`, each of length n, each cell a `Z` in {0,1},
+  protected by the broadcast invariant and reified to the abstract `Intc` record
+  by a ghost var (`intc_ctx`).  The program is
+
+      leader  =  pte <- #invalid_pte ;;                      (break-before-make)
+                 ∀ i. pending[i] <-ʳᵉˡ #1                (intc_send: latch pending, release)
+                 ;; fork N remotes ;; wait-all-acks
+      remote i =  repeat !ᵃᶜ (pending[i]) ;;             (IPI is pending)
+                  intc_ack_i (pending∧¬masked∧delivery -> pending:=0, ipi:=1)   (delivery/ack)
+                  ;; repeat !ᵃᶜ (ipi[i]) ;;               (observe the doorbell, acquire)
+                  ;; tlb[i] <- #(encode_tlb None) ;;       (clear own TLB)
+                  ;; ack[i] <-ʳᵉˡ #1                       (release ack: clear visible)
+
+  The weak-memory chain is: PTE write `<=ₕ` pending[i] release (leader) `<=ₕ`
+  ipi[i] release (the ack's acquire/release) `<=ₕ` ipi[i] acquire (remote), so
+  the remote's TLB clear observes the invalid PTE — exactly the `intc_ack ∘
+  intc_send = deliver_ipi` bridge (`bc_machine_ipi_step_via_intc`) made concrete
+  in the program.  `masked`/`delivery` are initialized once (all `#0` / all `#1`)
+  and never change across the broadcast, so the ack's gate `pending ∧ ¬masked ∧
+  delivery` is live; the interrupt-context delivery gate (`intc_enter_context`)
+  is where `delivery[i] := 0` would suppress delivery, left as the next increment.
+
 ## Concrete-value encoding (S2.1)
 
 `Pte` (5 bools + 44-bit ppn) and `option TlbEntry` (27-bit vpn + 44-bit ppn + 2-bit
