@@ -210,6 +210,11 @@ axiom_free intc_proofs      test_vector_intc_send_ack_delivers
 axiom_free intc_proofs      test_vector_intc_masked_holds
 axiom_free intc_proofs      test_vector_intc_unmask_delivers
 axiom_free intc_proofs      test_vector_intc_ack_clears_pending
+# intc -> S2.4 bridge: the controller's send+ack realizes the weak-memory
+# broadcast's deliver_ipi ghost step (delivery precedes ack via the device).
+axiom_free intc_proofs      intc_receive_ipi_eq_deliver
+axiom_free intc_proofs      intc_receive_ipi_cores_eq_deliver
+axiom_free intc_proofs      test_vector_intc_receive_ipi_eq_deliver
 axiom_free conformance      translate_conforms
 axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
 axiom_free conformance      test_vector_mapping_ok

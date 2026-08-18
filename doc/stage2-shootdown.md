@@ -79,6 +79,15 @@ Soundness: no core translates through `va` after the protocol completes.
   whose leaf PTE is still mapped, so the coherence conclusion now follows from S2.3b's
   `ipi_broadcast_correct` verbatim — the weak-memory and sequential IPI paths land on the
   same theorem, not on two parallel re-derivations.
+- **S2.5 — the IPI is the interrupt controller's (SSG-3).** The device model
+  (`hardware/src/intc.sail`, proved in `intc_proofs.v`) realizes S2.4's bare
+  `deliver_ipi` mailbox: `intc_receive_ipi_eq_deliver` proves the controller's
+  send (latch pending) + ack (ring the doorbell) produces the same mailbox as
+  `deliver_ipi`, so the weak-memory broadcast's per-step ghost
+  `receive_ipi (deliver_ipi _ i)` is realized by the device.  The remaining lift
+  is the *device-in-the-loop Iris program* — the remote's flush gated on the
+  controller's doorbell rather than the hand-set mailbox — which composes this
+  bridge with S2.2c's `bc_remote_spec`/`bc_wait_all_spec`.
 
 ## Concrete-value encoding (S2.1)
 

@@ -79,12 +79,15 @@ carved out of.
   `doc/interrupt-controller.md` maps each stage to Arm IHI 0069 H.b (§1.2, §2.2.1,
   §4.4, §4.7.1) and RISC-V AIA (IPIs.adoc / IMSIC.adoc). telix's real mechanism is
   `broadcast_tlb_flush` (LAPIC vec 0xFC / PLIC).
-- **Proof needed.** The concurrent/weak-memory lift of the IPI-based protocol with
-  the *device* (intc.sail's send/ack) in the loop rather than the pure mailbox
-  (S2.4 threaded `Machine_ipi`; the remaining lift swaps `deliver_ipi` for the
-  controller's `intc_send`+`intc_ack`), plus masking and interrupt context (SSG-3's
-  other half). The per-core "delivery precedes ack" crux and the
-  composed-broadcast refinement are done.
+- **Proof needed.** The remaining lift is the *device-in-the-loop Iris program* —
+  the remote's flush gated on the controller's doorbell (send → pending → ack →
+  doorbell) rather than the hand-set mailbox, composed with S2.2c's
+  `bc_remote_spec`/`bc_wait_all_spec`. The ghost-level swap is now done:
+  `intc_receive_ipi_eq_deliver` (intc_proofs.v) proves the controller's send+ack
+  produces the same mailbox as `deliver_ipi`, so S2.4's per-step ghost
+  `receive_ipi (deliver_ipi _ i)` is realized by the device. Also remaining:
+  masking and interrupt context (SSG-3's other half). The per-core "delivery
+  precedes ack" crux and the composed-broadcast refinement are done.
 
 ### SSG-4 — IOMMU / DMA controller
 

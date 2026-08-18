@@ -336,3 +336,63 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_intc_ack_clears_pending :
   intc_types.Intc_pending (intc.intc_ack (intc.intc_send intc3 1) 1) = [false; false; false].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   6. The weak-memory (S2.2c/S2.4) ghost step, realized by the controller.
+
+   S2.4's leader advances its machine ghost by [deliver_ipi] then [receive_ipi]
+   (shootdown_weak_broadcast.v, [bc_machine_ipi_step]): the IPI is a bare mailbox
+   bit.  SSG-3's device (intc.sail) *produces* that bit — send latches pending,
+   ack rings the doorbell.  This section is the pure bridge: the controller's
+   send+ack makes [receive_ipi] flush exactly as [deliver_ipi] does, so the
+   weak-memory broadcast's per-step IPI delivery is realized by the interrupt
+   controller rather than a hand-set mailbox.  (The full device-in-the-loop
+   Iris program — remotes gated on the controller's doorbell — is the S2.5
+   milestone on top of this bridge.)
+   ============================================================ *)
+
+(* Re-point a machine's mailbox, leaving cores/mem/ram untouched. *)
+Definition Machine_with_ipi (m : Machine) (ipi : list bool) : Machine :=
+  {| Machine_cores := Machine_cores m; Machine_mem := Machine_mem m;
+     Machine_ram := Machine_ram m; Machine_ipi := ipi |}.
+
+(* The controller's send+ack produces the same mailbox as [deliver_ipi], so the
+   remote's [receive_ipi] flush is identical: the weak-memory ghost step's IPI
+   delivery is realized by the interrupt controller. *)
+Lemma intc_receive_ipi_eq_deliver (m : Machine) (ic : intc_types.Intc) (i : nat) (va : mword 64)
+  (Hag : intc_types.Intc_ipi ic = Machine_ipi m)
+  (Hlen : Nat.lt i (length (intc_types.Intc_pending ic)))
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  receive_ipi
+    (Machine_with_ipi m (intc_types.Intc_ipi (intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i))))
+    (Z.of_nat i) va
+  = receive_ipi (deliver_ipi m (Z.of_nat i)) (Z.of_nat i) va.
+Proof.
+  rewrite (intc_send_ack_refines_deliver_ipi m ic i Hag Hlen Hm).
+  reflexivity.
+Qed.
+
+(* The same bridge, phrased on what the remote observes: its TLB clear is
+   identical whether the IPI was delivered by the controller or by deliver_ipi. *)
+Lemma intc_receive_ipi_cores_eq_deliver (m : Machine) (ic : intc_types.Intc) (i : nat) (va : mword 64)
+  (Hag : intc_types.Intc_ipi ic = Machine_ipi m)
+  (Hlen : Nat.lt i (length (intc_types.Intc_pending ic)))
+  (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat i) false = false) :
+  Machine_cores
+    (receive_ipi
+       (Machine_with_ipi m (intc_types.Intc_ipi (intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i))))
+       (Z.of_nat i) va)
+  = Machine_cores (receive_ipi (deliver_ipi m (Z.of_nat i)) (Z.of_nat i) va).
+Proof.
+  rewrite (intc_receive_ipi_eq_deliver m ic i va Hag Hlen Hm). reflexivity.
+Qed.
+
+(* Executable: on the 3-core [ipi_machine] (mailbox all-false) with the all-false
+   controller [intc3], send+ack to core 1 then [receive_ipi] flushes exactly as
+   [deliver_ipi] does. *)
+Lemma test_vector_intc_receive_ipi_eq_deliver :
+  (receive_ipi
+     (Machine_with_ipi ipi_machine (intc_types.Intc_ipi (intc.intc_ack (intc.intc_send intc3 1) 1)))
+     1 ipi_va).(Machine_cores)
+  = (receive_ipi (deliver_ipi ipi_machine 1) 1 ipi_va).(Machine_cores).
+Proof. vm_compute. reflexivity. Qed.
