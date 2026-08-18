@@ -468,6 +468,7 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak encode_tlb_test_vector_carries_va "$WFLAGS"
   # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
   rocq compile $WFLAGS shootdown_weak_broadcast.v
+  rocq compile $WFLAGS intc_weak_broadcast.v
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"
@@ -485,6 +486,10 @@ if [ -d "$GP" ]; then
   # per-cell coupling: the ack cell's released branch carries the va-flushed TLB
   # entry (flush_tlb_entry (Some (leaf_entry va)) va), bridged to encode_tlb None
   # via tlb_tags.flush_tlb_entry_leaf (checked in the pure section above).
+  # S2.5: the S2.4 weak-memory ghost step is the interrupt controller's
+  # send+ack (SSG-3) — the device realizes the broadcast's IPI delivery.
+  axiom_free intc_weak_broadcast bc_machine_ipi_step_via_intc "$WFLAGS"
+  axiom_free intc_weak_broadcast bc_machine_ipi_step_via_intc_cores "$WFLAGS"
   axiom_free_drain "$WFLAGS"
 else
   echo "(skip S2.2: gpfsl not found at $GP — check out the third_party/gpfsl submodule)" >&2

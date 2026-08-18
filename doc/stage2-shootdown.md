@@ -83,11 +83,13 @@ Soundness: no core translates through `va` after the protocol completes.
   (`hardware/src/intc.sail`, proved in `intc_proofs.v`) realizes S2.4's bare
   `deliver_ipi` mailbox: `intc_receive_ipi_eq_deliver` proves the controller's
   send (latch pending) + ack (ring the doorbell) produces the same mailbox as
-  `deliver_ipi`, so the weak-memory broadcast's per-step ghost
-  `receive_ipi (deliver_ipi _ i)` is realized by the device.  The remaining lift
-  is the *device-in-the-loop Iris program* — the remote's flush gated on the
-  controller's doorbell rather than the hand-set mailbox — which composes this
-  bridge with S2.2c's `bc_remote_spec`/`bc_wait_all_spec`.
+  `deliver_ipi`, and `bc_machine_ipi_step_via_intc`
+  (`hardware/rocq/intc_weak_broadcast.v`) composes it with S2.4's
+  `bc_machine_ipi_step`, so the weak-memory broadcast's per-step ghost
+  `receive_ipi (deliver_ipi _ i)` *is* the controller's send+ack.  The remaining
+  lift is the *device-in-the-loop Iris program* — the remote's flush gated on
+  the controller's doorbell rather than the hand-set mailbox — which composes
+  this bridge with S2.2c's `bc_remote_spec`/`bc_wait_all_spec`.
 
 ## Concrete-value encoding (S2.1)
 
