@@ -275,6 +275,20 @@ axiom_free iommu_proofs      iommu_unmap_without_invalidate_breaks
 axiom_free iommu_proofs      test_vector_iommu_invalidate_va0
 axiom_free iommu_proofs      test_vector_iommu_invalidate_va4096
 axiom_free iommu_proofs      test_vector_iommu_walk_empty_faults
+# IOMMU (SSG-4 / S4.1c): pte_address injectivity — the deferred "arithmetic
+# opaque" boundary, now closed.  pte_address packs the PPN into bits [55:12] and
+# the index into [11:3], so equal slot addresses have equal PPN and index, and
+# distinct indices yield distinct slot addresses (the ingredient the universal
+# `IOTLB ⊆ mapping` invariant needs).
+axiom_free iommu_proofs      mword_uint_inj
+axiom_free iommu_proofs      mword_uint_range
+axiom_free iommu_proofs      uint_lt_pow2
+axiom_free iommu_proofs      pow2_56_gt_12
+axiom_free iommu_proofs      pow2_56_gt_3
+axiom_free iommu_proofs      uint_pte_address
+axiom_free iommu_proofs      low12_of_pte_address
+axiom_free iommu_proofs      pte_address_injective
+axiom_free iommu_proofs      pte_address_neq_index
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf
