@@ -142,6 +142,18 @@ Definition undefined_InvalidationCmd '(tt : unit) : M (InvalidationCmd) :=
    (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
    returnM (({| InvalidationCmd_is_wait := w__0;  InvalidationCmd_va := w__1 |})).
 
+Definition undefined_Ste '(tt : unit) : M (Ste) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
+   (undefined_int (tt)) >>= fun (w__2 : Z) =>
+   returnM (({| Ste_valid := w__0;  Ste_s2_root := w__1;  Ste_cd_ptr := w__2 |})).
+
+Definition undefined_Cd '(tt : unit) : M (Cd) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
+   (undefined_int (tt)) >>= fun (w__2 : Z) =>
+   returnM (({| Cd_valid := w__0;  Cd_s1_root := w__1;  Cd_asid := w__2 |})).
+
 Definition vpn3 (va : mword 64) : mword 9 := subrange_vec_dec (va) (47) (39).
 
 Definition vpn2 (va : mword 64) : mword 9 := subrange_vec_dec (va) (38) (30).
@@ -279,18 +291,6 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
                Core_node := 0 |})) (mem) (iova)
       else None
    end.
-
-Definition undefined_Ste '(tt : unit) : M (Ste) :=
-   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
-   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
-   (undefined_int (tt)) >>= fun (w__2 : Z) =>
-   returnM (({| Ste_valid := w__0;  Ste_s2_root := w__1;  Ste_cd_ptr := w__2 |})).
-
-Definition undefined_Cd '(tt : unit) : M (Cd) :=
-   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
-   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
-   (undefined_int (tt)) >>= fun (w__2 : Z) =>
-   returnM (({| Cd_valid := w__0;  Cd_s1_root := w__1;  Cd_asid := w__2 |})).
 
 Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
    match (stes, sid) with
@@ -449,7 +449,9 @@ Definition deliver_ipi (m : Machine) (i : Z) : Machine :=
       Machine_iotlb := m.(Machine_iotlb);
       Machine_devtlbs := m.(Machine_devtlbs);
       Machine_prireqs := m.(Machine_prireqs);
-      Machine_ioqueue := m.(Machine_ioqueue) |}.
+      Machine_ioqueue := m.(Machine_ioqueue);
+      Machine_stes := m.(Machine_stes);
+      Machine_cds := m.(Machine_cds) |}.
 
 Fixpoint receive_ipi_cores (cores : list Core) (i : Z) (delivered : bool) (va : mword 64)
 : list Core :=
@@ -470,7 +472,9 @@ Definition receive_ipi (m : Machine) (i : Z) (va : mword 64) : Machine :=
       Machine_iotlb := m.(Machine_iotlb);
       Machine_devtlbs := m.(Machine_devtlbs);
       Machine_prireqs := m.(Machine_prireqs);
-      Machine_ioqueue := m.(Machine_ioqueue) |}.
+      Machine_ioqueue := m.(Machine_ioqueue);
+      Machine_stes := m.(Machine_stes);
+      Machine_cds := m.(Machine_cds) |}.
 
 Definition initialize_registers '(tt : unit) : unit := tt.
 

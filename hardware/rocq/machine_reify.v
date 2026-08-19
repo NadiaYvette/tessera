@@ -38,7 +38,7 @@ Definition reify_machine (root : mword 44) (va : mword 64) (mem : list MemEntry)
      Machine_cores := List.map (fun j => reify_core root (tls j)) (seq 0 n);
      Machine_ram := [];
      Machine_ipi := [];
-     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}.
+     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}.
 
 (* Core [j] still caches the stale [leaf_entry va] exactly while it is pending
    (in the domain of the map [m]); once it has acked its TLB is empty.  The map's

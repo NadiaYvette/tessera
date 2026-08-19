@@ -506,134 +506,6 @@ Instance dummy_InvalidationCmd : Inhabited (InvalidationCmd) := {
 |} }.
 
 
-Record Machine := {
-  Machine_cores : list Core;
-  Machine_mem : PageTable;
-  Machine_ram : Ram;
-  Machine_ipi : list bool;
-  Machine_iotlb : list IotlbEntry;
-  Machine_devtlbs : list DevTlbEntry;
-  Machine_prireqs : list PriRequest;
-  Machine_ioqueue : list InvalidationCmd;
-}.
-Arguments Machine : clear implicits.
-#[export]
-Instance Decidable_eq_Machine : EqDecision Machine.
-   intros [x0 x1 x2 x3 x4 x5 x6 x7].
-   intros [y0 y1 y2 y3 y4 y5 y6 y7].
-  cmp_record_field x0 y0.
-  cmp_record_field x1 y1.
-  cmp_record_field x2 y2.
-  cmp_record_field x3 y3.
-  cmp_record_field x4 y4.
-  cmp_record_field x5 y5.
-  cmp_record_field x6 y6.
-  cmp_record_field x7 y7.
-left; subst; reflexivity.
-Defined.
-#[export]
-Instance Countable_Machine : Countable Machine.
-refine {|
-  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x, Machine_iotlb x, Machine_devtlbs x, Machine_prireqs x, Machine_ioqueue x);
-  decode x := '(x0, x1, x2, x3, x4, x5, x6, x7) ← decode x;
-              mret (Build_Machine x0 x1 x2 x3 x4 x5 x6 x7)
-|}.
-abstract (
-  intros [x0 x1 x2 x3 x4 x5 x6 x7];
-  rewrite decode_encode;
-  reflexivity).
-Defined.
-
-Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
-  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) =>
-    Build_Machine e f1 f2 f3 f4 f5 f6 f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
-  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) =>
-    Build_Machine f0 e f2 f3 f4 f5 f6 f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_ram' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) =>
-    Build_Machine f0 f1 e f3 f4 f5 f6 f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_ipi' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) (_ as f6) (_ as f7) =>
-    Build_Machine f0 f1 f2 e f4 f5 f6 f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_iotlb' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) (_ as f6) (_ as f7) =>
-    Build_Machine f0 f1 f2 f3 e f5 f6 f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_devtlbs' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ (_ as f6) (_ as f7) =>
-    Build_Machine f0 f1 f2 f3 f4 e f6 f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_prireqs' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) _ (_ as f7) =>
-    Build_Machine f0 f1 f2 f3 f4 f5 e f7 end (at level 0).
-Notation "{[ r 'with' 'Machine_ioqueue' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) _ =>
-    Build_Machine f0 f1 f2 f3 f4 f5 f6 e end (at level 0).
-#[export]
-Instance dummy_Machine : Inhabited (Machine) := {
-  inhabitant := {|
-    Machine_cores := inhabitant;
-    Machine_mem := inhabitant;
-    Machine_ram := inhabitant;
-    Machine_ipi := inhabitant;
-    Machine_iotlb := inhabitant;
-    Machine_devtlbs := inhabitant;
-    Machine_prireqs := inhabitant;
-    Machine_ioqueue := inhabitant
-|} }.
-
-
-Inductive Region := RAM | MMIO.
-Definition num_of_Region (arg_ : Region) : Z := match arg_ with | RAM => 0 | MMIO => 1 end.
-
-Definition Region_of_num (arg_ : Z) (*(0 <=? arg_) && (arg_ <=? 1)*) : Region :=
-   let l__0 := arg_ in
-   if Z.eqb (l__0) (0) then RAM
-   else MMIO.
-
-Lemma Region_num_of_roundtrip (x : Region) : Region_of_num (num_of_Region x) = x.
-  destruct x; reflexivity.
-Qed.
-Lemma num_of_Region_injective (x y : Region) : num_of_Region x = num_of_Region y -> x = y.
-  intro.
-  rewrite <- (Region_num_of_roundtrip x).
-  rewrite <- (Region_num_of_roundtrip y).
-  congruence.
-Qed.
-Definition Region_eq_dec (x y : Region) : {x = y} + {x <> y}.
-  refine (match Z.eq_dec (num_of_Region x) (num_of_Region y) with
-  | left e => left (num_of_Region_injective x y e)
-  | right ne => right _
-  end).
-  congruence.
-Defined.
-Definition Region_beq (x y : Region) : bool :=
-  Z.eqb (num_of_Region x) (num_of_Region y).
-Lemma Region_beq_iff x y : Region_beq x y = true <-> x = y.
-  unfold Region_beq.
-  rewrite Z.eqb_eq.
-  split; [apply num_of_Region_injective | congruence].
-Qed.
-Lemma Region_beq_refl x : Region_beq x x = true.
-apply Region_beq_iff; reflexivity.
-Qed.
-#[export]
-Instance Decidable_eq_Region : EqDecision Region := Region_eq_dec.
-#[export]
-Instance Countable_Region : Countable Region.
-refine {|
-  encode x := encode (num_of_Region x);
-  decode x := z ← decode x; mret (Region_of_num z);
-|}.
-abstract (
-  intro s; rewrite decode_encode;
-  simpl;
-  rewrite Region_num_of_roundtrip;
-  reflexivity).
-Defined.
-#[export]
-Instance dummy_Region : Inhabited Region := { inhabitant := RAM }.
-
-
 Record Ste := {
   Ste_valid : bool;
   Ste_s2_root : bits 44;
@@ -712,6 +584,146 @@ Notation "{[ r 'with' 'Cd_asid' := e ]}" :=
 Instance dummy_Cd : Inhabited (Cd) := {
   inhabitant := {| Cd_valid := inhabitant; Cd_s1_root := inhabitant; Cd_asid := inhabitant
 |} }.
+
+
+Record Machine := {
+  Machine_cores : list Core;
+  Machine_mem : PageTable;
+  Machine_ram : Ram;
+  Machine_ipi : list bool;
+  Machine_iotlb : list IotlbEntry;
+  Machine_devtlbs : list DevTlbEntry;
+  Machine_prireqs : list PriRequest;
+  Machine_ioqueue : list InvalidationCmd;
+  Machine_stes : list Ste;
+  Machine_cds : list Cd;
+}.
+Arguments Machine : clear implicits.
+#[export]
+Instance Decidable_eq_Machine : EqDecision Machine.
+   intros [x0 x1 x2 x3 x4 x5 x6 x7 x8 x9].
+   intros [y0 y1 y2 y3 y4 y5 y6 y7 y8 y9].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
+  cmp_record_field x4 y4.
+  cmp_record_field x5 y5.
+  cmp_record_field x6 y6.
+  cmp_record_field x7 y7.
+  cmp_record_field x8 y8.
+  cmp_record_field x9 y9.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_Machine : Countable Machine.
+refine {|
+  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x, Machine_iotlb x, Machine_devtlbs x, Machine_prireqs x, Machine_ioqueue x, Machine_stes x, Machine_cds x);
+  decode x := '(x0, x1, x2, x3, x4, x5, x6, x7, x8, x9) ← decode x;
+              mret (Build_Machine x0 x1 x2 x3 x4 x5 x6 x7 x8 x9)
+|}.
+abstract (
+  intros [x0 x1 x2 x3 x4 x5 x6 x7 x8 x9];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
+  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine e f1 f2 f3 f4 f5 f6 f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
+  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine f0 e f2 f3 f4 f5 f6 f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_ram' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine f0 f1 e f3 f4 f5 f6 f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_ipi' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) (_ as f6) (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine f0 f1 f2 e f4 f5 f6 f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_iotlb' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) (_ as f6) (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine f0 f1 f2 f3 e f5 f6 f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_devtlbs' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ (_ as f6) (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine f0 f1 f2 f3 f4 e f6 f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_prireqs' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) _ (_ as f7) (_ as f8) (_ as f9) =>
+    Build_Machine f0 f1 f2 f3 f4 f5 e f7 f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_ioqueue' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) _ (_ as f8) (_ as f9) =>
+    Build_Machine f0 f1 f2 f3 f4 f5 f6 e f8 f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_stes' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) _ (_ as f9) =>
+    Build_Machine f0 f1 f2 f3 f4 f5 f6 f7 e f9 end (at level 0).
+Notation "{[ r 'with' 'Machine_cds' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) (_ as f7) (_ as f8) _ =>
+    Build_Machine f0 f1 f2 f3 f4 f5 f6 f7 f8 e end (at level 0).
+#[export]
+Instance dummy_Machine : Inhabited (Machine) := {
+  inhabitant := {|
+    Machine_cores := inhabitant;
+    Machine_mem := inhabitant;
+    Machine_ram := inhabitant;
+    Machine_ipi := inhabitant;
+    Machine_iotlb := inhabitant;
+    Machine_devtlbs := inhabitant;
+    Machine_prireqs := inhabitant;
+    Machine_ioqueue := inhabitant;
+    Machine_stes := inhabitant;
+    Machine_cds := inhabitant
+|} }.
+
+
+Inductive Region := RAM | MMIO.
+Definition num_of_Region (arg_ : Region) : Z := match arg_ with | RAM => 0 | MMIO => 1 end.
+
+Definition Region_of_num (arg_ : Z) (*(0 <=? arg_) && (arg_ <=? 1)*) : Region :=
+   let l__0 := arg_ in
+   if Z.eqb (l__0) (0) then RAM
+   else MMIO.
+
+Lemma Region_num_of_roundtrip (x : Region) : Region_of_num (num_of_Region x) = x.
+  destruct x; reflexivity.
+Qed.
+Lemma num_of_Region_injective (x y : Region) : num_of_Region x = num_of_Region y -> x = y.
+  intro.
+  rewrite <- (Region_num_of_roundtrip x).
+  rewrite <- (Region_num_of_roundtrip y).
+  congruence.
+Qed.
+Definition Region_eq_dec (x y : Region) : {x = y} + {x <> y}.
+  refine (match Z.eq_dec (num_of_Region x) (num_of_Region y) with
+  | left e => left (num_of_Region_injective x y e)
+  | right ne => right _
+  end).
+  congruence.
+Defined.
+Definition Region_beq (x y : Region) : bool :=
+  Z.eqb (num_of_Region x) (num_of_Region y).
+Lemma Region_beq_iff x y : Region_beq x y = true <-> x = y.
+  unfold Region_beq.
+  rewrite Z.eqb_eq.
+  split; [apply num_of_Region_injective | congruence].
+Qed.
+Lemma Region_beq_refl x : Region_beq x x = true.
+apply Region_beq_iff; reflexivity.
+Qed.
+#[export]
+Instance Decidable_eq_Region : EqDecision Region := Region_eq_dec.
+#[export]
+Instance Countable_Region : Countable Region.
+refine {|
+  encode x := encode (num_of_Region x);
+  decode x := z ← decode x; mret (Region_of_num z);
+|}.
+abstract (
+  intro s; rewrite decode_encode;
+  simpl;
+  rewrite Region_num_of_roundtrip;
+  reflexivity).
+Defined.
+#[export]
+Instance dummy_Region : Inhabited Region := { inhabitant := RAM }.
 
 
 

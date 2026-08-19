@@ -32,7 +32,7 @@ Definition shootdown (m : Machine) (root : mword 44) (va : mword 64) : Machine :
      Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
      Machine_ram := m.(Machine_ram);
      Machine_ipi := m.(Machine_ipi);
-     Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |}.
+     Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}.
 
 (* ============================================================
    Lemmas.
@@ -130,7 +130,7 @@ Proof.
        Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
        Machine_ram := [];
        Machine_ipi := [];
-       Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}
+       Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}
     root va Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.
@@ -165,7 +165,7 @@ Definition invalidate_shootdown (m : Machine) (root : mword 44) (va : mword 64) 
      Machine_cores := List.map (fun c => sfence_vma_va c va) m.(Machine_cores);
      Machine_ram := m.(Machine_ram);
      Machine_ipi := m.(Machine_ipi);
-     Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |}.
+     Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}.
 
 Theorem invalidate_shootdown_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
   p.(Pte_valid) = false ->
@@ -202,7 +202,7 @@ Proof.
        Machine_cores := List.map (fun _ => core_with_root root) (seq 0 n);
        Machine_ram := [];
        Machine_ipi := [];
-       Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}
+       Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}
     root va p Hinv Hroot) as H.
   cbn in H. rewrite map_sfence_empty in H. exact H.
 Qed.

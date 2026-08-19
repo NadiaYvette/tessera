@@ -169,3 +169,70 @@ Definition cd_ok : Cd :=
 Lemma test_vector_smmu_translate_hit_empty_walk :
   smmu_translate [st_ok] [cd_ok] 0 [] (mword_of_int 0 : mword 64) = None.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.4 end-to-end SMMU shootdown (STE/CD threaded through Machine).
+
+   A translation shootdown mutates page tables and caches, never the stream
+   table / context-descriptor table — so [smmu_shootdown] unmaps at a root and
+   invalidates the IOTLB, threading stes/cds through unchanged.  The end-to-end
+   theorem composes the structural lookup ([smmu_translate_spec]) with the
+   two-stage coherence replay: after the stage-1 (or stage-2) unmap the full
+   SID -> STE -> CD -> two-stage walk faults for the freed frame.
+   ============================================================ *)
+
+(* Break-before-make at a page-table root + IOTLB invalidate; the stream table
+   and context-descriptor table are carried unchanged. *)
+Definition smmu_shootdown (m : Machine) (root : mword 44) (va : mword 64) : Machine :=
+  {| Machine_cores := m.(Machine_cores);
+     Machine_mem := unmap_leaf_mem (core_with_root root) m.(Machine_mem) va;
+     Machine_ram := m.(Machine_ram);
+     Machine_ipi := m.(Machine_ipi);
+     Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va;
+     Machine_devtlbs := m.(Machine_devtlbs);
+     Machine_prireqs := m.(Machine_prireqs);
+     Machine_ioqueue := m.(Machine_ioqueue);
+     Machine_stes := m.(Machine_stes);
+     Machine_cds := m.(Machine_cds) |}.
+
+(* The shootdown's IOTLB is exactly the invalidation of the pre-IOTLB. *)
+Lemma smmu_shootdown_iotlb (m : Machine) (root : mword 44) (va : mword 64) :
+  (smmu_shootdown m root va).(Machine_iotlb) = iotlb_invalidate m.(Machine_iotlb) va.
+Proof. unfold smmu_shootdown. reflexivity. Qed.
+
+(* End-to-end stage-1: unmap the stage-1 leaf, and the full SID -> STE -> CD ->
+   two-stage walk faults for the freed frame. *)
+Theorem smmu_shootdown_stage1_correct (m : Machine) (sid : Z) (gva : mword 64)
+    (s : Ste) (c : Cd) :
+  ste_lookup m.(Machine_stes) sid = Some s ->
+  s.(Ste_valid) = true ->
+  cd_lookup m.(Machine_cds) s.(Ste_cd_ptr) = Some c ->
+  c.(Cd_valid) = true ->
+  smmu_translate m.(Machine_stes) m.(Machine_cds) sid
+    (smmu_shootdown m c.(Cd_s1_root) gva).(Machine_mem) gva = None.
+Proof.
+  intros Hs Hsv Hc Hcv.
+  unfold smmu_shootdown. cbn.
+  rewrite (smmu_translate_spec m.(Machine_stes) m.(Machine_cds) sid _ gva s c Hs Hsv Hc Hcv).
+  apply (smmu_unmap_stage1_faults c.(Cd_s1_root) s.(Ste_s2_root) m.(Machine_mem) gva).
+Qed.
+
+(* End-to-end stage-2: unmap the stage-2 leaf (keyed by the intermediate GPA),
+   and — provided stage-1 still resolves to that GPA after the unmap (the
+   alias-free premise) — the full walk faults. *)
+Theorem smmu_shootdown_stage2_correct (m : Machine) (sid : Z) (gva : mword 64)
+    (s : Ste) (c : Cd) (gpa : mword 56) (perm1 : Perm) :
+  ste_lookup m.(Machine_stes) sid = Some s ->
+  s.(Ste_valid) = true ->
+  cd_lookup m.(Machine_cds) s.(Ste_cd_ptr) = Some c ->
+  c.(Cd_valid) = true ->
+  translate (core_with_root c.(Cd_s1_root))
+    (smmu_shootdown m s.(Ste_s2_root) (zero_extend gpa 64)).(Machine_mem) gva = Some (gpa, perm1) ->
+  smmu_translate m.(Machine_stes) m.(Machine_cds) sid
+    (smmu_shootdown m s.(Ste_s2_root) (zero_extend gpa 64)).(Machine_mem) gva = None.
+Proof.
+  intros Hs Hsv Hc Hcv H1.
+  unfold smmu_shootdown. cbn.
+  rewrite (smmu_translate_spec m.(Machine_stes) m.(Machine_cds) sid _ gva s c Hs Hsv Hc Hcv).
+  apply (smmu_unmap_stage2_faults c.(Cd_s1_root) s.(Ste_s2_root) m.(Machine_mem) gva gpa perm1 H1).
+Qed.

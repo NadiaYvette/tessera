@@ -401,6 +401,9 @@ axiom_free smmu_proofs        smmu_translate_faults_invalid_ste
 axiom_free smmu_proofs        smmu_translate_faults_invalid_cd
 axiom_free smmu_proofs        test_vector_smmu_translate_empty_stes
 axiom_free smmu_proofs        test_vector_smmu_translate_hit_empty_walk
+axiom_free smmu_proofs        smmu_shootdown_iotlb
+axiom_free smmu_proofs        smmu_shootdown_stage1_correct
+axiom_free smmu_proofs        smmu_shootdown_stage2_correct
 # AMD-Vi 4-level I/O page-table walk (SSG-4 / S4.4): level-3 resolves to a
 # non-leaf PTE, then the bottom 3 levels are translate re-rooted there — the
 # 4-level walk subsumes the 3-level walk.

@@ -78,7 +78,7 @@ Definition store_byte (m : Machine) (pa : paddr) (v : mword 8) : Machine :=
                Machine_mem   := m.(Machine_mem);
                Machine_ram   := write_byte (Machine_ram m) pa v;
                Machine_ipi   := m.(Machine_ipi);
-               Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |}
+               Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}
   | MMIO => m
   end.
 
@@ -104,7 +104,7 @@ Lemma store_byte_ram_writes (m : Machine) (pa : paddr) (v : mword 8) :
                          Machine_mem   := m.(Machine_mem);
                          Machine_ram   := write_byte (Machine_ram m) pa v;
                          Machine_ipi   := m.(Machine_ipi);
-                         Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |}.
+                         Machine_iotlb := m.(Machine_iotlb); Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}.
 Proof. intros H. unfold store_byte. rewrite H. reflexivity. Qed.
 
 (* Load-after-store through the decode (RAM window): the byte is visible. *)

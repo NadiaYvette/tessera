@@ -117,9 +117,29 @@ struct InvalidationCmd = {
   va      : vaddr
 }
 
+// SMMUv3 stream table / context descriptor (SSG-4 / S4.4): the structural layer
+// over `smmu_walk`.  The Stream ID (SID) indexes the stream table (list
+// position = SID, SMMUv3 §3.3.1); the Stream Table Entry (STE) carries the
+// stage-2 table root and a pointer into the context-descriptor table; the
+// Context Descriptor (CD) carries the stage-1 table root (and ASID for later
+// address-space tagging).  Declared before `Machine` because the machine state
+// carries both tables.
+struct Ste = {
+  valid   : bool,
+  s2_root : bits(44),
+  cd_ptr  : int
+}
+
+struct Cd = {
+  valid   : bool,
+  s1_root : bits(44),
+  asid    : int
+}
+
 // The machine: a set of cores sharing one physical memory (page-table
-// descriptors plus data RAM), a per-core IPI mailbox (SSG-3 / S2.3), and the
-// IOMMU's translation cache (SSG-4) — the device-side twin of the per-core TLBs.
+// descriptors plus data RAM), a per-core IPI mailbox (SSG-3 / S2.3), the
+// IOMMU's translation cache (SSG-4) — the device-side twin of the per-core
+// TLBs — and the SMMUv3 stream table + context-descriptor table (S4.4).
 struct Machine = {
   cores   : list(Core),
   mem     : PageTable,
@@ -128,7 +148,9 @@ struct Machine = {
   iotlb   : list(IotlbEntry),
   devtlbs : list(DevTlbEntry),
   prireqs : list(PriRequest),
-  ioqueue : list(InvalidationCmd)
+  ioqueue : list(InvalidationCmd),
+  stes    : list(Ste),
+  cds     : list(Cd)
 }
 
 // ---- VPN / offset extraction (Sv39) ----
@@ -339,17 +361,8 @@ function amdvi_walk(root, mem, iova) =
 // the context-descriptor table; the Context Descriptor (CD) carries the stage-1
 // table root (and ASID for later address-space tagging).  This is the
 // structural layer over `smmu_walk` (S4.4): STE + CD select the two roots.
-struct Ste = {
-  valid   : bool,
-  s2_root : bits(44),
-  cd_ptr  : int
-}
-
-struct Cd = {
-  valid   : bool,
-  s1_root : bits(44),
-  asid    : int
-}
+// (The Ste/Cd structs are declared above, before `Machine`, because Machine
+// carries the stream table and context-descriptor table as state.)
 
 // list_nth-style lookup: element at position i, None out of range.
 val ste_lookup : (list(Ste), int) -> option(Ste)
@@ -560,7 +573,9 @@ function deliver_ipi(m, i) = struct {
   iotlb   = m.iotlb,
   devtlbs = m.devtlbs,
   prireqs = m.prireqs,
-  ioqueue = m.ioqueue
+  ioqueue = m.ioqueue,
+  stes    = m.stes,
+  cds     = m.cds
 }
 
 // Walk the cores, flushing `va` from core i's TLB iff `delivered` holds (the
@@ -585,5 +600,7 @@ function receive_ipi(m, i, va) = struct {
   iotlb   = m.iotlb,
   devtlbs = m.devtlbs,
   prireqs = m.prireqs,
-  ioqueue = m.ioqueue
+  ioqueue = m.ioqueue,
+  stes    = m.stes,
+  cds     = m.cds
 }

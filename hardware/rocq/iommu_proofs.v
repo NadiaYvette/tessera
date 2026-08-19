@@ -321,7 +321,7 @@ Definition iommu_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : 
                Machine_cores := m.(Machine_cores);
                Machine_ram := m.(Machine_ram);
                Machine_ipi := m.(Machine_ipi);
-               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |} in
+               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |} in
   ipi_broadcast_cores m1 (length m.(Machine_cores)) va.
 
 (* ipi_broadcast_cores leaves the IOTLB untouched (deliver_ipi / receive_ipi
@@ -359,7 +359,7 @@ Proof.
                 Machine_cores := m.(Machine_cores);
                 Machine_ram := m.(Machine_ram);
                 Machine_ipi := m.(Machine_ipi);
-                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |}).
+                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}).
   split.
   - (* mem *)
     destruct (ipi_broadcast_cores_preserves m1 n va) as [Hmem _].
@@ -414,7 +414,7 @@ Definition iommu_shootdown_machine : Machine :=
      Machine_mem := [];
      Machine_ram := [];
      Machine_ipi := [false; false; false];
-     Machine_iotlb := [iommu_e0; iommu_e1]; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}.
+     Machine_iotlb := [iommu_e0; iommu_e1]; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}.
 
 Lemma test_vector_iommu_shootdown :
   let m' := iommu_shootdown iommu_shootdown_machine ipi_root ipi_va invalid_pte in
@@ -1040,7 +1040,7 @@ Definition iommu_shootdown_via_queue (m : Machine) (root : mword 44) (va : mword
          Machine_iotlb := iotlb';
          Machine_devtlbs := m.(Machine_devtlbs);
          Machine_prireqs := m.(Machine_prireqs);
-         Machine_ioqueue := [] |}
+         Machine_ioqueue := []; Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}
   end.
 
 (* The queue-based shootdown's mem is the break-before-make (write-invalid). *)
@@ -1096,7 +1096,7 @@ Definition iommu_shootdown_ats (m : Machine) (root : mword 44) (va : mword 64) (
      Machine_iotlb := m'.(Machine_iotlb);
      Machine_devtlbs := ats_invalidate m.(Machine_devtlbs) va;
      Machine_prireqs := m'.(Machine_prireqs);
-     Machine_ioqueue := m'.(Machine_ioqueue) |}.
+     Machine_ioqueue := m'.(Machine_ioqueue); Machine_stes := m'.(Machine_stes); Machine_cds := m'.(Machine_cds) |}.
 
 (* The ATS-tier shootdown agrees with the S4.2a broadcast on everything except
    the device-TLBs, which it additionally invalidates. *)
@@ -1164,7 +1164,7 @@ Proof.
        Machine_ipi := m.(Machine_ipi);
        Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va;
        Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs);
-       Machine_ioqueue := m.(Machine_ioqueue) |}
+       Machine_ioqueue := m.(Machine_ioqueue); Machine_stes := m.(Machine_stes); Machine_cds := m.(Machine_cds) |}
     (length m.(Machine_cores)) va) as [Hmem _].
   rewrite Hmem. cbn. reflexivity.
 Qed.

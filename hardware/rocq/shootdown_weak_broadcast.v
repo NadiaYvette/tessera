@@ -140,7 +140,7 @@ Definition bc_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n
                              (if decide (i ≤ j < n) then Some (leaf_entry va) else None)) (seq 0 n);
      Machine_ram := [];
      Machine_ipi := ipi_prefix n i;
-     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}.
+     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}.
 
 (* The post-machine: every core's IPI delivered and TLB cleared. *)
 Definition bc_post_machine (root : mword 44) (va : mword 64) (mem : list MemEntry) (n : nat) : Machine :=
@@ -157,7 +157,7 @@ Definition bc_pre_machine (root : mword 44) (va : mword 64) (mem : list MemEntry
      Machine_cores := List.map (fun _ => reify_core root (Some (leaf_entry va))) (seq 0 n);
      Machine_ram := [];
      Machine_ipi := ipi_prefix n 0;
-     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}.
+     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}.
 
 (* ============================================================
    The program.
@@ -510,7 +510,7 @@ Lemma bc_machine_is_pre_invalidated (n : nat) :
      Machine_cores := List.map (fun _ => reify_core root (Some (leaf_entry va))) (seq 0 n);
      Machine_ram := [];
      Machine_ipi := ipi_prefix n 0;
-     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}
+     Machine_iotlb := []; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}
   = bc_machine root va mem n 0.
 Proof.
   unfold bc_machine. f_equal.
