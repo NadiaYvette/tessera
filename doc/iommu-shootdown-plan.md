@@ -179,8 +179,8 @@ of being pushed invalidations.
    translate re-rooted (`iommu_walk_translate_conforms`) + per-platform
    invalidation vectors (VT-d §6.5.2.3 / SMMU §4.4 / AMD-Vi §2.4.3).
 
-10. **S4.2b-2 — the weak-memory lift (gpfsl).** *(not yet landed)* The Iris
-    program `iommu_broadcast_weak_spec` with the command queue (`cmdq_mmio.v`)
+10. **S4.2b-2 — the weak-memory lift (gpfsl).** *(first direction landed)* The Iris
+    program with the command queue (`cmdq_mmio.v`)
     as the ghost device: leader PTE write (release) → `cmdq_enqueue` + doorbell
     (release); IOMMU `cmdq_drain` (acquire) → Invalidation-Wait completion
     (release); leader completion read (acquire). Re-instantiates S2.5's
@@ -188,6 +188,11 @@ of being pushed invalidations.
     S2.2b pattern, not the N-core broadcast). Pure precondition landed:
     `iommu_shootdown_via_queue_refines_iommu_shootdown` +
     `cmdq_drain_refines_iommu_process_queue`.
+    **Landed:** the leader → IOMMU doorbell direction — `iommu_broadcast_weak.v`
+    re-instantiates `shootdown_weak_gen_inv` (S2.2a) with the request flag `1` as
+    the message (`iommu_broadcast_gen_inv`, axiom-free): the leader's RELEASE of
+    the doorbell is observed by the IOMMU's ACQUIRE, so the IOMMU reads the
+    invalidate request.  The remaining three specs are below.
     The remaining obligations are the four Iris specs (each axiom-free, as in
     S2.5): (a) `leader_enqueue_spec` — release PTE write + release doorbell
     makes the descriptor + invalidate observable; (b) `iommu_drain_spec` —

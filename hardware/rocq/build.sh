@@ -648,6 +648,11 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak encode_tlb_None_eq "$WFLAGS"
   axiom_free shootdown_weak encode_tlb_test_vector_zero "$WFLAGS"
   axiom_free shootdown_weak encode_tlb_test_vector_carries_va "$WFLAGS"
+  # S4.2b-2 (first direction): the IOMMU broadcast's leader -> IOMMU doorbell
+  # release/acquire, a faithful re-instantiation of shootdown_weak_gen_inv with
+  # the request flag as the message.
+  rocq compile $WFLAGS iommu_broadcast_weak.v
+  axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
   rocq compile $WFLAGS shootdown_weak_broadcast.v
   rocq compile $WFLAGS intc_weak_broadcast.v
