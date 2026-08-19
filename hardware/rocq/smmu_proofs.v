@@ -21,6 +21,7 @@ Require Import machine.
 Require Import shootdown.      (* core_with_root *)
 Require Import coherence_leaf. (* unmap_leaf_mem *)
 Require Import iommu_proofs.   (* iommu_unmap_faults *)
+Require Import conformance.    (* oracle_walk, translate_conforms *)
 Import ListNotations.
 
 (* Stage-1 faults ⇒ the two-stage walk faults. *)
@@ -235,4 +236,48 @@ Proof.
   unfold smmu_shootdown. cbn.
   rewrite (smmu_translate_spec m.(Machine_stes) m.(Machine_cds) sid _ gva s c Hs Hsv Hc Hcv).
   apply (smmu_unmap_stage2_faults c.(Cd_s1_root) s.(Ste_s2_root) m.(Machine_mem) gva gpa perm1 H1).
+Qed.
+
+(* ============================================================
+   S4.4 conformance oracle: the SMMU walkers agree with the upstream Sv39
+   oracle (G1's `translate_conforms`), replayed through the two-stage and the
+   stream-table compositions.
+   ============================================================ *)
+
+(* The SMMU two-stage oracle: two upstream Sv39 walks composed (GVA -> GPA -> SPA). *)
+Definition oracle_smmu_walk (s1_root s2_root : mword 44) (mem : list MemEntry) (gva : mword 64)
+  : option (mword 56 * Perm) :=
+  match oracle_walk s1_root mem gva with
+  | None => None
+  | Some (gpa, _) => oracle_walk s2_root mem (zero_extend gpa 64)
+  end.
+
+(* The SMMU two-stage walk agrees with the upstream oracle exactly: each stage is
+   `translate` re-rooted, so G1's `translate_conforms` transfers stage-by-stage. *)
+Theorem smmu_walk_conforms (s1_root s2_root : mword 44) (mem : list MemEntry) (gva : mword 64) :
+  smmu_walk s1_root s2_root mem gva = oracle_smmu_walk s1_root s2_root mem gva.
+Proof.
+  unfold smmu_walk, oracle_smmu_walk.
+  rewrite (translate_conforms ({| Core_satp_ppn := s1_root; Core_tlb := []; Core_hart := 0; Core_node := 0 |}) mem gva).
+  cbn [Core_satp_ppn].
+  destruct (oracle_walk s1_root mem gva) as [[gpa perm1]|] eqn:E.
+  - rewrite (translate_conforms ({| Core_satp_ppn := s2_root; Core_tlb := []; Core_hart := 0; Core_node := 0 |}) mem (zero_extend gpa 64)).
+    cbn [Core_satp_ppn]. reflexivity.
+  - reflexivity.
+Qed.
+
+(* The full SID -> STE -> CD -> two-stage walk agrees with the upstream oracle:
+   the structural lookup selects the two roots, and `smmu_walk_conforms` closes
+   the translation. *)
+Theorem smmu_translate_conforms (stes : list Ste) (cds : list Cd) (sid : Z) (mem : list MemEntry)
+    (gva : mword 64) (s : Ste) (c : Cd) :
+  ste_lookup stes sid = Some s ->
+  s.(Ste_valid) = true ->
+  cd_lookup cds s.(Ste_cd_ptr) = Some c ->
+  c.(Cd_valid) = true ->
+  smmu_translate stes cds sid mem gva = oracle_smmu_walk c.(Cd_s1_root) s.(Ste_s2_root) mem gva.
+Proof.
+  intros Hs Hsv Hc Hcv.
+  rewrite (smmu_translate_spec stes cds sid mem gva s c Hs Hsv Hc Hcv).
+  apply (smmu_walk_conforms c.(Cd_s1_root) s.(Ste_s2_root) mem gva).
 Qed.

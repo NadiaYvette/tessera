@@ -19,6 +19,7 @@ Require Import shootdown.      (* core_with_root *)
 Require Import coherence.      (* remove_entry *)
 Require Import coherence_leaf. (* unmap_leaf_mem, read_pte_remove_other, leaf_addr *)
 Require Import iommu_proofs.   (* iommu_unmap_faults, iotlb_invalidate_removes *)
+Require Import conformance.    (* oracle_walk, translate_conforms *)
 Import ListNotations.
 
 (* A valid, non-leaf, non-NAPOT level-3 PTE ⇒ the 4-level walk is exactly the
@@ -108,4 +109,34 @@ Proof.
   split.
   - apply (amdvi_unmap_faults root mem iova p3 a Ha Hr Hv Hl Hn Hne).
   - apply (iotlb_invalidate_removes iotlb iova).
+Qed.
+
+(* ============================================================
+   S4.4 conformance oracle: the AMD-Vi 4-level walk agrees with the upstream
+   Sv39 oracle, replayed through the level-3 resolution + `translate` re-root.
+   ============================================================ *)
+
+(* The AMD-Vi 4-level oracle: level-3 resolves to a valid non-leaf non-NAPOT
+   PTE, then the upstream Sv39 oracle re-rooted at that PTE. *)
+Definition oracle_amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
+  : option (mword 56 * Perm) :=
+  match read_pte mem (pte_address root (vpn3 iova)) with
+  | None => None
+  | Some p3 =>
+      if andb p3.(Pte_valid) (andb (negb (is_leaf p3)) (negb p3.(Pte_napot))) then
+        oracle_walk p3.(Pte_ppn) mem iova
+      else None
+  end.
+
+(* The 4-level walk agrees with the upstream oracle exactly: the bottom 3 levels
+   are `translate` re-rooted, so G1's `translate_conforms` closes the tail. *)
+Theorem amdvi_walk_conforms (root : mword 44) (mem : list MemEntry) (iova : mword 64) :
+  amdvi_walk root mem iova = oracle_amdvi_walk root mem iova.
+Proof.
+  unfold amdvi_walk, oracle_amdvi_walk.
+  destruct (read_pte mem (pte_address root (vpn3 iova))) as [p3|] eqn:E; [| reflexivity].
+  destruct (andb p3.(Pte_valid) (andb (negb (is_leaf p3)) (negb p3.(Pte_napot)))) eqn:G.
+  - rewrite (translate_conforms ({| Core_satp_ppn := p3.(Pte_ppn); Core_tlb := []; Core_hart := 0; Core_node := 0 |}) mem iova).
+    cbn [Core_satp_ppn]. reflexivity.
+  - reflexivity.
 Qed.
