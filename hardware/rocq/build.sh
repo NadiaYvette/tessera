@@ -344,6 +344,15 @@ axiom_free iommu_proofs      iommu_shootdown_iotlb
 axiom_free iommu_proofs      iommu_shootdown_refines_invalidate_shootdown
 axiom_free iommu_proofs      iommu_shootdown_correct
 axiom_free iommu_proofs      test_vector_iommu_shootdown
+# IOMMU (SSG-4 / S4.2b-1): the queued-invalidation formulation of the broadcast.
+# unmap -> enqueue Invalidate+Wait -> drain (iommu_process_queue) => the device
+# walk faults and no stale IOTLB entry survives (the command-queue twin of
+# iommu_shootdown_correct).
+axiom_free iommu_proofs      iommu_process_queue_spec
+axiom_free iommu_proofs      iommu_shootdown_via_queue_mem
+axiom_free iommu_proofs      iommu_shootdown_via_queue_iotlb
+axiom_free iommu_proofs      iommu_shootdown_via_queue_correct
+axiom_free iommu_proofs      test_vector_iommu_process_queue
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf

@@ -137,6 +137,11 @@ Definition undefined_PriRequest '(tt : unit) : M (PriRequest) :=
    (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
    returnM (({| PriRequest_did := w__0;  PriRequest_iova := w__1 |})).
 
+Definition undefined_InvalidationCmd '(tt : unit) : M (InvalidationCmd) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
+   returnM (({| InvalidationCmd_is_wait := w__0;  InvalidationCmd_va := w__1 |})).
+
 Definition vpn2 (va : mword 64) : mword 9 := subrange_vec_dec (va) (38) (30).
 
 Definition vpn1 (va : mword 64) : mword 9 := subrange_vec_dec (va) (29) (21).
@@ -250,6 +255,15 @@ Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list Iot
       else e :: (iotlb_invalidate (rest) (va))
    end.
 
+Fixpoint iommu_process_queue (queue : list InvalidationCmd) (iotlb : list IotlbEntry)
+: option (list IotlbEntry) :=
+   match queue with
+   | [] => None
+   | c :: rest =>
+      if c.(InvalidationCmd_is_wait) then Some (iotlb)
+      else iommu_process_queue (rest) ((iotlb_invalidate (iotlb) (c.(InvalidationCmd_va))))
+   end.
+
 Definition ats_translate
 (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry) (root : mword 44) (did : Z) (iova : mword 64)
 (mem : list MemEntry)
@@ -347,7 +361,8 @@ Definition deliver_ipi (m : Machine) (i : Z) : Machine :=
       Machine_ipi := list_update_bool (m.(Machine_ipi)) (i) (true);
       Machine_iotlb := m.(Machine_iotlb);
       Machine_devtlbs := m.(Machine_devtlbs);
-      Machine_prireqs := m.(Machine_prireqs) |}.
+      Machine_prireqs := m.(Machine_prireqs);
+      Machine_ioqueue := m.(Machine_ioqueue) |}.
 
 Fixpoint receive_ipi_cores (cores : list Core) (i : Z) (delivered : bool) (va : mword 64)
 : list Core :=
@@ -367,7 +382,8 @@ Definition receive_ipi (m : Machine) (i : Z) (va : mword 64) : Machine :=
       Machine_ipi := m.(Machine_ipi);
       Machine_iotlb := m.(Machine_iotlb);
       Machine_devtlbs := m.(Machine_devtlbs);
-      Machine_prireqs := m.(Machine_prireqs) |}.
+      Machine_prireqs := m.(Machine_prireqs);
+      Machine_ioqueue := m.(Machine_ioqueue) |}.
 
 Definition initialize_registers '(tt : unit) : unit := tt.
 

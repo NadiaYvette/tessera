@@ -100,10 +100,10 @@ Replays **Stage 2** (`shootdown.v` → `shootdown_iris.v` →
 
 S4.2a proved the **functional** IOMMU broadcast. S4.2b lifts it to genuine
 concurrency under weak memory, replaying S2.2c/S2.5 with the interrupt
-controller's per-hart mailbox replaced by the IOMMU's command queue. Landed in
-three increments, each build-green and axiom-free:
+controller's per-hart mailbox replaced by the IOMMU's command queue. In three
+increments, each landed build-green and axiom-free:
 
-- **S4.2b-1 — the command queue (functional).** Add `Machine_ioqueue : list
+- **S4.2b-1 — the command queue (functional).** *(landed)* Add `Machine_ioqueue : list
   InvalidationCmd` (descriptors `IotlbInvalidate va` / `InvalidationWait`) and
   the functional `iommu_process_queue` that drains the queue (applying each
   invalidate to the IOTLB) and returns the Invalidation-Wait completion once the

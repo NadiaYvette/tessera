@@ -321,7 +321,7 @@ Definition iommu_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : 
                Machine_cores := m.(Machine_cores);
                Machine_ram := m.(Machine_ram);
                Machine_ipi := m.(Machine_ipi);
-               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs) |} in
+               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |} in
   ipi_broadcast_cores m1 (length m.(Machine_cores)) va.
 
 (* ipi_broadcast_cores leaves the IOTLB untouched (deliver_ipi / receive_ipi
@@ -359,7 +359,7 @@ Proof.
                 Machine_cores := m.(Machine_cores);
                 Machine_ram := m.(Machine_ram);
                 Machine_ipi := m.(Machine_ipi);
-                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs) |}).
+                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs); Machine_ioqueue := m.(Machine_ioqueue) |}).
   split.
   - (* mem *)
     destruct (ipi_broadcast_cores_preserves m1 n va) as [Hmem _].
@@ -414,7 +414,7 @@ Definition iommu_shootdown_machine : Machine :=
      Machine_mem := [];
      Machine_ram := [];
      Machine_ipi := [false; false; false];
-     Machine_iotlb := [iommu_e0; iommu_e1]; Machine_devtlbs := []; Machine_prireqs := [] |}.
+     Machine_iotlb := [iommu_e0; iommu_e1]; Machine_devtlbs := []; Machine_prireqs := []; Machine_ioqueue := [] |}.
 
 Lemma test_vector_iommu_shootdown :
   let m' := iommu_shootdown iommu_shootdown_machine ipi_root ipi_va invalid_pte in
@@ -1000,3 +1000,80 @@ Proof.
     + (* neither matches: keep r, recurse. *)
       rewrite Ed, E. rewrite IH. reflexivity.
 Qed.
+
+(* ============================================================
+   S4.2b-1 (the command queue, functional): the queued-invalidation
+   formulation of the S4.2a broadcast.
+
+   machine.sail's S4.2b-1 additions: `InvalidationCmd` (a queued-invalidation
+   descriptor — `IotlbInvalidate va` or `InvalidationWait`) + `Machine_ioqueue`
+   (the command queue) + `iommu_process_queue` (drain the FIFO, applying each
+   invalidate to the IOTLB, completing `Some iotlb` at the Invalidation-Wait).
+   This section proves the queue formulation of S4.2a's
+   `iommu_shootdown_correct`: unmap → enqueue Invalidate + Wait → drain ⇒ every
+   cached translation for `va` is gone.
+   ============================================================ *)
+
+(* The two-descriptor queue: invalidate va, then wait (the completion barrier). *)
+Definition invalidate_wait_queue (va : mword 64) : list InvalidationCmd :=
+  [ {| InvalidationCmd_is_wait := false; InvalidationCmd_va := va |};
+    {| InvalidationCmd_is_wait := true;  InvalidationCmd_va := va |} ].
+
+(* Draining [Invalidate va; Wait] applies exactly one invalidation and then
+   completes with the invalidated IOTLB. *)
+Lemma iommu_process_queue_spec (iotlb : list IotlbEntry) (va : mword 64) :
+  iommu_process_queue (invalidate_wait_queue va) iotlb = Some (iotlb_invalidate iotlb va).
+Proof. cbn. reflexivity. Qed.
+
+(* The IOMMU shootdown, queue formulation: break-before-make + enqueue
+   Invalidate+Wait + drain.  The drained IOTLB is the invalidation of the
+   pre-shootdown IOTLB; the queue itself is emptied by the drain. *)
+Definition iommu_shootdown_via_queue (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) : Machine :=
+  let mem' := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p in
+  match iommu_process_queue (invalidate_wait_queue va) m.(Machine_iotlb) with
+  | None => m   (* no wait descriptor: no completion, IOTLB unchanged *)
+  | Some iotlb' =>
+      {| Machine_cores := m.(Machine_cores);
+         Machine_mem := mem';
+         Machine_ram := m.(Machine_ram);
+         Machine_ipi := m.(Machine_ipi);
+         Machine_iotlb := iotlb';
+         Machine_devtlbs := m.(Machine_devtlbs);
+         Machine_prireqs := m.(Machine_prireqs);
+         Machine_ioqueue := [] |}
+  end.
+
+(* The queue-based shootdown's mem is the break-before-make (write-invalid). *)
+Lemma iommu_shootdown_via_queue_mem (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_via_queue m root va p).(Machine_mem)
+  = invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p.
+Proof. unfold iommu_shootdown_via_queue. rewrite iommu_process_queue_spec. cbn. reflexivity. Qed.
+
+(* The queue-based shootdown's IOTLB is exactly the invalidation of the pre-IOTLB. *)
+Lemma iommu_shootdown_via_queue_iotlb (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_via_queue m root va p).(Machine_iotlb)
+  = iotlb_invalidate m.(Machine_iotlb) va.
+Proof. unfold iommu_shootdown_via_queue. rewrite iommu_process_queue_spec. cbn. reflexivity. Qed.
+
+(* The headline: after the queue-based shootdown, the device walk faults for the
+   freed frame and no stale IOTLB entry survives — the queue formulation of
+   `iommu_shootdown_correct` (S4.2a). *)
+Theorem iommu_shootdown_via_queue_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  p.(Pte_valid) = false ->
+  iommu_walk root (iommu_shootdown_via_queue m root va p).(Machine_mem) va = None /\
+  Forall (fun e => vpn_of e.(IotlbEntry_iova) <> vpn_of va)
+         (iommu_shootdown_via_queue m root va p).(Machine_iotlb).
+Proof.
+  intros Hinv. split.
+  - rewrite iommu_shootdown_via_queue_mem.
+    apply (iommu_invalidate_faults root m.(Machine_mem) va p Hinv).
+  - rewrite iommu_shootdown_via_queue_iotlb.
+    apply (iotlb_invalidate_removes m.(Machine_iotlb) va).
+Qed.
+
+(* Executable vector: draining [Invalidate 0; Wait] over a two-entry IOTLB drops
+   the IOVA-0 entry and keeps the IOVA-4096 one. *)
+Lemma test_vector_iommu_process_queue :
+  iommu_process_queue (invalidate_wait_queue (mword_of_int 0 : mword 64)) [iommu_e0; iommu_e1]
+  = Some [iommu_e1].
+Proof. vm_compute. reflexivity. Qed.

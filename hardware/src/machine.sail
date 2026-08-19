@@ -107,6 +107,16 @@ struct PriRequest = {
   iova : vaddr
 }
 
+// A queued-invalidation descriptor (VT-d IOTLB Invalidate / Invalidation-Wait,
+// SMMU CMDQ, AMD-Vi command buffer).  is_wait = true is Invalidation-Wait (the
+// completion barrier); is_wait = false is IotlbInvalidate va (a 4KiB selective
+// IOTLB invalidation).  The circular-buffer head/tail MMIO is the weak-memory
+// lift's job (S4.2b-2); here the queue is a plain FIFO list.
+struct InvalidationCmd = {
+  is_wait : bool,
+  va      : vaddr
+}
+
 // The machine: a set of cores sharing one physical memory (page-table
 // descriptors plus data RAM), a per-core IPI mailbox (SSG-3 / S2.3), and the
 // IOMMU's translation cache (SSG-4) — the device-side twin of the per-core TLBs.
@@ -117,7 +127,8 @@ struct Machine = {
   ipi     : list(bool),
   iotlb   : list(IotlbEntry),
   devtlbs : list(DevTlbEntry),
-  prireqs : list(PriRequest)
+  prireqs : list(PriRequest),
+  ioqueue : list(InvalidationCmd)
 }
 
 // ---- VPN / offset extraction (Sv39) ----
@@ -295,6 +306,21 @@ function iotlb_invalidate(entries, va) = match entries {
     else e :: iotlb_invalidate(rest, va)
 }
 
+// ---- queued invalidation (SSG-4 / S4.2b) ----
+
+// The IOMMU's command-queue drain: process the FIFO in order, applying each
+// IotlbInvalidate to the IOTLB, and complete (Some iotlb) when an
+// Invalidation-Wait is reached — the Invalidation-Wait completion (VT-d
+// §6.5.2.9) that orders the prior invalidations.  A queue with no wait
+// descriptor drains to None (no completion).
+val iommu_process_queue : (list(InvalidationCmd), list(IotlbEntry)) -> option(list(IotlbEntry))
+function iommu_process_queue(queue, iotlb) = match queue {
+  [||] => None(),
+  c :: rest =>
+    if c.is_wait then Some(iotlb)
+    else iommu_process_queue(rest, iotlb_invalidate(iotlb, c.va))
+}
+
 // ---- ATS / PRI device side (SSG-4 / S4.3) ----
 
 // ATS translation request -> completion.  The IOMMU walks the shared page table;
@@ -421,7 +447,8 @@ function deliver_ipi(m, i) = struct {
   ipi     = list_update_bool(m.ipi, i, true),
   iotlb   = m.iotlb,
   devtlbs = m.devtlbs,
-  prireqs = m.prireqs
+  prireqs = m.prireqs,
+  ioqueue = m.ioqueue
 }
 
 // Walk the cores, flushing `va` from core i's TLB iff `delivered` holds (the
@@ -445,5 +472,6 @@ function receive_ipi(m, i, va) = struct {
   ipi     = m.ipi,
   iotlb   = m.iotlb,
   devtlbs = m.devtlbs,
-  prireqs = m.prireqs
+  prireqs = m.prireqs,
+  ioqueue = m.ioqueue
 }
