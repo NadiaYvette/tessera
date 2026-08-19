@@ -353,6 +353,14 @@ axiom_free iommu_proofs      iommu_shootdown_via_queue_mem
 axiom_free iommu_proofs      iommu_shootdown_via_queue_iotlb
 axiom_free iommu_proofs      iommu_shootdown_via_queue_correct
 axiom_free iommu_proofs      test_vector_iommu_process_queue
+# IOMMU (SSG-4 / S4.2b-3): the ATS device-TLB tier — the full shootdown also
+# invalidates each endpoint's device-TLB, so after it no CPU TLB, no IOTLB, and
+# no device-TLB entry translates the freed frame.
+axiom_free iommu_proofs      iommu_shootdown_ats_mem
+axiom_free iommu_proofs      iommu_shootdown_ats_cores
+axiom_free iommu_proofs      iommu_shootdown_ats_iotlb
+axiom_free iommu_proofs      iommu_shootdown_ats_devtlbs
+axiom_free iommu_proofs      iommu_shootdown_ats_correct
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf

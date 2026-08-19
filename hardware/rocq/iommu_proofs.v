@@ -1077,3 +1077,63 @@ Lemma test_vector_iommu_process_queue :
   iommu_process_queue (invalidate_wait_queue (mword_of_int 0 : mword 64)) [iommu_e0; iommu_e1]
   = Some [iommu_e1].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.2b-3 (ATS device-TLB tier): the full shootdown also invalidates each
+   endpoint's device-TLB (PCIe ATS §4.3 / SMMU §4.5 / AMD-Vi §2.11).  The
+   IOMMU's own IOTLB is one translation point; each device's device-TLB is a
+   second.  `iommu_shootdown_ats` composes the S4.2a broadcast with the ATS
+   device-TLB invalidation, so after it no CPU TLB, no IOTLB, and no device-TLB
+   entry translates the freed frame.
+   ============================================================ *)
+
+Definition iommu_shootdown_ats (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) : Machine :=
+  let m' := iommu_shootdown m root va p in
+  {| Machine_cores := m'.(Machine_cores);
+     Machine_mem := m'.(Machine_mem);
+     Machine_ram := m'.(Machine_ram);
+     Machine_ipi := m'.(Machine_ipi);
+     Machine_iotlb := m'.(Machine_iotlb);
+     Machine_devtlbs := ats_invalidate m.(Machine_devtlbs) va;
+     Machine_prireqs := m'.(Machine_prireqs);
+     Machine_ioqueue := m'.(Machine_ioqueue) |}.
+
+(* The ATS-tier shootdown agrees with the S4.2a broadcast on everything except
+   the device-TLBs, which it additionally invalidates. *)
+Lemma iommu_shootdown_ats_mem (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_ats m root va p).(Machine_mem) = (iommu_shootdown m root va p).(Machine_mem).
+Proof. reflexivity. Qed.
+
+Lemma iommu_shootdown_ats_cores (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_ats m root va p).(Machine_cores) = (iommu_shootdown m root va p).(Machine_cores).
+Proof. reflexivity. Qed.
+
+Lemma iommu_shootdown_ats_iotlb (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_ats m root va p).(Machine_iotlb) = (iommu_shootdown m root va p).(Machine_iotlb).
+Proof. reflexivity. Qed.
+
+Lemma iommu_shootdown_ats_devtlbs (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_ats m root va p).(Machine_devtlbs) = ats_invalidate m.(Machine_devtlbs) va.
+Proof. reflexivity. Qed.
+
+(* The headline: after the full shootdown, no CPU TLB, no IOTLB, and no
+   device-TLB entry translates the freed frame. *)
+Theorem iommu_shootdown_ats_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  p.(Pte_valid) = false ->
+  length m.(Machine_ipi) = length m.(Machine_cores) ->
+  Forall (fun c => c.(Core_satp_ppn) = root) m.(Machine_cores) ->
+  Forall (fun c => translate c (iommu_shootdown_ats m root va p).(Machine_mem) va = None /\
+                   tlb_lookup c va = None)
+         (iommu_shootdown_ats m root va p).(Machine_cores) /\
+  iommu_walk root (iommu_shootdown_ats m root va p).(Machine_mem) va = None /\
+  Forall (fun e => vpn_of e.(IotlbEntry_iova) <> vpn_of va)
+         (iommu_shootdown_ats m root va p).(Machine_iotlb) /\
+  Forall (fun e => vpn_of e.(DevTlbEntry_iova) <> vpn_of va)
+         (iommu_shootdown_ats m root va p).(Machine_devtlbs).
+Proof.
+  intros Hinv Hlen Hroot.
+  rewrite iommu_shootdown_ats_mem, iommu_shootdown_ats_cores, iommu_shootdown_ats_iotlb, iommu_shootdown_ats_devtlbs.
+  destruct (iommu_shootdown_correct m root va p Hinv Hlen Hroot) as [Hcpu [Hwalk Hiotlb]].
+  split; [exact Hcpu | split; [exact Hwalk | split; [exact Hiotlb |]]].
+  apply (ats_invalidate_removes m.(Machine_devtlbs) va).
+Qed.
