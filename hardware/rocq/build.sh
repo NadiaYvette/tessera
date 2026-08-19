@@ -310,6 +310,14 @@ axiom_free iommu_proofs      unmap_slot_neq_root_slot
 axiom_free iommu_proofs      unmap_slot_neq_level1_slot
 axiom_free iommu_proofs      unmap_slot_neq_level0_slot
 axiom_free iommu_proofs      iommu_unmap_preserves_coherence
+# IOMMU (SSG-4 / S4.3): ATS/PRI device-side model — the translation request →
+# completion fills the IOTLB + device-TLB, the per-device invalidation, and the
+# page-request dedup (at most one pending per (did, iova)).
+axiom_free iommu_proofs      test_vector_ats_translate_hit
+axiom_free iommu_proofs      test_vector_ats_translate_fault
+axiom_free iommu_proofs      test_vector_ats_invalidate
+axiom_free iommu_proofs      test_vector_pri_request_enqueue
+axiom_free iommu_proofs      test_vector_pri_request_dedup
 # IOMMU (SSG-4 / S4.2a): the functional IOMMU broadcast shootdown — break-before-
 # make + IOTLB invalidate + IPI-delivered CPU-TLB flush, refining the CPU-side
 # `invalidate_shootdown` and dropping the unmapped page's device translations.

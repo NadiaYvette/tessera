@@ -88,15 +88,36 @@ struct IotlbEntry = {
   perm  : Perm
 }
 
+// An endpoint device's own translation cache (device-TLB), filled by an ATS
+// translation completion and invalidated by an ATS invalidation.  Keyed by
+// (did, iova) — the device-side twin of the core TLB, one per device rather
+// than per core (did is the StreamID/BDF; PASID is 0 for no SVM and lives in
+// the mirrored IOTLB entry).
+struct DevTlbEntry = {
+  did  : int,
+  iova : vaddr,
+  pa   : paddr,
+  perm : Perm
+}
+
+// A PRI page request: on a translation fault the device asks the kernel to map
+// the page and retries.  Pending until the kernel maps + the device retries.
+struct PriRequest = {
+  did  : int,
+  iova : vaddr
+}
+
 // The machine: a set of cores sharing one physical memory (page-table
 // descriptors plus data RAM), a per-core IPI mailbox (SSG-3 / S2.3), and the
 // IOMMU's translation cache (SSG-4) — the device-side twin of the per-core TLBs.
 struct Machine = {
-  cores : list(Core),
-  mem   : PageTable,
-  ram   : Ram,
-  ipi   : list(bool),
-  iotlb : list(IotlbEntry)
+  cores   : list(Core),
+  mem     : PageTable,
+  ram     : Ram,
+  ipi     : list(bool),
+  iotlb   : list(IotlbEntry),
+  devtlbs : list(DevTlbEntry),
+  prireqs : list(PriRequest)
 }
 
 // ---- VPN / offset extraction (Sv39) ----
@@ -274,6 +295,43 @@ function iotlb_invalidate(entries, va) = match entries {
     else e :: iotlb_invalidate(rest, va)
 }
 
+// ---- ATS / PRI device side (SSG-4 / S4.3) ----
+
+// ATS translation request -> completion.  The IOMMU walks the shared page table;
+// on a hit it caches the completion into its IOTLB and fills the device's
+// device-TLB with it.  On a fault nothing is cached (the device issues a PRI
+// page request instead).
+val ats_translate : (list(IotlbEntry), list(DevTlbEntry), bits(44), int, vaddr, PageTable)
+                 -> (list(IotlbEntry), list(DevTlbEntry))
+function ats_translate(iotlb, devtlbs, root, did, iova, mem) =
+  match iommu_walk(root, mem, iova) {
+    None() => (iotlb, devtlbs),
+    Some((pa, perm)) =>
+      (struct { did = did, pasid = 0, iova = iova, pa = pa, perm = perm } :: iotlb,
+       struct { did = did, iova = iova, pa = pa, perm = perm } :: devtlbs)
+  }
+
+// ATS device-TLB invalidation: drop every endpoint device-TLB entry for the
+// unmapped page (the per-device tier; the IOMMU's own IOTLB is invalidated by
+// iotlb_invalidate).  PCIe ATS (4.3) / SMMU (4.5) / AMD-Vi (2.11).
+val ats_invalidate : (list(DevTlbEntry), vaddr) -> list(DevTlbEntry)
+function ats_invalidate(devtlbs, va) = match devtlbs {
+  [||] => [||],
+  e :: rest =>
+    if vpn_of(e.iova) == vpn_of(va) then ats_invalidate(rest, va)
+    else e :: ats_invalidate(rest, va)
+}
+
+// PRI page request: enqueue a request to map the page (at most one pending per
+// (did, iova) — a device retries the same fault, it does not issue fresh ones).
+val pri_request : (list(PriRequest), int, vaddr) -> list(PriRequest)
+function pri_request(prireqs, did, iova) = match prireqs {
+  [||] => struct { did = did, iova = iova } :: [||],
+  r :: rest =>
+    if r.did == did & r.iova == iova then prireqs
+    else r :: pri_request(rest, did, iova)
+}
+
 // ---- TLB lookup / invalidation ----
 
 // TLB tag match: a 64KiB NAPOT entry tags on VA[38..16] (the high 23 VPN bits —
@@ -357,11 +415,13 @@ function list_nth_bool(l, i, d) = match (l, i) {
 // deliver_ipi: the leader marks core i's shootdown IPI delivered.
 val deliver_ipi : (Machine, int) -> Machine
 function deliver_ipi(m, i) = struct {
-  cores = m.cores,
-  mem   = m.mem,
-  ram   = m.ram,
-  ipi   = list_update_bool(m.ipi, i, true),
-  iotlb = m.iotlb
+  cores   = m.cores,
+  mem     = m.mem,
+  ram     = m.ram,
+  ipi     = list_update_bool(m.ipi, i, true),
+  iotlb   = m.iotlb,
+  devtlbs = m.devtlbs,
+  prireqs = m.prireqs
 }
 
 // Walk the cores, flushing `va` from core i's TLB iff `delivered` holds (the
@@ -379,9 +439,11 @@ function receive_ipi_cores(cores, i, delivered, va) = match (cores, i) {
 // the IPI was delivered first (ipi[i] = true).
 val receive_ipi : (Machine, int, vaddr) -> Machine
 function receive_ipi(m, i, va) = struct {
-  cores = receive_ipi_cores(m.cores, i, list_nth_bool(m.ipi, i, false), va),
-  mem   = m.mem,
-  ram   = m.ram,
-  ipi   = m.ipi,
-  iotlb = m.iotlb
+  cores   = receive_ipi_cores(m.cores, i, list_nth_bool(m.ipi, i, false), va),
+  mem     = m.mem,
+  ram     = m.ram,
+  ipi     = m.ipi,
+  iotlb   = m.iotlb,
+  devtlbs = m.devtlbs,
+  prireqs = m.prireqs
 }

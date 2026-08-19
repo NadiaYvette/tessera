@@ -122,6 +122,21 @@ Definition undefined_IotlbEntry '(tt : unit) : M (IotlbEntry) :=
                 IotlbEntry_pa := w__3;
                 IotlbEntry_perm := w__4 |})).
 
+Definition undefined_DevTlbEntry '(tt : unit) : M (DevTlbEntry) :=
+   (undefined_int (tt)) >>= fun (w__0 : Z) =>
+   (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
+   (undefined_bitvector (56)) >>= fun (w__2 : mword 56) =>
+   (undefined_Perm (tt)) >>= fun (w__3 : Perm) =>
+   returnM (({| DevTlbEntry_did := w__0;
+                DevTlbEntry_iova := w__1;
+                DevTlbEntry_pa := w__2;
+                DevTlbEntry_perm := w__3 |})).
+
+Definition undefined_PriRequest '(tt : unit) : M (PriRequest) :=
+   (undefined_int (tt)) >>= fun (w__0 : Z) =>
+   (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
+   returnM (({| PriRequest_did := w__0;  PriRequest_iova := w__1 |})).
+
 Definition vpn2 (va : mword 64) : mword 9 := subrange_vec_dec (va) (38) (30).
 
 Definition vpn1 (va : mword 64) : mword 9 := subrange_vec_dec (va) (29) (21).
@@ -235,6 +250,42 @@ Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list Iot
       else e :: (iotlb_invalidate (rest) (va))
    end.
 
+Definition ats_translate
+(iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry) (root : mword 44) (did : Z) (iova : mword 64)
+(mem : list MemEntry)
+: (list IotlbEntry * list DevTlbEntry) :=
+   match iommu_walk (root) (mem) (iova) with
+   | None => ((iotlb, devtlbs))
+   | Some (pa, perm) =>
+      ((({| IotlbEntry_did := did;
+            IotlbEntry_pasid := 0;
+            IotlbEntry_iova := iova;
+            IotlbEntry_pa := pa;
+            IotlbEntry_perm := perm |}) ::
+        iotlb, ({| DevTlbEntry_did := did;
+                   DevTlbEntry_iova := iova;
+                   DevTlbEntry_pa := pa;
+                   DevTlbEntry_perm := perm |}) ::
+        devtlbs))
+   end.
+
+Fixpoint ats_invalidate (devtlbs : list DevTlbEntry) (va : mword 64) : list DevTlbEntry :=
+   match devtlbs with
+   | [] => []
+   | e :: rest =>
+      if eq_vec ((vpn_of (e.(DevTlbEntry_iova)))) ((vpn_of (va))) then ats_invalidate (rest) (va)
+      else e :: (ats_invalidate (rest) (va))
+   end.
+
+Fixpoint pri_request (prireqs : list PriRequest) (did : Z) (iova : mword 64) : list PriRequest :=
+   match prireqs with
+   | [] => ({| PriRequest_did := did;  PriRequest_iova := iova |}) :: []
+   | r :: rest =>
+      if andb ((Z.eqb (r.(PriRequest_did)) (did))) ((eq_vec (r.(PriRequest_iova)) (iova))) then
+        prireqs
+      else r :: (pri_request (rest) (did) (iova))
+   end.
+
 Definition tag_eq (e : TlbEntry) (vpn : mword 27) : bool :=
    if e.(TlbEntry_napot) then
      eq_vec ((subrange_vec_dec (e.(TlbEntry_vpn)) (26) (4))) ((subrange_vec_dec (vpn) (26) (4)))
@@ -294,7 +345,9 @@ Definition deliver_ipi (m : Machine) (i : Z) : Machine :=
       Machine_mem := m.(Machine_mem);
       Machine_ram := m.(Machine_ram);
       Machine_ipi := list_update_bool (m.(Machine_ipi)) (i) (true);
-      Machine_iotlb := m.(Machine_iotlb) |}.
+      Machine_iotlb := m.(Machine_iotlb);
+      Machine_devtlbs := m.(Machine_devtlbs);
+      Machine_prireqs := m.(Machine_prireqs) |}.
 
 Fixpoint receive_ipi_cores (cores : list Core) (i : Z) (delivered : bool) (va : mword 64)
 : list Core :=
@@ -312,7 +365,9 @@ Definition receive_ipi (m : Machine) (i : Z) (va : mword 64) : Machine :=
       Machine_mem := m.(Machine_mem);
       Machine_ram := m.(Machine_ram);
       Machine_ipi := m.(Machine_ipi);
-      Machine_iotlb := m.(Machine_iotlb) |}.
+      Machine_iotlb := m.(Machine_iotlb);
+      Machine_devtlbs := m.(Machine_devtlbs);
+      Machine_prireqs := m.(Machine_prireqs) |}.
 
 Definition initialize_registers '(tt : unit) : unit := tt.
 

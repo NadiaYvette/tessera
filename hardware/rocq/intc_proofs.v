@@ -489,7 +489,7 @@ Lemma intc_delivery_enables_receive_ipi (m : Machine) (ic : intc_types.Intc) (i 
   let ic' := intc.intc_ack (intc.intc_send ic (Z.of_nat i)) (Z.of_nat i) in
   let m' := {| Machine_cores := Machine_cores m; Machine_mem := Machine_mem m;
                Machine_ram := Machine_ram m; Machine_ipi := intc_types.Intc_ipi ic';
-               Machine_iotlb := Machine_iotlb m |} in
+               Machine_iotlb := Machine_iotlb m; Machine_devtlbs := Machine_devtlbs m; Machine_prireqs := Machine_prireqs m |} in
   nth_error (Machine_cores (receive_ipi m' (Z.of_nat i) va)) i =
   option_map (fun c => sfence_vma_va c va) (nth_error (Machine_cores m) i).
 Proof.
@@ -579,7 +579,7 @@ Proof. vm_compute. reflexivity. Qed.
 Definition Machine_with_ipi (m : Machine) (ipi : list bool) : Machine :=
   {| Machine_cores := Machine_cores m; Machine_mem := Machine_mem m;
      Machine_ram := Machine_ram m; Machine_ipi := ipi;
-     Machine_iotlb := Machine_iotlb m |}.
+     Machine_iotlb := Machine_iotlb m; Machine_devtlbs := Machine_devtlbs m; Machine_prireqs := Machine_prireqs m |}.
 
 (* The controller's send+ack produces the same mailbox as [deliver_ipi], so the
    remote's [receive_ipi] flush is identical: the weak-memory ghost step's IPI

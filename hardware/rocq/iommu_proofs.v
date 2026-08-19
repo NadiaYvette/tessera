@@ -321,7 +321,7 @@ Definition iommu_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : 
                Machine_cores := m.(Machine_cores);
                Machine_ram := m.(Machine_ram);
                Machine_ipi := m.(Machine_ipi);
-               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va |} in
+               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs) |} in
   ipi_broadcast_cores m1 (length m.(Machine_cores)) va.
 
 (* ipi_broadcast_cores leaves the IOTLB untouched (deliver_ipi / receive_ipi
@@ -359,7 +359,7 @@ Proof.
                 Machine_cores := m.(Machine_cores);
                 Machine_ram := m.(Machine_ram);
                 Machine_ipi := m.(Machine_ipi);
-                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va |}).
+                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va; Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs) |}).
   split.
   - (* mem *)
     destruct (ipi_broadcast_cores_preserves m1 n va) as [Hmem _].
@@ -414,7 +414,7 @@ Definition iommu_shootdown_machine : Machine :=
      Machine_mem := [];
      Machine_ram := [];
      Machine_ipi := [false; false; false];
-     Machine_iotlb := [iommu_e0; iommu_e1] |}.
+     Machine_iotlb := [iommu_e0; iommu_e1]; Machine_devtlbs := []; Machine_prireqs := [] |}.
 
 Lemma test_vector_iommu_shootdown :
   let m' := iommu_shootdown iommu_shootdown_machine ipi_root ipi_va invalid_pte in
@@ -865,3 +865,68 @@ Proof.
   - (* no leaf slot: unmap is a no-op *)
     exact Hcoh.
 Qed.
+
+(* ============================================================
+   S4.3 (ATS/PRI device side) — executable vectors for the model.
+   ats_translate fills the IOTLB + the device-TLB on a walk hit and nothing on
+   a fault; ats_invalidate is the per-device tier of the shootdown; pri_request
+   enqueues at most one page request per (did, iova).
+   ============================================================ *)
+
+Definition ats_ptr_pte (next : mword 44) : Pte :=
+  {| Pte_valid := true; Pte_read := false; Pte_write := false;
+     Pte_exec := false; Pte_user := false; Pte_napot := false; Pte_ppn := next |}.
+Definition ats_ro_pte (next : mword 44) : Pte :=
+  {| Pte_valid := true; Pte_read := true; Pte_write := false;
+     Pte_exec := false; Pte_user := false; Pte_napot := false; Pte_ppn := next |}.
+
+Definition ats_dev0 : DevTlbEntry :=
+  {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
+     DevTlbEntry_pa := (mword_of_int 0 : mword 56); DevTlbEntry_perm := ReadWrite |}.
+Definition ats_dev1 : DevTlbEntry :=
+  {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 4096 : mword 64);
+     DevTlbEntry_pa := (mword_of_int 4096 : mword 56); DevTlbEntry_perm := ReadWrite |}.
+
+(* A three-level table mapping IOVA 0 -> leaf_ppn (read-only), for the ATS hit. *)
+Definition ats_table : PageTable :=
+  [ {| MemEntry_addr := pte_address (mword_of_int 1 : mword 44) (vpn2 (mword_of_int 0 : mword 64));
+       MemEntry_pte := ats_ptr_pte (mword_of_int 2 : mword 44) |};
+    {| MemEntry_addr := pte_address (mword_of_int 2 : mword 44) (vpn1 (mword_of_int 0 : mword 64));
+       MemEntry_pte := ats_ptr_pte (mword_of_int 3 : mword 44) |};
+    {| MemEntry_addr := pte_address (mword_of_int 3 : mword 44) (vpn0 (mword_of_int 0 : mword 64));
+       MemEntry_pte := ats_ro_pte (mword_of_int 42 : mword 44) |} ].
+
+(* ATS translation request -> completion: a walk hit fills both caches. *)
+Lemma test_vector_ats_translate_hit :
+  ats_translate [] [] (mword_of_int 1 : mword 44) 0 (mword_of_int 0 : mword 64) ats_table
+  = ([ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
+          IotlbEntry_iova := (mword_of_int 0 : mword 64);
+          IotlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
+          IotlbEntry_perm := Read |} ],
+     [ {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
+          DevTlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
+          DevTlbEntry_perm := Read |} ]).
+Proof. vm_compute. reflexivity. Qed.
+
+(* A walk fault caches nothing (the device issues a PRI request instead). *)
+Lemma test_vector_ats_translate_fault :
+  ats_translate [] [] (mword_of_int 1 : mword 44) 0 (mword_of_int 0 : mword 64) []
+  = ([], []).
+Proof. vm_compute. reflexivity. Qed.
+
+(* ATS device-TLB invalidation drops the unmapped page's entries, keeps others. *)
+Lemma test_vector_ats_invalidate :
+  ats_invalidate [ats_dev0; ats_dev1] (mword_of_int 0 : mword 64) = [ats_dev1].
+Proof. vm_compute. reflexivity. Qed.
+
+(* PRI page request: enqueue, and dedup at most one pending per (did, iova). *)
+Lemma test_vector_pri_request_enqueue :
+  pri_request [] 0 (mword_of_int 4096 : mword 64)
+  = [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}].
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_pri_request_dedup :
+  pri_request [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}]
+    0 (mword_of_int 4096 : mword 64)
+  = [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}].
+Proof. vm_compute. reflexivity. Qed.

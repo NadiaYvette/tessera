@@ -382,53 +382,151 @@ Instance dummy_IotlbEntry : Inhabited (IotlbEntry) := {
 |} }.
 
 
+Record DevTlbEntry := {
+  DevTlbEntry_did : Z;
+  DevTlbEntry_iova : vaddr_typ;
+  DevTlbEntry_pa : paddr;
+  DevTlbEntry_perm : Perm;
+}.
+Arguments DevTlbEntry : clear implicits.
+#[export]
+Instance Decidable_eq_DevTlbEntry : EqDecision DevTlbEntry.
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_DevTlbEntry : Countable DevTlbEntry.
+refine {|
+  encode x := encode (DevTlbEntry_did x, DevTlbEntry_iova x, DevTlbEntry_pa x, DevTlbEntry_perm x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_DevTlbEntry x0 x1 x2 x3)
+|}.
+abstract (
+  intros [x0 x1 x2 x3];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'DevTlbEntry_did' := e ]}" :=
+  match r with Build_DevTlbEntry _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_DevTlbEntry e f1 f2 f3 end (at level 0).
+Notation "{[ r 'with' 'DevTlbEntry_iova' := e ]}" :=
+  match r with Build_DevTlbEntry (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_DevTlbEntry f0 e f2 f3 end (at level 0).
+Notation "{[ r 'with' 'DevTlbEntry_pa' := e ]}" :=
+  match r with Build_DevTlbEntry (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_DevTlbEntry f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'DevTlbEntry_perm' := e ]}" :=
+  match r with Build_DevTlbEntry (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_DevTlbEntry f0 f1 f2 e end (at level 0).
+#[export]
+Instance dummy_DevTlbEntry : Inhabited (DevTlbEntry) := {
+  inhabitant := {|
+    DevTlbEntry_did := inhabitant;
+    DevTlbEntry_iova := inhabitant;
+    DevTlbEntry_pa := inhabitant;
+    DevTlbEntry_perm := inhabitant
+|} }.
+
+
+Record PriRequest := {
+  PriRequest_did : Z;
+  PriRequest_iova : vaddr_typ;
+}.
+Arguments PriRequest : clear implicits.
+#[export]
+Instance Decidable_eq_PriRequest : EqDecision PriRequest.
+   intros [x0 x1].
+   intros [y0 y1].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_PriRequest : Countable PriRequest.
+refine {|
+  encode x := encode (PriRequest_did x, PriRequest_iova x);
+  decode x := '(x0, x1) ← decode x;
+              mret (Build_PriRequest x0 x1)
+|}.
+abstract (
+  intros [x0 x1];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'PriRequest_did' := e ]}" :=
+  match r with Build_PriRequest _ (_ as f1) => Build_PriRequest e f1 end (at level 0).
+Notation "{[ r 'with' 'PriRequest_iova' := e ]}" :=
+  match r with Build_PriRequest (_ as f0) _ => Build_PriRequest f0 e end (at level 0).
+#[export]
+Instance dummy_PriRequest : Inhabited (PriRequest) := {
+  inhabitant := {| PriRequest_did := inhabitant; PriRequest_iova := inhabitant
+|} }.
+
+
 Record Machine := {
   Machine_cores : list Core;
   Machine_mem : PageTable;
   Machine_ram : Ram;
   Machine_ipi : list bool;
   Machine_iotlb : list IotlbEntry;
+  Machine_devtlbs : list DevTlbEntry;
+  Machine_prireqs : list PriRequest;
 }.
 Arguments Machine : clear implicits.
 #[export]
 Instance Decidable_eq_Machine : EqDecision Machine.
-   intros [x0 x1 x2 x3 x4].
-   intros [y0 y1 y2 y3 y4].
+   intros [x0 x1 x2 x3 x4 x5 x6].
+   intros [y0 y1 y2 y3 y4 y5 y6].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
   cmp_record_field x3 y3.
   cmp_record_field x4 y4.
+  cmp_record_field x5 y5.
+  cmp_record_field x6 y6.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_Machine : Countable Machine.
 refine {|
-  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x, Machine_iotlb x);
-  decode x := '(x0, x1, x2, x3, x4) ← decode x;
-              mret (Build_Machine x0 x1 x2 x3 x4)
+  encode x := encode (Machine_cores x, Machine_mem x, Machine_ram x, Machine_ipi x, Machine_iotlb x, Machine_devtlbs x, Machine_prireqs x);
+  decode x := '(x0, x1, x2, x3, x4, x5, x6) ← decode x;
+              mret (Build_Machine x0 x1 x2 x3 x4 x5 x6)
 |}.
 abstract (
-  intros [x0 x1 x2 x3 x4];
+  intros [x0 x1 x2 x3 x4 x5 x6];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'Machine_cores' := e ]}" :=
-  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) =>
-    Build_Machine e f1 f2 f3 f4 end (at level 0).
+  match r with Build_Machine _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Machine e f1 f2 f3 f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Machine_mem' := e ]}" :=
-  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) =>
-    Build_Machine f0 e f2 f3 f4 end (at level 0).
+  match r with Build_Machine (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Machine f0 e f2 f3 f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Machine_ram' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) =>
-    Build_Machine f0 f1 e f3 f4 end (at level 0).
+  match r with Build_Machine (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Machine f0 f1 e f3 f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Machine_ipi' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) =>
-    Build_Machine f0 f1 f2 e f4 end (at level 0).
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) (_ as f6) =>
+    Build_Machine f0 f1 f2 e f4 f5 f6 end (at level 0).
 Notation "{[ r 'with' 'Machine_iotlb' := e ]}" :=
-  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ =>
-    Build_Machine f0 f1 f2 f3 e end (at level 0).
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) (_ as f6) =>
+    Build_Machine f0 f1 f2 f3 e f5 f6 end (at level 0).
+Notation "{[ r 'with' 'Machine_devtlbs' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ (_ as f6) =>
+    Build_Machine f0 f1 f2 f3 f4 e f6 end (at level 0).
+Notation "{[ r 'with' 'Machine_prireqs' := e ]}" :=
+  match r with Build_Machine (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) _ =>
+    Build_Machine f0 f1 f2 f3 f4 f5 e end (at level 0).
 #[export]
 Instance dummy_Machine : Inhabited (Machine) := {
   inhabitant := {|
@@ -436,7 +534,9 @@ Instance dummy_Machine : Inhabited (Machine) := {
     Machine_mem := inhabitant;
     Machine_ram := inhabitant;
     Machine_ipi := inhabitant;
-    Machine_iotlb := inhabitant
+    Machine_iotlb := inhabitant;
+    Machine_devtlbs := inhabitant;
+    Machine_prireqs := inhabitant
 |} }.
 
 
