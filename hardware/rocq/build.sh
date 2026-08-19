@@ -93,6 +93,7 @@ rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
+rocq compile $FLAGS cmdq_mmio.v
 rocq compile $FLAGS shootdown_iris.v
 
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
@@ -371,6 +372,11 @@ axiom_free iommu_proofs      iommu_shootdown_ats_correct
 axiom_free iommu_proofs      find_devtlb_none_of_forall
 axiom_free iommu_proofs      find_devtlb_after_ats_invalidate
 axiom_free iommu_proofs      iommu_shootdown_ats_devtlb_faults
+# command-queue MMIO (SSG-4 / S4.2c): the head/tail (prod/cons) registers are
+# pure bookkeeping — the MMIO drain realizes iommu_process_queue.
+axiom_free cmdq_mmio         cmdq_drain_refines_iommu_process_queue
+axiom_free cmdq_mmio         cmdq_drain_invalidate_wait_spec
+axiom_free cmdq_mmio         test_vector_cmdq_mmio_drain
 # IOMMU (SSG-4 / S4.2b-2 groundwork): the queue drain reifies the functional
 # broadcast — iommu_shootdown_via_queue and iommu_shootdown agree on mem and
 # IOTLB (the pure precondition the weak-memory lift must satisfy).
