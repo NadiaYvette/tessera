@@ -179,24 +179,24 @@ of being pushed invalidations.
    translate re-rooted (`iommu_walk_translate_conforms`) + per-platform
    invalidation vectors (VT-d §6.5.2.3 / SMMU §4.4 / AMD-Vi §2.4.3).
 
-**Next (not yet landed):**
-
-10. **S4.2b-2 — the weak-memory lift (gpfsl).** The Iris program
-    `iommu_broadcast_weak_spec` with the command queue (`cmdq_mmio.v`) as the
-    ghost device: leader PTE write (release) → `cmdq_enqueue` + doorbell
+10. **S4.2b-2 — the weak-memory lift (gpfsl).** *(not yet landed)* The Iris
+    program `iommu_broadcast_weak_spec` with the command queue (`cmdq_mmio.v`)
+    as the ghost device: leader PTE write (release) → `cmdq_enqueue` + doorbell
     (release); IOMMU `cmdq_drain` (acquire) → Invalidation-Wait completion
     (release); leader completion read (acquire). Re-instantiates S2.5's
     `pending → doorbell → ack` chain (the 2-party leader↔IOMMU protocol, the
     S2.2b pattern, not the N-core broadcast). Pure precondition landed:
     `iommu_shootdown_via_queue_refines_iommu_shootdown` +
     `cmdq_drain_refines_iommu_process_queue`.
-11. **S4.4 — second-platform port.** A faithful second IOMMU walker: SMMUv3
-    stage-1/stage-2 (Arm VMSAv8-64 — reuse `aarch64_tlb.sail`) + stream table
-    (STE) + context descriptor (CD) + TLBI granularity (VA/ASID/ALL); or AMD-Vi
-    device table + 4-level I/O page tables + `INVALIDATE_IOMMU_PAGES`/`_ALL`.
-    First slice: the ALL-granularity invalidation (`iotlb_invalidate_all` /
-    `ats_invalidate_all`, AMD-Vi §2.4.8 / SMMU TLBI_ALL) as the second
-    invalidation shape, then the two-stage walker.
+11. **S4.4 — second-platform port.** *(first slices landed)*
+    - ALL-granularity invalidation (`iotlb_invalidate_all` / `ats_invalidate_all`,
+      AMD-Vi §2.4.8 / SMMU TLBI_ALL) — landed.
+    - SMMUv3 two-stage walk (`smmu_walk`: GVA → GPA → SPA, `smmu_proofs.v`) — landed.
+    - AMD-Vi 4-level walk (`amdvi_walk` = vpn3 then translate re-rooted,
+      `amdvi_proofs.v`, subsumes the 3-level walk) — landed.
+    Still open: the stream table (STE) + context descriptor (CD) data
+    structures, the ASID/leaf-granularity TLBI shapes, and the full coherence
+    replay of each walker (unmap → invalidation → walk faults).
 
 ## What is replayed vs. new
 
