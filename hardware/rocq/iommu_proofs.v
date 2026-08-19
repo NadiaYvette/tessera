@@ -1215,3 +1215,22 @@ Proof.
   rewrite iommu_shootdown_ats_devtlbs.
   apply find_devtlb_after_ats_invalidate.
 Qed.
+
+(* ============================================================
+   ALL-granularity invalidation (AMD-Vi INVALIDATE_IOMMU_ALL §2.4.8 / SMMU
+   TLBI_ALL §4.4): the second invalidation shape beside the 4KiB selective
+   `iotlb_invalidate` — drop every cached translation, regardless of IOVA.
+   ============================================================ *)
+
+Lemma iotlb_invalidate_all_clears (entries : list IotlbEntry) :
+  iotlb_invalidate_all entries = [].
+Proof. reflexivity. Qed.
+
+Lemma ats_invalidate_all_clears (devtlbs : list DevTlbEntry) :
+  ats_invalidate_all devtlbs = [].
+Proof. reflexivity. Qed.
+
+(* After the ALL device-TLB invalidation, a lookup of any page faults. *)
+Lemma find_devtlb_after_ats_invalidate_all (devtlbs : list DevTlbEntry) (va : mword 64) :
+  find_devtlb (ats_invalidate_all devtlbs) va = None.
+Proof. cbn. reflexivity. Qed.

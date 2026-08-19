@@ -291,6 +291,10 @@ Fixpoint ats_invalidate (devtlbs : list DevTlbEntry) (va : mword 64) : list DevT
       else e :: (ats_invalidate (rest) (va))
    end.
 
+Definition iotlb_invalidate_all (entries : list IotlbEntry) : list IotlbEntry := [].
+
+Definition ats_invalidate_all (devtlbs : list DevTlbEntry) : list DevTlbEntry := [].
+
 Fixpoint pri_request (prireqs : list PriRequest) (did : Z) (iova : mword 64) : list PriRequest :=
    match prireqs with
    | [] => ({| PriRequest_did := did;  PriRequest_iova := iova |}) :: []

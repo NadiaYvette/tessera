@@ -157,3 +157,23 @@ Lemma test_vector_pcie_pri_at_most_once :
   let q := pri_request [] 0 (mword_of_int 4096 : mword 64) in
   pri_request q 0 (mword_of_int 4096 : mword 64) = q.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   The ALL-granularity invalidation (AMD-Vi INVALIDATE_IOMMU_ALL §2.4.8 /
+   SMMU TLBI_ALL §4.4): the second invalidation shape — drop every cached
+   translation, regardless of IOVA, vs the 4KiB selective invalidate above.
+   ============================================================ *)
+
+(* AMD-Vi §2.4.8 INVALIDATE_IOMMU_ALL: clears the whole IOTLB. *)
+Lemma test_vector_amdvi_invalidate_iotlb_all :
+  iotlb_invalidate_all conf_iotlb = [].
+Proof. vm_compute. reflexivity. Qed.
+
+(* SMMU §4.4 TLBI_ALL: clears the whole endpoint device-TLB. *)
+Lemma test_vector_smmu_invalidate_devtlb_all :
+  ats_invalidate_all [ {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
+                         DevTlbEntry_pa := (mword_of_int 0 : mword 56); DevTlbEntry_perm := ReadWrite |};
+                       {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 4096 : mword 64);
+                         DevTlbEntry_pa := (mword_of_int 4096 : mword 56); DevTlbEntry_perm := ReadWrite |} ]
+  = [].
+Proof. vm_compute. reflexivity. Qed.

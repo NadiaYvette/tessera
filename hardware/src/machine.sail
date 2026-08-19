@@ -348,6 +348,18 @@ function ats_invalidate(devtlbs, va) = match devtlbs {
     else e :: ats_invalidate(rest, va)
 }
 
+// ---- ALL-granularity invalidation (SSG-4) ----
+
+// The ALL invalidation (AMD-Vi INVALIDATE_IOMMU_ALL §2.4.8 / SMMU TLBI_ALL
+// §4.4): drop every cached IOTLB translation, regardless of IOVA.  The second
+// invalidation shape beside the 4KiB selective `iotlb_invalidate`.
+val iotlb_invalidate_all : list(IotlbEntry) -> list(IotlbEntry)
+function iotlb_invalidate_all(entries) = [||]
+
+// The device-side ALL invalidation: drop every endpoint device-TLB entry.
+val ats_invalidate_all : list(DevTlbEntry) -> list(DevTlbEntry)
+function ats_invalidate_all(devtlbs) = [||]
+
 // PRI page request: enqueue a request to map the page (at most one pending per
 // (did, iova) — a device retries the same fault, it does not issue fresh ones).
 val pri_request : (list(PriRequest), int, vaddr) -> list(PriRequest)
