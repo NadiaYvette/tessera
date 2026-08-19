@@ -96,3 +96,76 @@ Proof.
     (unmap_leaf_mem (core_with_root s2_root) mem (zero_extend gpa 64)) gva gpa perm1 H1).
   apply (iommu_unmap_faults s2_root mem (zero_extend gpa 64)).
 Qed.
+
+(* ============================================================
+   S4.4 STE/CD structural layer: SID -> STE -> CD -> two-stage walk.
+
+   The stream-table walk (`smmu_translate`) resolves the two roots from the
+   stream table (SID-indexed STE) and context-descriptor table (CD).  The
+   conformance lemma says a valid STE + CD select exactly `smmu_walk`'s roots
+   (the structural layer is a lookup, not a new translation), so every
+   coherence/conformance result about `smmu_walk` carries over verbatim.
+   ============================================================ *)
+
+(* A valid STE + CD: the stream-table walk is exactly the two-stage walk rooted
+   at the CD's stage-1 table and the STE's stage-2 table. *)
+Lemma smmu_translate_spec (stes : list Ste) (cds : list Cd) (sid : Z) (mem : list MemEntry)
+    (gva : mword 64) (s : Ste) (c : Cd) :
+  ste_lookup stes sid = Some s ->
+  s.(Ste_valid) = true ->
+  cd_lookup cds s.(Ste_cd_ptr) = Some c ->
+  c.(Cd_valid) = true ->
+  smmu_translate stes cds sid mem gva = smmu_walk c.(Cd_s1_root) s.(Ste_s2_root) mem gva.
+Proof.
+  intros Hs Hsv Hc Hcv.
+  unfold smmu_translate.
+  rewrite Hs. cbn. rewrite Hsv. cbn.
+  rewrite Hc. cbn. rewrite Hcv. cbn. reflexivity.
+Qed.
+
+(* A missing stream-table entry faults. *)
+Lemma smmu_translate_faults_missing_ste (stes : list Ste) (cds : list Cd) (sid : Z)
+    (mem : list MemEntry) (gva : mword 64) :
+  ste_lookup stes sid = None ->
+  smmu_translate stes cds sid mem gva = None.
+Proof.
+  intros Hs. unfold smmu_translate. rewrite Hs. reflexivity.
+Qed.
+
+(* An invalid STE faults (no stage-2 root to use). *)
+Lemma smmu_translate_faults_invalid_ste (stes : list Ste) (cds : list Cd) (sid : Z)
+    (mem : list MemEntry) (gva : mword 64) (s : Ste) :
+  ste_lookup stes sid = Some s ->
+  s.(Ste_valid) = false ->
+  smmu_translate stes cds sid mem gva = None.
+Proof.
+  intros Hs Hsv. unfold smmu_translate. rewrite Hs. cbn. rewrite Hsv. reflexivity.
+Qed.
+
+(* A missing/invalid CD faults (no stage-1 root to use). *)
+Lemma smmu_translate_faults_invalid_cd (stes : list Ste) (cds : list Cd) (sid : Z)
+    (mem : list MemEntry) (gva : mword 64) (s : Ste) (c : Cd) :
+  ste_lookup stes sid = Some s ->
+  s.(Ste_valid) = true ->
+  cd_lookup cds s.(Ste_cd_ptr) = Some c ->
+  c.(Cd_valid) = false ->
+  smmu_translate stes cds sid mem gva = None.
+Proof.
+  intros Hs Hsv Hc Hcv. unfold smmu_translate. rewrite Hs. cbn. rewrite Hsv. cbn.
+  rewrite Hc. cbn. rewrite Hcv. reflexivity.
+Qed.
+
+(* Test vectors: a missing STE faults; a valid STE+CD resolves to the two-stage
+   walk, which faults on the empty table (both stages fault). *)
+Lemma test_vector_smmu_translate_empty_stes :
+  smmu_translate [] [] 0 [] (mword_of_int 0 : mword 64) = None.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition st_ok : Ste :=
+  {| Ste_valid := true; Ste_s2_root := mword_of_int 2 : mword 44; Ste_cd_ptr := 0 |}.
+Definition cd_ok : Cd :=
+  {| Cd_valid := true; Cd_s1_root := mword_of_int 1 : mword 44; Cd_asid := 0 |}.
+
+Lemma test_vector_smmu_translate_hit_empty_walk :
+  smmu_translate [st_ok] [cd_ok] 0 [] (mword_of_int 0 : mword 64) = None.
+Proof. vm_compute. reflexivity. Qed.

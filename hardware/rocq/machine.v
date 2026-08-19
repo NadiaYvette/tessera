@@ -280,6 +280,47 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
       else None
    end.
 
+Definition undefined_Ste '(tt : unit) : M (Ste) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
+   (undefined_int (tt)) >>= fun (w__2 : Z) =>
+   returnM (({| Ste_valid := w__0;  Ste_s2_root := w__1;  Ste_cd_ptr := w__2 |})).
+
+Definition undefined_Cd '(tt : unit) : M (Cd) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
+   (undefined_int (tt)) >>= fun (w__2 : Z) =>
+   returnM (({| Cd_valid := w__0;  Cd_s1_root := w__1;  Cd_asid := w__2 |})).
+
+Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
+   match (stes, sid) with
+   | (s :: g__3, l__0) =>
+      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__3) ((Z.sub (l__0) (1)))
+   | ([], _) => None
+   end.
+
+Fixpoint cd_lookup (cds : list Cd) (idx : Z) : option Cd :=
+   match (cds, idx) with
+   | (c :: g__2, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__2) ((Z.sub (l__0) (1)))
+   | ([], _) => None
+   end.
+
+Definition smmu_translate
+(stes : list Ste) (cds : list Cd) (sid : Z) (mem : list MemEntry) (gva : mword 64)
+: option ((mword 56 * Perm)) :=
+   match ste_lookup (stes) (sid) with
+   | None => None
+   | Some s =>
+      if s.(Ste_valid) then
+        match cd_lookup (cds) (s.(Ste_cd_ptr)) with
+        | None => None
+        | Some c =>
+           if c.(Cd_valid) then smmu_walk (c.(Cd_s1_root)) (s.(Ste_s2_root)) (mem) (gva) else None
+        end
+      else None
+   end.
+
 Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=
    match entries with
    | [] => []

@@ -331,6 +331,59 @@ function amdvi_walk(root, mem, iova) =
       else None()
   }
 
+// ---- SMMUv3 stream table / context descriptor (SSG-4 / S4.4) ----
+//
+// The two-stage walk's roots are resolved by the stream-table walk: the Stream
+// ID (SID) indexes the stream table (list position = SID, SMMUv3 §3.3.1); the
+// Stream Table Entry (STE) carries the stage-2 table root and a pointer into
+// the context-descriptor table; the Context Descriptor (CD) carries the stage-1
+// table root (and ASID for later address-space tagging).  This is the
+// structural layer over `smmu_walk` (S4.4): STE + CD select the two roots.
+struct Ste = {
+  valid   : bool,
+  s2_root : bits(44),
+  cd_ptr  : int
+}
+
+struct Cd = {
+  valid   : bool,
+  s1_root : bits(44),
+  asid    : int
+}
+
+// list_nth-style lookup: element at position i, None out of range.
+val ste_lookup : (list(Ste), int) -> option(Ste)
+function ste_lookup(stes, sid) = match (stes, sid) {
+  (s :: _, 0) => Some(s),
+  (_ :: rest, n) => ste_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+val cd_lookup : (list(Cd), int) -> option(Cd)
+function cd_lookup(cds, idx) = match (cds, idx) {
+  (c :: _, 0) => Some(c),
+  (_ :: rest, n) => cd_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+// The full SMMU translate: SID -> STE -> CD -> two-stage walk.  An invalid STE,
+// a missing/invalid CD, or a faulting stage faults; a hit returns exactly
+// `smmu_walk(c.s1_root, s.s2_root, mem, gva)` (the conformance lemma S4.4).
+val smmu_translate : (list(Ste), list(Cd), int, PageTable, vaddr) -> option((paddr, Perm))
+function smmu_translate(stes, cds, sid, mem, gva) =
+  match ste_lookup(stes, sid) {
+    None() => None(),
+    Some(s) =>
+      if s.valid then
+        match cd_lookup(cds, s.cd_ptr) {
+          None() => None(),
+          Some(c) =>
+            if c.valid then smmu_walk(c.s1_root, s.s2_root, mem, gva)
+            else None()
+        }
+      else None()
+  }
+
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
 // IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI
 // (4.4) / AMD-Vi INVALIDATE_IOMMU_PAGES (2.4.3).  4KiB granularity for now;

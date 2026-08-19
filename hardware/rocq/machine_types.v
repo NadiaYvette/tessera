@@ -634,6 +634,86 @@ Defined.
 Instance dummy_Region : Inhabited Region := { inhabitant := RAM }.
 
 
+Record Ste := {
+  Ste_valid : bool;
+  Ste_s2_root : bits 44;
+  Ste_cd_ptr : Z;
+}.
+Arguments Ste : clear implicits.
+#[export]
+Instance Decidable_eq_Ste : EqDecision Ste.
+   intros [x0 x1 x2].
+   intros [y0 y1 y2].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_Ste : Countable Ste.
+refine {|
+  encode x := encode (Ste_valid x, Ste_s2_root x, Ste_cd_ptr x);
+  decode x := '(x0, x1, x2) ← decode x;
+              mret (Build_Ste x0 x1 x2)
+|}.
+abstract (
+  intros [x0 x1 x2];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'Ste_valid' := e ]}" :=
+  match r with Build_Ste _ (_ as f1) (_ as f2) => Build_Ste e f1 f2 end (at level 0).
+Notation "{[ r 'with' 'Ste_s2_root' := e ]}" :=
+  match r with Build_Ste (_ as f0) _ (_ as f2) => Build_Ste f0 e f2 end (at level 0).
+Notation "{[ r 'with' 'Ste_cd_ptr' := e ]}" :=
+  match r with Build_Ste (_ as f0) (_ as f1) _ => Build_Ste f0 f1 e end (at level 0).
+#[export]
+Instance dummy_Ste : Inhabited (Ste) := {
+  inhabitant := {| Ste_valid := inhabitant; Ste_s2_root := inhabitant; Ste_cd_ptr := inhabitant
+|} }.
+
+
+Record Cd := {
+  Cd_valid : bool;
+  Cd_s1_root : bits 44;
+  Cd_asid : Z;
+}.
+Arguments Cd : clear implicits.
+#[export]
+Instance Decidable_eq_Cd : EqDecision Cd.
+   intros [x0 x1 x2].
+   intros [y0 y1 y2].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_Cd : Countable Cd.
+refine {|
+  encode x := encode (Cd_valid x, Cd_s1_root x, Cd_asid x);
+  decode x := '(x0, x1, x2) ← decode x;
+              mret (Build_Cd x0 x1 x2)
+|}.
+abstract (
+  intros [x0 x1 x2];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'Cd_valid' := e ]}" :=
+  match r with Build_Cd _ (_ as f1) (_ as f2) => Build_Cd e f1 f2 end (at level 0).
+Notation "{[ r 'with' 'Cd_s1_root' := e ]}" :=
+  match r with Build_Cd (_ as f0) _ (_ as f2) => Build_Cd f0 e f2 end (at level 0).
+Notation "{[ r 'with' 'Cd_asid' := e ]}" :=
+  match r with Build_Cd (_ as f0) (_ as f1) _ => Build_Cd f0 f1 e end (at level 0).
+#[export]
+Instance dummy_Cd : Inhabited (Cd) := {
+  inhabitant := {| Cd_valid := inhabitant; Cd_s1_root := inhabitant; Cd_asid := inhabitant
+|} }.
+
+
 
 
 
