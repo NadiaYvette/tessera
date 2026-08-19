@@ -30,6 +30,7 @@
 Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import SailStdpp.Operators_mwords. (* eq_vec_false_iff *)
+Require Import SailStdpp.MachineWord.  (* slice / word_to_N (unfolding subrange_vec_dec) *)
 Require Import machine_types.
 Require Import machine.
 Require Import coherence.       (* remove_entry, read_pte_absent_after_remove *)
@@ -514,16 +515,353 @@ Qed.
 (* The literal `IOTLB ⊆ mapping` invariant: every cached device translation
    agrees with the current page table.
 
-   NOTE (deferred): its preservation by unmap+invalidate —
-   `iotlb_coherent root mem iotlb -> iotlb_coherent root
-   (unmap_leaf_mem (core_with_root root) mem va) (iotlb_invalidate iotlb va)` —
-   is the headline S4.1c theorem.  `translate_remove_frame` (above) already
-   reduces it to three "the removed slot `a` differs from va''s three read
-   addresses" facts, each of which follows from `pte_address_injective` plus
-   `wf_page_table`.  The remaining missing ingredient is a pure bitvector lemma
-   that `vpn_of va` is determined by `(vpn2 va, vpn1 va, vpn0 va)` (i.e.
-   `vpn_of = concat(vpn2, vpn1, vpn0)`), so that `vpn_of va' <> vpn_of va`
-   forces a difference at one of the three levels — the analogue of Stage 1's
-   "keep the arithmetic opaque" boundary, deferred to the next increment. *)
+   Its preservation by unmap+invalidate is the headline S4.1d theorem
+   [iommu_unmap_preserves_coherence] (below): `translate_remove_frame` reduces
+   it to three "the removed slot `a` differs from va''s three read addresses"
+   facts, each following from `pte_address_injective` plus `wf_page_table`, with
+   the level-0 case using the bitvector reconstruction `vpn_of_determined`
+   (`vpn_of va` is determined by `(vpn2 va, vpn1 va, vpn0 va)`). *)
 Definition iotlb_coherent (root : mword 44) (mem : list MemEntry) (iotlb : list IotlbEntry) : Prop :=
   forall e, In e iotlb -> iommu_walk root mem e.(IotlbEntry_iova) = Some (e.(IotlbEntry_pa), e.(IotlbEntry_perm)).
+
+(* ============================================================
+   S4.1d: the bitvector fact that closes the universal invariant.
+
+   `vpn_of` is `va[38..12]`; `vpn2/vpn1/vpn0` are `va[38..30]`,
+   `va[29..21]`, `va[20..12]`.  At the uint level each is a quotient/remainder
+   of `uint va`; reconstructing the 27-bit VPN from the three 9-bit levels is
+   then the pure arithmetic identity
+     (x / 2^12) mod 2^27
+   = 2^18 · ((x/2^30) mod 2^9) + 2^9 · ((x/2^21) mod 2^9) + ((x/2^12) mod 2^9),
+   so `vpn_of va' <> vpn_of va` forces a difference at one of the three levels.
+   ============================================================ *)
+
+(* Positive powers of two (the side conditions for div/mod lemmas). *)
+Lemma pow2_pos (k : Z) : 0 <= k -> 0 < 2^k.
+Proof. intro Hk. apply Z.pow_pos_nonneg; lia. Qed.
+
+Lemma pow2_neq0 (k : Z) : 0 <= k -> 2^k <> 0.
+Proof. intro Hk. apply Z.pow_nonzero; lia. Qed.
+
+(* uint of a bit slice `v[hi..lo]` is (uint v / 2^lo) mod 2^(hi-lo+1), for the
+   four concrete slices the VPN split uses (concrete widths keep the
+   `autocast`/`to_word_idx` plumbing definitional, as in uint_subrange_vec_dec_55_0). *)
+Lemma uint_vpn2 (va : mword 64) : uint (vpn2 va) = (uint va / 2^30) mod 2^9.
+Proof.
+  unfold vpn2, subrange_vec_dec.
+  rewrite uint_autocast by reflexivity.
+  rewrite uint_to_word_idx.
+  unfold MachineWord.slice, MachineWord.word_to_N.
+  rewrite Z2N.id by (apply bv_unsigned_in_range).
+  rewrite bv_extract_unsigned.
+  rewrite Z.shiftr_div_pow2 by lia.
+  rewrite bv_wrap_mword by lia.
+  rewrite uint_bv_unsigned.
+  reflexivity.
+Qed.
+
+Lemma uint_vpn1 (va : mword 64) : uint (vpn1 va) = (uint va / 2^21) mod 2^9.
+Proof.
+  unfold vpn1, subrange_vec_dec.
+  rewrite uint_autocast by reflexivity.
+  rewrite uint_to_word_idx.
+  unfold MachineWord.slice, MachineWord.word_to_N.
+  rewrite Z2N.id by (apply bv_unsigned_in_range).
+  rewrite bv_extract_unsigned.
+  rewrite Z.shiftr_div_pow2 by lia.
+  rewrite bv_wrap_mword by lia.
+  rewrite uint_bv_unsigned.
+  reflexivity.
+Qed.
+
+Lemma uint_vpn0 (va : mword 64) : uint (vpn0 va) = (uint va / 2^12) mod 2^9.
+Proof.
+  unfold vpn0, subrange_vec_dec.
+  rewrite uint_autocast by reflexivity.
+  rewrite uint_to_word_idx.
+  unfold MachineWord.slice, MachineWord.word_to_N.
+  rewrite Z2N.id by (apply bv_unsigned_in_range).
+  rewrite bv_extract_unsigned.
+  rewrite Z.shiftr_div_pow2 by lia.
+  rewrite bv_wrap_mword by lia.
+  rewrite uint_bv_unsigned.
+  reflexivity.
+Qed.
+
+Lemma uint_vpn_of (va : mword 64) : uint (vpn_of va) = (uint va / 2^12) mod 2^27.
+Proof.
+  unfold vpn_of, subrange_vec_dec.
+  rewrite uint_autocast by reflexivity.
+  rewrite uint_to_word_idx.
+  unfold MachineWord.slice, MachineWord.word_to_N.
+  rewrite Z2N.id by (apply bv_unsigned_in_range).
+  rewrite bv_extract_unsigned.
+  rewrite Z.shiftr_div_pow2 by lia.
+  rewrite bv_wrap_mword by lia.
+  rewrite uint_bv_unsigned.
+  reflexivity.
+Qed.
+
+(* The pure reconstruction identity: the low 27 bits of x / 2^12 are assembled
+   from the three 9-bit fields [38:30], [29:21], [20:12] of x. *)
+Lemma vpn_bits_reconstruct (x : Z) :
+  0 <= x ->
+  (x / 2^12) mod 2^27 =
+  2^18 * ((x / 2^30) mod 2^9) + 2^9 * ((x / 2^21) mod 2^9) + ((x / 2^12) mod 2^9).
+Proof.
+  intro Hx.
+  rewrite !Z.mod_eq by (apply pow2_neq0; lia).
+  rewrite (Z.div_div x (2^12) (2^27)) by (first [apply pow2_neq0; lia | apply pow2_pos; lia]).
+  rewrite (Z.div_div x (2^30) (2^9)) by (first [apply pow2_neq0; lia | apply pow2_pos; lia]).
+  rewrite (Z.div_div x (2^21) (2^9)) by (first [apply pow2_neq0; lia | apply pow2_pos; lia]).
+  rewrite (Z.div_div x (2^12) (2^9)) by (first [apply pow2_neq0; lia | apply pow2_pos; lia]).
+  replace (2^12 * 2^27) with (2^39) by (vm_compute; reflexivity).
+  replace (2^30 * 2^9) with (2^39) by (vm_compute; reflexivity).
+  replace (2^21 * 2^9) with (2^30) by (vm_compute; reflexivity).
+  replace (2^12 * 2^9) with (2^21) by (vm_compute; reflexivity).
+  assert (H18 : 2^18 = 262144) by (vm_compute; reflexivity).
+  assert (H9 : 2^9 = 512) by (vm_compute; reflexivity).
+  assert (H27 : 2^27 = 134217728) by (vm_compute; reflexivity).
+  rewrite H18, H9, H27.
+  ring.
+Qed.
+
+(* The VPN is determined by its three 9-bit levels: equal levels force equal VPN. *)
+Lemma vpn_of_determined (va' va : mword 64) :
+  vpn2 va' = vpn2 va -> vpn1 va' = vpn1 va -> vpn0 va' = vpn0 va ->
+  vpn_of va' = vpn_of va.
+Proof.
+  intros H2 H1 H0.
+  apply mword_uint_inj.
+  rewrite !uint_vpn_of.
+  assert (A2 : (uint va' / 2^30) mod 2^9 = (uint va / 2^30) mod 2^9)
+    by (apply (f_equal uint) in H2; rewrite !uint_vpn2 in H2; exact H2).
+  assert (A1 : (uint va' / 2^21) mod 2^9 = (uint va / 2^21) mod 2^9)
+    by (apply (f_equal uint) in H1; rewrite !uint_vpn1 in H1; exact H1).
+  assert (A0 : (uint va' / 2^12) mod 2^9 = (uint va / 2^12) mod 2^9)
+    by (apply (f_equal uint) in H0; rewrite !uint_vpn0 in H0; exact H0).
+  rewrite (vpn_bits_reconstruct (uint va')) by (apply uint_nonneg).
+  rewrite A2, A1, A0.
+  rewrite <- (vpn_bits_reconstruct (uint va)) by (apply uint_nonneg).
+  reflexivity.
+Qed.
+
+(* Different table PPN ⇒ different slot address (contrapositive of injectivity). *)
+Lemma pte_address_ppn_neq (ppn ppn' : mword 44) (idx idx' : mword 9) :
+  ppn <> ppn' -> pte_address ppn idx <> pte_address ppn' idx'.
+Proof.
+  intros Hppn Heq. apply Hppn.
+  destruct (pte_address_injective ppn ppn' idx idx' Heq) as [Hp _].
+  exact Hp.
+Qed.
+
+(* A survivor of [iotlb_invalidate] is an original entry for a different page. *)
+Lemma iotlb_invalidate_In (iotlb : list IotlbEntry) (va : mword 64) (e : IotlbEntry) :
+  In e (iotlb_invalidate iotlb va) ->
+  In e iotlb /\ vpn_of e.(IotlbEntry_iova) <> vpn_of va.
+Proof.
+  induction iotlb as [| h t IH]; cbn.
+  - intro H; inversion H.
+  - destruct (eq_vec (vpn_of h.(IotlbEntry_iova)) (vpn_of va)) eqn:E.
+    + (* h dropped *)
+      intro H. destruct (IH H) as [Hin Hneq]. split; [right; exact Hin | exact Hneq].
+    + (* h kept *)
+      intro H. destruct H as [Hh | Ht].
+      * subst. split; [left; reflexivity | apply eq_vec_false_iff; exact E].
+      * destruct (IH Ht) as [Hin Hneq]. split; [right; exact Hin | exact Hneq].
+Qed.
+
+(* The software walk reaching level 0 gives exactly the two intermediate table
+   PTEs (both non-leaf, valid, N clear) and the level-0 slot address. *)
+Lemma leaf_addr_spec (core : Core) (mem : list MemEntry) (va : mword 64) (a : mword 56) :
+  leaf_addr core mem va = Some a ->
+  exists p2 p1,
+    read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va)) = Some p2 /\
+    is_table p2 = true /\
+    read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va)) = Some p1 /\
+    is_table p1 = true /\
+    a = pte_address p1.(Pte_ppn) (vpn0 va).
+Proof.
+  unfold leaf_addr.
+  destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va))) as [p2 |] eqn:Hl2;
+    [| discriminate].
+  destruct (p2.(Pte_valid)) eqn:Ev2; [| discriminate].
+  destruct (is_leaf p2) eqn:El2; [discriminate |].
+  destruct (p2.(Pte_napot)) eqn:En2; [discriminate |].
+  destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |] eqn:Hl1;
+    [| discriminate].
+  destruct (p1.(Pte_valid)) eqn:Ev1; [| discriminate].
+  destruct (is_leaf p1) eqn:El1; [discriminate |].
+  destruct (p1.(Pte_napot)) eqn:En1; [discriminate |].
+  intros Ha. injection Ha as Ha'.
+  exists p2, p1.
+  split.
+  - (* read_pte ... = Some p2, rewritten by the destruct to [Some p2 = Some p2] *)
+    reflexivity.
+  - split.
+    + unfold is_table. rewrite Ev2, El2, En2. reflexivity.
+    + split.
+      * (* the inner read depends on the (not-yet-unified) existential p2, so it
+           was not rewritten by the inner destruct *)
+        exact Hl1.
+      * split.
+        -- unfold is_table. rewrite Ev1, El1, En1. reflexivity.
+        -- symmetry. exact Ha'.
+Qed.
+
+(* ============================================================
+   S4.1d headline: unmap+invalidate preserves `IOTLB ⊆ mapping`.
+
+   For a survivor whose IOVA page differs from the unmapped page, the removed
+   leaf slot `a = pte_address p1_va.ppn (vpn0 va)` differs from every slot the
+   survivor's walk reads — the root slot (no table PPN is the root), the
+   level-1 slot (distinct non-leaf tables have distinct PPNs), and the level-0
+   slot (either a different table, or the same table with a different VPN0,
+   forced by `vpn_of_determined`).  So `translate_remove_frame` applies and the
+   walk is unchanged.  The three facts are the helper lemmas below.
+   ============================================================ *)
+
+(* The removed level-0 slot is never the root's level-2 slot. *)
+Lemma unmap_slot_neq_root_slot (root : mword 44) (mem : list MemEntry) (va : mword 64)
+    (p2_va p1_va : Pte) (va' : mword 64) :
+  wf_page_table root mem ->
+  read_pte mem (pte_address root (vpn2 va)) = Some p2_va ->
+  is_table p2_va = true ->
+  read_pte mem (pte_address p2_va.(Pte_ppn) (vpn1 va)) = Some p1_va ->
+  is_table p1_va = true ->
+  pte_address p1_va.(Pte_ppn) (vpn0 va) <> pte_address root (vpn2 va').
+Proof.
+  intros Hwf Hp2va Ht2va Hp1va Ht1va.
+  destruct Hwf as [Hwf1 Hwf2].
+  apply pte_address_ppn_neq.
+  apply (Hwf2 {| MemEntry_addr := pte_address p2_va.(Pte_ppn) (vpn1 va); MemEntry_pte := p1_va |}).
+  - apply (read_pte_Some_In mem (pte_address p2_va.(Pte_ppn) (vpn1 va)) p1_va Hp1va).
+  - exact Ht1va.
+Qed.
+
+(* The removed level-0 slot differs from a survivor's level-1 slot. *)
+Lemma unmap_slot_neq_level1_slot (root : mword 44) (mem : list MemEntry) (va : mword 64)
+    (p2_va p1_va : Pte) (va' : mword 64) (p2 : Pte) :
+  wf_page_table root mem ->
+  read_pte mem (pte_address root (vpn2 va)) = Some p2_va ->
+  is_table p2_va = true ->
+  read_pte mem (pte_address p2_va.(Pte_ppn) (vpn1 va)) = Some p1_va ->
+  is_table p1_va = true ->
+  read_pte mem (pte_address root (vpn2 va')) = Some p2 ->
+  is_table p2 = true ->
+  pte_address p1_va.(Pte_ppn) (vpn0 va) <> pte_address p2.(Pte_ppn) (vpn1 va').
+Proof.
+  intros Hwf Hp2va Ht2va Hp1va Ht1va Hre2 Htt2.
+  destruct Hwf as [Hwf1 Hwf2].
+  apply pte_address_ppn_neq.
+  apply (Hwf1
+    {| MemEntry_addr := pte_address p2_va.(Pte_ppn) (vpn1 va); MemEntry_pte := p1_va |}
+    {| MemEntry_addr := pte_address root (vpn2 va'); MemEntry_pte := p2 |}).
+  - apply (read_pte_Some_In mem (pte_address p2_va.(Pte_ppn) (vpn1 va)) p1_va Hp1va).
+  - apply (read_pte_Some_In mem (pte_address root (vpn2 va')) p2 Hre2).
+  - (* the two tables are at distinct addresses: their table PPNs differ *)
+    apply (pte_address_ppn_neq p2_va.(Pte_ppn) root (vpn1 va) (vpn2 va')).
+    apply (Hwf2 {| MemEntry_addr := pte_address root (vpn2 va); MemEntry_pte := p2_va |}).
+    + apply (read_pte_Some_In mem (pte_address root (vpn2 va)) p2_va Hp2va).
+    + exact Ht2va.
+  - exact Ht1va.
+  - exact Htt2.
+Qed.
+
+(* The removed level-0 slot differs from a survivor's level-0 slot.  If the two
+   level-0 slots are the same table entry, their VPN0s must differ (forced by
+   `vpn_of_determined`, since the survivor's page differs and the upper two
+   levels coincide); otherwise the two tables have distinct PPNs. *)
+Lemma unmap_slot_neq_level0_slot (root : mword 44) (mem : list MemEntry) (va : mword 64)
+    (p2_va p1_va : Pte) (va' : mword 64) (p2 p1 : Pte) :
+  wf_page_table root mem ->
+  vpn_of va' <> vpn_of va ->
+  read_pte mem (pte_address root (vpn2 va)) = Some p2_va ->
+  is_table p2_va = true ->
+  read_pte mem (pte_address p2_va.(Pte_ppn) (vpn1 va)) = Some p1_va ->
+  is_table p1_va = true ->
+  read_pte mem (pte_address root (vpn2 va')) = Some p2 ->
+  is_table p2 = true ->
+  read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va')) = Some p1 ->
+  is_table p1 = true ->
+  pte_address p1_va.(Pte_ppn) (vpn0 va) <> pte_address p1.(Pte_ppn) (vpn0 va').
+Proof.
+  intros Hwf Hvpnneq Hp2va Ht2va Hp1va Ht1va Hre2 Htt2 Hre1 Htt1.
+  destruct Hwf as [Hwf1 Hwf2].
+  destruct (eq_vec (pte_address p2.(Pte_ppn) (vpn1 va')) (pte_address p2_va.(Pte_ppn) (vpn1 va))) eqn:Eslots.
+  - (* same level-1 slot: p1 = p1_va; the survivor's VPN0 must differ *)
+    apply eq_vec_true_iff in Eslots.
+    destruct (pte_address_injective p2.(Pte_ppn) p2_va.(Pte_ppn) (vpn1 va') (vpn1 va) Eslots)
+      as [Hppn_eq Hvpn1_eq].
+    (* equal level-2 table PPNs force equal level-2 addresses (the forest), hence equal VPN2 *)
+    assert (Haddr_eq2 : pte_address root (vpn2 va') = pte_address root (vpn2 va)).
+    { destruct (eq_vec (pte_address root (vpn2 va')) (pte_address root (vpn2 va))) eqn:E2;
+        [apply eq_vec_true_iff; exact E2 |].
+      apply eq_vec_false_iff in E2.
+      exfalso.
+      exact (Hwf1
+        {| MemEntry_addr := pte_address root (vpn2 va'); MemEntry_pte := p2 |}
+        {| MemEntry_addr := pte_address root (vpn2 va); MemEntry_pte := p2_va |}
+        (read_pte_Some_In mem (pte_address root (vpn2 va')) p2 Hre2)
+        (read_pte_Some_In mem (pte_address root (vpn2 va)) p2_va Hp2va)
+        E2 Htt2 Ht2va Hppn_eq). }
+    destruct (pte_address_injective root root (vpn2 va') (vpn2 va) Haddr_eq2)
+      as [_ Hvpn2_eq].
+    assert (Hvpn0_neq : vpn0 va' <> vpn0 va).
+    { intro Hvpn0_eq. apply Hvpnneq.
+      apply (vpn_of_determined va' va Hvpn2_eq Hvpn1_eq Hvpn0_eq). }
+    (* p1 = p1_va: rewrite the survivor's level-1 read to the unmapped page's slot *)
+    rewrite Hppn_eq in Hre1. rewrite Hvpn1_eq in Hre1.
+    assert (Hp1_eq : p1 = p1_va).
+    { rewrite Hre1 in Hp1va. injection Hp1va. auto. }
+    subst p1.
+    apply (pte_address_neq_index p1_va.(Pte_ppn) p1_va.(Pte_ppn) (vpn0 va) (vpn0 va')).
+    exact (not_eq_sym Hvpn0_neq).
+  - (* different level-1 slot: distinct tables have distinct PPNs *)
+    apply eq_vec_false_iff in Eslots.
+    apply not_eq_sym.
+    apply (pte_address_ppn_neq p1.(Pte_ppn) p1_va.(Pte_ppn) (vpn0 va') (vpn0 va)).
+    apply (Hwf1
+      {| MemEntry_addr := pte_address p2.(Pte_ppn) (vpn1 va'); MemEntry_pte := p1 |}
+      {| MemEntry_addr := pte_address p2_va.(Pte_ppn) (vpn1 va); MemEntry_pte := p1_va |}
+      (read_pte_Some_In mem (pte_address p2.(Pte_ppn) (vpn1 va')) p1 Hre1)
+      (read_pte_Some_In mem (pte_address p2_va.(Pte_ppn) (vpn1 va)) p1_va Hp1va)
+      Eslots Htt1 Ht1va).
+Qed.
+
+(* The literal `IOTLB ⊆ mapping` invariant is preserved by unmap+invalidate. *)
+Lemma iommu_unmap_preserves_coherence (root : mword 44) (mem : list MemEntry)
+    (iotlb : list IotlbEntry) (va : mword 64) :
+  iotlb_coherent root mem iotlb ->
+  wf_page_table root mem ->
+  iotlb_coherent root (unmap_leaf_mem (core_with_root root) mem va) (iotlb_invalidate iotlb va).
+Proof.
+  intros Hcoh Hwf e Hin.
+  destruct (iotlb_invalidate_In iotlb va e Hin) as [Hin' Hvpnneq].
+  specialize (Hcoh e Hin').
+  unfold iommu_walk in *. unfold unmap_leaf_mem.
+  destruct (leaf_addr (core_with_root root) mem va) as [a |] eqn:Hleaf.
+  - (* the leaf slot resolved: unmap removes it; the survivor's walk is unchanged *)
+    destruct (leaf_addr_spec (core_with_root root) mem va a Hleaf)
+      as (p2_va & p1_va & Hp2va & Ht2va & Hp1va & Ht1va & Ha).
+    cbn [Core_satp_ppn] in Hp2va.
+    assert (Hframe : translate (core_with_root root) (remove_entry mem a) e.(IotlbEntry_iova)
+                     = translate (core_with_root root) mem e.(IotlbEntry_iova)).
+    { apply (translate_remove_frame (core_with_root root) mem e.(IotlbEntry_iova) a).
+      - (* a <> root slot of e.iova *)
+        cbn [Core_satp_ppn]. rewrite Ha.
+        apply (unmap_slot_neq_root_slot root mem va p2_va p1_va e.(IotlbEntry_iova)
+          Hwf Hp2va Ht2va Hp1va Ht1va).
+      - (* a <> level-1 slot of e.iova *)
+        cbn [Core_satp_ppn]. intros p2 Hre2 Htt2. rewrite Ha.
+        apply (unmap_slot_neq_level1_slot root mem va p2_va p1_va e.(IotlbEntry_iova) p2
+          Hwf Hp2va Ht2va Hp1va Ht1va Hre2 Htt2).
+      - (* a <> level-0 slot of e.iova *)
+        cbn [Core_satp_ppn]. intros p2 p1 Hre2 Htt2 Hre1 Htt1. rewrite Ha.
+        apply (unmap_slot_neq_level0_slot root mem va p2_va p1_va e.(IotlbEntry_iova) p2 p1
+          Hwf Hvpnneq Hp2va Ht2va Hp1va Ht1va Hre2 Htt2 Hre1 Htt1). }
+    unfold core_with_root in Hframe.
+    rewrite Hframe. exact Hcoh.
+  - (* no leaf slot: unmap is a no-op *)
+    exact Hcoh.
+Qed.

@@ -297,6 +297,19 @@ axiom_free iommu_proofs      pte_address_neq_index
 # is deferred on the pure `vpn_of = concat(vpn2,vpn1,vpn0)` lemma (S4.1d).
 axiom_free iommu_proofs      read_pte_Some_In
 axiom_free iommu_proofs      translate_remove_frame
+# IOMMU (SSG-4 / S4.1d): the literal `IOTLB ⊆ mapping` invariant is preserved by
+# unmap+invalidate.  The bitvector reconstruction (`vpn_of` is determined by its
+# three 9-bit levels) plus the forest/injectivity case analysis closes the last
+# deferred arithmetic boundary.
+axiom_free iommu_proofs      vpn_bits_reconstruct
+axiom_free iommu_proofs      vpn_of_determined
+axiom_free iommu_proofs      leaf_addr_spec
+axiom_free iommu_proofs      pte_address_ppn_neq
+axiom_free iommu_proofs      iotlb_invalidate_In
+axiom_free iommu_proofs      unmap_slot_neq_root_slot
+axiom_free iommu_proofs      unmap_slot_neq_level1_slot
+axiom_free iommu_proofs      unmap_slot_neq_level0_slot
+axiom_free iommu_proofs      iommu_unmap_preserves_coherence
 # IOMMU (SSG-4 / S4.2a): the functional IOMMU broadcast shootdown — break-before-
 # make + IOTLB invalidate + IPI-delivered CPU-TLB flush, refining the CPU-side
 # `invalidate_shootdown` and dropping the unmapped page's device translations.
