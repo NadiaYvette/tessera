@@ -393,12 +393,16 @@ axiom_free smmu_proofs        smmu_walk_stage1_faults
 axiom_free smmu_proofs        smmu_walk_stage2_faults
 axiom_free smmu_proofs        smmu_walk_spec
 axiom_free smmu_proofs        test_vector_smmu_two_stage_empty_faults
+axiom_free smmu_proofs        smmu_unmap_stage1_faults
+axiom_free smmu_proofs        smmu_unmap_stage2_faults
 # AMD-Vi 4-level I/O page-table walk (SSG-4 / S4.4): level-3 resolves to a
 # non-leaf PTE, then the bottom 3 levels are translate re-rooted there — the
 # 4-level walk subsumes the 3-level walk.
 axiom_free amdvi_proofs        amdvi_walk_refines_iommu_walk
 axiom_free amdvi_proofs        amdvi_walk_level3_faults
 axiom_free amdvi_proofs        test_vector_amdvi_4level_empty_faults
+axiom_free amdvi_proofs        amdvi_unmap_faults
+axiom_free amdvi_proofs        amdvi_unmap_correct
 # IOMMU (SSG-4 / S4.2b-2 groundwork): the queue drain reifies the functional
 # broadcast — iommu_shootdown_via_queue and iommu_shootdown agree on mem and
 # IOTLB (the pure precondition the weak-memory lift must satisfy).

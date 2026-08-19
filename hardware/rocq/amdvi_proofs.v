@@ -16,6 +16,9 @@ Require Import SailStdpp.Real.
 Require Import machine_types.
 Require Import machine.
 Require Import shootdown.      (* core_with_root *)
+Require Import coherence.      (* remove_entry *)
+Require Import coherence_leaf. (* unmap_leaf_mem, read_pte_remove_other, leaf_addr *)
+Require Import iommu_proofs.   (* iommu_unmap_faults, iotlb_invalidate_removes *)
 Import ListNotations.
 
 (* A valid, non-leaf, non-NAPOT level-3 PTE ⇒ the 4-level walk is exactly the
@@ -49,3 +52,60 @@ Qed.
 Lemma test_vector_amdvi_4level_empty_faults :
   amdvi_walk (mword_of_int 1 : mword 44) [] (mword_of_int 0 : mword 64) = None.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.4 coherence replay: unmap + invalidate faults the 4-level walk.
+
+   The AMD-Vi coherence twin of iommu_proofs.iommu_unmap_faults: removing the
+   leaf PTE for an IOVA faults the 4-level walk.  The one extra ingredient over
+   the 3-level case is that the level-3 PTE (the walk's top step) must survive
+   the leaf removal — i.e. the level-3 slot `pte_address root (vpn3 iova)`
+   differs from the removed leaf slot `a`.  [leaf_addr ... = Some a] pins which
+   slot the unmap removes; the inequality is the alias-free premise.  (The
+   full forest condition wf_page_table implies it at the platform level.)
+   ============================================================ *)
+
+(* Unmap faults the 4-level walk: the level-3 PTE survives the leaf removal
+   (its slot differs), the 4-level walk refines the 3-level walk re-rooted at
+   p3.ppn, and that walk faults after the unmap. *)
+Lemma amdvi_unmap_faults (root : mword 44) (mem : list MemEntry) (iova : mword 64)
+    (p3 : Pte) (a : mword 56) :
+  leaf_addr (core_with_root p3.(Pte_ppn)) mem iova = Some a ->
+  read_pte mem (pte_address root (vpn3 iova)) = Some p3 ->
+  p3.(Pte_valid) = true ->
+  is_leaf p3 = false ->
+  p3.(Pte_napot) = false ->
+  pte_address root (vpn3 iova) <> a ->
+  amdvi_walk root (unmap_leaf_mem (core_with_root p3.(Pte_ppn)) mem iova) iova = None.
+Proof.
+  intros Ha Hr Hv Hl Hn Hne.
+  assert (Hunmap : unmap_leaf_mem (core_with_root p3.(Pte_ppn)) mem iova = remove_entry mem a).
+  { unfold unmap_leaf_mem. rewrite Ha. reflexivity. }
+  rewrite Hunmap.
+  assert (Hne' : a <> pte_address root (vpn3 iova)).
+  { intro H. apply Hne. symmetry. exact H. }
+  assert (Hsurv : read_pte (remove_entry mem a) (pte_address root (vpn3 iova)) = Some p3).
+  { rewrite (read_pte_remove_other mem a (pte_address root (vpn3 iova)) Hne'). exact Hr. }
+  rewrite (amdvi_walk_refines_iommu_walk root (remove_entry mem a) iova p3 Hsurv Hv Hl Hn).
+  rewrite <- Hunmap. apply (iommu_unmap_faults p3.(Pte_ppn) mem iova).
+Qed.
+
+(* The correct AMD-Vi unmap: the mapping is gone (the 4-level walk faults) AND
+   no cached device translation for the freed frame survives the invalidation
+   (the AMD-Vi twin of iommu_proofs.iommu_unmap_correct). *)
+Lemma amdvi_unmap_correct (root : mword 44) (mem : list MemEntry) (iova : mword 64)
+    (p3 : Pte) (a : mword 56) (iotlb : list IotlbEntry) :
+  leaf_addr (core_with_root p3.(Pte_ppn)) mem iova = Some a ->
+  read_pte mem (pte_address root (vpn3 iova)) = Some p3 ->
+  p3.(Pte_valid) = true ->
+  is_leaf p3 = false ->
+  p3.(Pte_napot) = false ->
+  pte_address root (vpn3 iova) <> a ->
+  amdvi_walk root (unmap_leaf_mem (core_with_root p3.(Pte_ppn)) mem iova) iova = None /\
+  Forall (fun e => vpn_of e.(IotlbEntry_iova) <> vpn_of iova) (iotlb_invalidate iotlb iova).
+Proof.
+  intros Ha Hr Hv Hl Hn Hne.
+  split.
+  - apply (amdvi_unmap_faults root mem iova p3 a Ha Hr Hv Hl Hn Hne).
+  - apply (iotlb_invalidate_removes iotlb iova).
+Qed.
