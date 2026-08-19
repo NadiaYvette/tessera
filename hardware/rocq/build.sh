@@ -318,6 +318,13 @@ axiom_free iommu_proofs      test_vector_ats_translate_fault
 axiom_free iommu_proofs      test_vector_ats_invalidate
 axiom_free iommu_proofs      test_vector_pri_request_enqueue
 axiom_free iommu_proofs      test_vector_pri_request_dedup
+# S4.3 ATS/PRI proofs (beyond the vectors): the completion is exactly the walk's
+# result, a fault caches nothing, the device-TLB invalidation drops the unmapped
+# page, and PRI dedups (a page request is serviced at most once per (did,iova)).
+axiom_free iommu_proofs      ats_translate_spec
+axiom_free iommu_proofs      ats_translate_fault
+axiom_free iommu_proofs      ats_invalidate_removes
+axiom_free iommu_proofs      pri_request_idempotent
 # IOMMU (SSG-4 / S4.2a): the functional IOMMU broadcast shootdown — break-before-
 # make + IOTLB invalidate + IPI-delivered CPU-TLB flush, refining the CPU-side
 # `invalidate_shootdown` and dropping the unmapped page's device translations.

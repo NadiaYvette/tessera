@@ -930,3 +930,73 @@ Lemma test_vector_pri_request_dedup :
     0 (mword_of_int 4096 : mword 64)
   = [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.3 (ATS/PRI device side) — the proofs, beyond the executable vectors.
+
+   The ATS completion's (pa, perm) is exactly the walk's (nothing cached the
+   walk did not produce); a fault caches nothing (the device issues a PRI page
+   request instead); the ATS device-TLB invalidation drops exactly the unmapped
+   page's entries (the per-device tier of the shootdown, twin of
+   [iotlb_invalidate_removes]); and PRI dedups — a page request is serviced at
+   most once per (did, iova).
+   ============================================================ *)
+
+(* ATS translation request -> completion: on a walk hit the newly cached IOTLB
+   entry and the device-TLB entry carry exactly the walk's (pa, perm). *)
+Lemma ats_translate_spec (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry)
+    (pa : mword 56) (perm : Perm) :
+  iommu_walk root mem iova = Some (pa, perm) ->
+  ats_translate iotlb devtlbs root did iova mem
+  = ({| IotlbEntry_did := did; IotlbEntry_pasid := 0; IotlbEntry_iova := iova;
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb,
+     {| DevTlbEntry_did := did; DevTlbEntry_iova := iova;
+        DevTlbEntry_pa := pa; DevTlbEntry_perm := perm |} :: devtlbs).
+Proof. intros H. unfold ats_translate. rewrite H. reflexivity. Qed.
+
+(* A walk fault caches nothing: the completion is absent and both caches are
+   unchanged (the device issues a PRI page request instead). *)
+Lemma ats_translate_fault (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry) :
+  iommu_walk root mem iova = None ->
+  ats_translate iotlb devtlbs root did iova mem = (iotlb, devtlbs).
+Proof. intros H. unfold ats_translate. rewrite H. reflexivity. Qed.
+
+(* ATS device-TLB invalidation: every surviving device-TLB entry is for a
+   different page than the unmapped va (the per-device twin of
+   [iotlb_invalidate_removes]). *)
+Lemma ats_invalidate_removes (devtlbs : list DevTlbEntry) (va : mword 64) :
+  Forall (fun e => vpn_of e.(DevTlbEntry_iova) <> vpn_of va) (ats_invalidate devtlbs va).
+Proof.
+  induction devtlbs as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (eq_vec (vpn_of e.(DevTlbEntry_iova)) (vpn_of va)) eqn:E.
+    + exact IH.
+    + constructor.
+      * apply eq_vec_false_iff. exact E.
+      * exact IH.
+Qed.
+
+(* PRI dedup: a device retries the same fault and re-issues the page request;
+   the pending set is unchanged.  This is "serviced at most once per fault" —
+   enqueueing is idempotent on the (did, iova) key. *)
+Lemma pri_request_idempotent (prireqs : list PriRequest) (did : Z) (iova : mword 64) :
+  pri_request (pri_request prireqs did iova) did iova = pri_request prireqs did iova.
+Proof.
+  induction prireqs as [| r rest IH]; cbn.
+  - (* []: the fresh request is enqueued, then the re-request finds it. *)
+    assert (Ed : Z.eqb did did = true) by (apply (Z.eqb_eq did did); reflexivity).
+    assert (Ei : eq_vec iova iova = true) by (apply eq_vec_true_iff; reflexivity).
+    rewrite Ed, Ei. reflexivity.
+  - destruct (Z.eqb r.(PriRequest_did) did) eqn:Ed;
+    destruct (eq_vec r.(PriRequest_iova) iova) eqn:E; cbn.
+    + (* (did,iova) matches: both calls return prireqs unchanged. *)
+      rewrite Ed, E. reflexivity.
+    + (* did matches, iova differs: keep r, recurse. *)
+      rewrite Ed, E. rewrite IH. reflexivity.
+    + (* did differs, iova matches: keep r, recurse. *)
+      rewrite Ed, E. rewrite IH. reflexivity.
+    + (* neither matches: keep r, recurse. *)
+      rewrite Ed, E. rewrite IH. reflexivity.
+Qed.
