@@ -32,6 +32,7 @@ Require Import SailStdpp.Real.
 Require Import SailStdpp.Operators_mwords. (* eq_vec_false_iff *)
 Require Import machine_types.
 Require Import machine.
+Require Import coherence.       (* remove_entry, read_pte_absent_after_remove *)
 Require Import coherence_leaf.  (* unmap_leaf_mem, leaf_addr_removal_faults,
                                    leaf_addr_none_implies_translate_none *)
 Require Import shootdown.       (* core_with_root *)
@@ -420,3 +421,109 @@ Lemma test_vector_iommu_shootdown :
   m'.(Machine_cores) = [ipi_flushed_core; ipi_flushed_core; ipi_flushed_core] /\
   m'.(Machine_iotlb) = [iommu_e1].
 Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
+   S4.1c (universal): the literal `IOTLB ⊆ mapping` invariant, and its
+   preservation by unmap+invalidate.  This is what pte_address injectivity
+   was for: showing unmapping `va` leaves every *other* page's walk untouched.
+
+   The one real hypothesis is well-formedness: the page table must be a forest
+   (no two distinct non-leaf PTEs share a table PPN, and the root is never a
+   table PPN).  That rules out table aliasing/cycles, which is exactly the
+   case where removing one leaf's PTE could disturb another leaf's walk even
+   when the VPNs differ.  A correct kernel's page tables satisfy this.
+   ============================================================ *)
+
+(* Bridge to [wf_page_table] (below) for the deferred headline theorem: a read
+   that returned a PTE means that PTE is present in the table, turning the walk's
+   `read_pte ... = Some p` into the `In {| ... |} mem` premise the forest
+   condition quantifies over. *)
+Lemma read_pte_Some_In (mem : list MemEntry) (a : mword 56) (p : Pte) :
+  read_pte mem a = Some p -> In {| MemEntry_addr := a; MemEntry_pte := p |} mem.
+Proof.
+  induction mem as [| e rest IH]; cbn [read_pte].
+  - discriminate.
+  - destruct (eq_vec e.(MemEntry_addr) a) eqn:E.
+    + intros H. left.
+      apply eq_vec_true_iff in E.
+      injection H as Hp.
+      destruct e as [addr pte]. cbn in E, Hp.
+      rewrite <- E, <- Hp. reflexivity.
+    + intros H. right. apply IH. exact H.
+Qed.
+
+(* A non-leaf (intermediate) PTE: valid, not a leaf, N clear. *)
+Definition is_table (p : Pte) : bool :=
+  p.(Pte_valid) && negb (is_leaf p) && negb (p.(Pte_napot)).
+
+(* Well-formed (alias-free) page table: distinct non-leaf PTEs never share a
+   table PPN, and no table PPN is the root itself (no cycles). *)
+Definition wf_page_table (root : mword 44) (mem : list MemEntry) : Prop :=
+  (forall e1 e2, In e1 mem -> In e2 mem ->
+     e1.(MemEntry_addr) <> e2.(MemEntry_addr) ->
+     is_table e1.(MemEntry_pte) = true -> is_table e2.(MemEntry_pte) = true ->
+     e1.(MemEntry_pte).(Pte_ppn) <> e2.(MemEntry_pte).(Pte_ppn))
+  /\ (forall e, In e mem -> is_table e.(MemEntry_pte) = true -> e.(MemEntry_pte).(Pte_ppn) <> root).
+
+(* Frame property: removing the entry at `a` leaves va''s walk unchanged when
+   all three of its read addresses differ from `a` (the level-1 and level-0
+   addresses are conditional on the resolved PTEs, hence the quantifiers). *)
+Lemma translate_remove_frame
+    (core : Core) (mem : list MemEntry) (va' : mword 64) (a : mword 56) :
+  a <> pte_address core.(Core_satp_ppn) (vpn2 va') ->
+  (forall p2, read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va')) = Some p2 ->
+     is_table p2 = true -> a <> pte_address p2.(Pte_ppn) (vpn1 va')) ->
+  (forall p2 p1, read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va')) = Some p2 ->
+     is_table p2 = true ->
+     read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va')) = Some p1 ->
+     is_table p1 = true -> a <> pte_address p1.(Pte_ppn) (vpn0 va')) ->
+  translate core (remove_entry mem a) va' = translate core mem va'.
+Proof.
+  intros Hr2 Hr1 Hr0.
+  unfold translate. cbn.
+  rewrite (read_pte_remove_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va')) Hr2).
+  destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va'))) as [p2 |] eqn:Hl2.
+  - cbn. destruct (p2.(Pte_valid)) eqn:Ev2.
+    + cbn. destruct (is_leaf p2) eqn:El2.
+      * reflexivity.
+      * cbn. destruct (p2.(Pte_napot)) eqn:En2.
+        -- reflexivity.
+        -- cbn.
+           assert (Ht2 : is_table p2 = true)
+             by (unfold is_table; rewrite Ev2, El2, En2; reflexivity).
+           rewrite (read_pte_remove_other mem a (pte_address p2.(Pte_ppn) (vpn1 va'))).
+           { destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va'))) as [p1 |] eqn:Hl1.
+             - cbn. destruct (p1.(Pte_valid)) eqn:Ev1.
+               + cbn. destruct (is_leaf p1) eqn:El1.
+                 * reflexivity.
+                 * cbn. destruct (p1.(Pte_napot)) eqn:En1.
+                   -- reflexivity.
+                   -- cbn.
+                      assert (Ht1 : is_table p1 = true)
+                        by (unfold is_table; rewrite Ev1, El1, En1; reflexivity).
+                      rewrite (read_pte_remove_other mem a (pte_address p1.(Pte_ppn) (vpn0 va'))).
+                      { reflexivity. }
+                      { apply (Hr0 p2 p1). reflexivity. exact Ht2. exact Hl1. exact Ht1. }
+               + reflexivity.
+             - reflexivity. }
+           { apply (Hr1 p2). reflexivity. exact Ht2. }
+    + reflexivity.
+  - reflexivity.
+Qed.
+
+(* The literal `IOTLB ⊆ mapping` invariant: every cached device translation
+   agrees with the current page table.
+
+   NOTE (deferred): its preservation by unmap+invalidate —
+   `iotlb_coherent root mem iotlb -> iotlb_coherent root
+   (unmap_leaf_mem (core_with_root root) mem va) (iotlb_invalidate iotlb va)` —
+   is the headline S4.1c theorem.  `translate_remove_frame` (above) already
+   reduces it to three "the removed slot `a` differs from va''s three read
+   addresses" facts, each of which follows from `pte_address_injective` plus
+   `wf_page_table`.  The remaining missing ingredient is a pure bitvector lemma
+   that `vpn_of va` is determined by `(vpn2 va, vpn1 va, vpn0 va)` (i.e.
+   `vpn_of = concat(vpn2, vpn1, vpn0)`), so that `vpn_of va' <> vpn_of va`
+   forces a difference at one of the three levels — the analogue of Stage 1's
+   "keep the arithmetic opaque" boundary, deferred to the next increment. *)
+Definition iotlb_coherent (root : mword 44) (mem : list MemEntry) (iotlb : list IotlbEntry) : Prop :=
+  forall e, In e iotlb -> iommu_walk root mem e.(IotlbEntry_iova) = Some (e.(IotlbEntry_pa), e.(IotlbEntry_perm)).

@@ -289,6 +289,14 @@ axiom_free iommu_proofs      uint_pte_address
 axiom_free iommu_proofs      low12_of_pte_address
 axiom_free iommu_proofs      pte_address_injective
 axiom_free iommu_proofs      pte_address_neq_index
+# S4.1c (universal-invariant infrastructure): the frame lemma `translate_remove_frame`
+# (removing a slot leaves an unrelated walk untouched — the reduction the literal
+# `IOTLB ⊆ mapping` invariant needs) and the `read_pte -> In` bridge to the
+# `wf_page_table` forest condition.  `is_table`/`wf_page_table`/`iotlb_coherent` are
+# transparent Definitions, so not axiom-checked; the headline preservation theorem
+# is deferred on the pure `vpn_of = concat(vpn2,vpn1,vpn0)` lemma (S4.1d).
+axiom_free iommu_proofs      read_pte_Some_In
+axiom_free iommu_proofs      translate_remove_frame
 # IOMMU (SSG-4 / S4.2a): the functional IOMMU broadcast shootdown — break-before-
 # make + IOTLB invalidate + IPI-delivered CPU-TLB flush, refining the CPU-side
 # `invalidate_shootdown` and dropping the unmapped page's device translations.
