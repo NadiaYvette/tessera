@@ -35,6 +35,11 @@ Require Import machine.
 Require Import coherence_leaf.  (* unmap_leaf_mem, leaf_addr_removal_faults,
                                    leaf_addr_none_implies_translate_none *)
 Require Import shootdown.       (* core_with_root *)
+Require Import ipi.             (* ipi_broadcast_cores, ipi_broadcast_cores_preserves,
+                                   ipi_broadcast_cores_spec, sfence_prefix_full,
+                                   invalidate_shootdown, invalidate_shootdown_correct,
+                                   ipi_root / ipi_va / ipi_stale_core / ipi_flushed_core *)
+Require Import machine_encoding. (* invalid_pte (test vectors) *)
 From Stdlib Require Import ZArith.
 From Stdlib Require Import Lia.
 From stdpp Require Import bitvector.definitions. (* bv_unsigned_inj / bv_unsigned_in_range *)
@@ -283,3 +288,135 @@ Proof.
   destruct (pte_address_injective ppn ppn' idx idx' Heq) as [_ Hix].
   exact Hix.
 Qed.
+
+(* ============================================================
+   S4.2a: the functional IOMMU broadcast shootdown over Machine.
+
+   The IOMMU twin of `ipi_broadcast` (ipi.v S2.3b): the leader breaks-before-
+   makes the leaf PTE for `va`, invalidates the IOTLB for `va` (the queued
+   invalidation + Invalidation-Wait completion), then delivers the IPI to and
+   receives the ack from every core (the CPU-TLB flush).  `iommu_shootdown`
+   refines `invalidate_shootdown` on the CPU side and additionally drops the
+   unmapped page's device translations, so after it: no core translates the
+   freed frame, the device walk faults, and no stale IOTLB entry survives.
+   ============================================================ *)
+
+(* The break-before-make (write-invalid) device-side twin of [iommu_unmap_faults]. *)
+Lemma iommu_invalidate_faults (root : mword 44) (mem : list MemEntry) (va : mword 64) (p : Pte) :
+  p.(Pte_valid) = false ->
+  iommu_walk root (invalidate_leaf_mem (core_with_root root) mem va p) va = None.
+Proof.
+  intros Hinv. unfold iommu_walk, invalidate_leaf_mem.
+  destruct (leaf_addr (core_with_root root) mem va) as [a |] eqn:Hl.
+  - apply (invalidate_leaf_faults (core_with_root root) mem va a p Hl Hinv).
+  - apply (leaf_addr_none_implies_translate_none (core_with_root root) mem va Hl).
+Qed.
+
+(* The IOMMU broadcast shootdown: break-before-make + IOTLB invalidate + the
+   IPI-delivered CPU-TLB flush (reusing ipi.v's `ipi_broadcast_cores`). *)
+Definition iommu_shootdown (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) : Machine :=
+  let m1 := {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
+               Machine_cores := m.(Machine_cores);
+               Machine_ram := m.(Machine_ram);
+               Machine_ipi := m.(Machine_ipi);
+               Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va |} in
+  ipi_broadcast_cores m1 (length m.(Machine_cores)) va.
+
+(* ipi_broadcast_cores leaves the IOTLB untouched (deliver_ipi / receive_ipi
+   both carry it unchanged), so the invalidation set up in m1 survives the loop. *)
+Lemma ipi_broadcast_cores_preserves_iotlb (m : Machine) (n : nat) (va : mword 64) :
+  (ipi_broadcast_cores m n va).(Machine_iotlb) = m.(Machine_iotlb).
+Proof.
+  induction n as [| k IH]; cbn [ipi_broadcast_cores].
+  - reflexivity.
+  - unfold receive_ipi, deliver_ipi. cbn [Machine_iotlb]. exact IH.
+Qed.
+
+(* The IOMMU broadcast's post-IOTLB is exactly the invalidation of the pre-IOTLB. *)
+Lemma iommu_shootdown_iotlb (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown m root va p).(Machine_iotlb) = iotlb_invalidate m.(Machine_iotlb) va.
+Proof.
+  unfold iommu_shootdown.
+  rewrite ipi_broadcast_cores_preserves_iotlb. cbn. reflexivity.
+Qed.
+
+(* The IOMMU broadcast refines the functional `invalidate_shootdown` on the CPU
+   side (same mem, same flushed cores) — the proof is `ipi_broadcast_refines_
+   invalidate_shootdown` with the IOTLB already invalidated in the intermediate
+   machine (the IOTLB field is never consulted by the cores/mem projections). *)
+Lemma iommu_shootdown_refines_invalidate_shootdown
+    (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  length m.(Machine_ipi) = length m.(Machine_cores) ->
+  (iommu_shootdown m root va p).(Machine_mem) = (invalidate_shootdown m root va p).(Machine_mem) /\
+  (iommu_shootdown m root va p).(Machine_cores) = (invalidate_shootdown m root va p).(Machine_cores).
+Proof.
+  intros Hlen.
+  unfold iommu_shootdown.
+  set (n := length m.(Machine_cores)).
+  set (m1 := {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
+                Machine_cores := m.(Machine_cores);
+                Machine_ram := m.(Machine_ram);
+                Machine_ipi := m.(Machine_ipi);
+                Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va |}).
+  split.
+  - (* mem *)
+    destruct (ipi_broadcast_cores_preserves m1 n va) as [Hmem _].
+    rewrite Hmem. subst m1 n. cbn.
+    unfold invalidate_shootdown. cbn. reflexivity.
+  - (* cores *)
+    assert (Hcores_bound : Nat.le n (length m1.(Machine_cores))).
+    { subst m1 n. cbn. lia. }
+    assert (Hipi_bound : Nat.le n (length m1.(Machine_ipi))).
+    { subst m1 n. cbn. rewrite Hlen. lia. }
+    rewrite (ipi_broadcast_cores_spec m1 n va Hcores_bound Hipi_bound).
+    subst m1 n. cbn.
+    rewrite sfence_prefix_full.
+    unfold invalidate_shootdown. cbn. reflexivity.
+Qed.
+
+(* The headline: after the IOMMU broadcast, no core translates the freed frame,
+   the device walk faults for it, and no stale device translation survives. *)
+Theorem iommu_shootdown_correct (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  p.(Pte_valid) = false ->
+  length m.(Machine_ipi) = length m.(Machine_cores) ->
+  Forall (fun c => c.(Core_satp_ppn) = root) m.(Machine_cores) ->
+  Forall (fun c => translate c (iommu_shootdown m root va p).(Machine_mem) va = None /\
+                   tlb_lookup c va = None)
+         (iommu_shootdown m root va p).(Machine_cores) /\
+  iommu_walk root (iommu_shootdown m root va p).(Machine_mem) va = None /\
+  Forall (fun e => vpn_of e.(IotlbEntry_iova) <> vpn_of va)
+         (iommu_shootdown m root va p).(Machine_iotlb).
+Proof.
+  intros Hinv Hlen Hroot.
+  destruct (iommu_shootdown_refines_invalidate_shootdown m root va p Hlen) as [Hmem Hcores].
+  split; [| split].
+  - (* CPU coherence: the CPU side refines invalidate_shootdown. *)
+    rewrite Hmem, Hcores.
+    apply invalidate_shootdown_correct; assumption.
+  - (* device walk faults for the freed frame. *)
+    rewrite Hmem. unfold invalidate_shootdown. cbn.
+    apply (iommu_invalidate_faults root m.(Machine_mem) va p Hinv).
+  - (* no stale IOTLB entry survives. *)
+    rewrite iommu_shootdown_iotlb.
+    apply iotlb_invalidate_removes.
+Qed.
+
+(* ============================================================
+   S4.2a executable vector: a 3-core machine with two cached device
+   translations — the broadcast flushes every core and drops exactly the
+   unmapped page's IOTLB entry.
+   ============================================================ *)
+
+Definition iommu_shootdown_machine : Machine :=
+  {| Machine_cores := [ipi_stale_core; ipi_stale_core; ipi_stale_core];
+     Machine_mem := [];
+     Machine_ram := [];
+     Machine_ipi := [false; false; false];
+     Machine_iotlb := [iommu_e0; iommu_e1] |}.
+
+Lemma test_vector_iommu_shootdown :
+  let m' := iommu_shootdown iommu_shootdown_machine ipi_root ipi_va invalid_pte in
+  m'.(Machine_ipi) = [true; true; true] /\
+  m'.(Machine_cores) = [ipi_flushed_core; ipi_flushed_core; ipi_flushed_core] /\
+  m'.(Machine_iotlb) = [iommu_e1].
+Proof. vm_compute. repeat split; reflexivity. Qed.

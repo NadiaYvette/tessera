@@ -289,6 +289,15 @@ axiom_free iommu_proofs      uint_pte_address
 axiom_free iommu_proofs      low12_of_pte_address
 axiom_free iommu_proofs      pte_address_injective
 axiom_free iommu_proofs      pte_address_neq_index
+# IOMMU (SSG-4 / S4.2a): the functional IOMMU broadcast shootdown — break-before-
+# make + IOTLB invalidate + IPI-delivered CPU-TLB flush, refining the CPU-side
+# `invalidate_shootdown` and dropping the unmapped page's device translations.
+axiom_free iommu_proofs      iommu_invalidate_faults
+axiom_free iommu_proofs      ipi_broadcast_cores_preserves_iotlb
+axiom_free iommu_proofs      iommu_shootdown_iotlb
+axiom_free iommu_proofs      iommu_shootdown_refines_invalidate_shootdown
+axiom_free iommu_proofs      iommu_shootdown_correct
+axiom_free iommu_proofs      test_vector_iommu_shootdown
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf
