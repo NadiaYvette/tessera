@@ -320,6 +320,15 @@ Fixpoint find_tlb (entries : list TlbEntry) (va : mword 64) : option ((mword 56 
 Definition tlb_lookup (core : Core) (va : mword 64) : option ((mword 56 * Perm)) :=
    find_tlb (core.(Core_tlb)) (va).
 
+Fixpoint find_devtlb (entries : list DevTlbEntry) (iova : mword 64) : option ((mword 56 * Perm)) :=
+   match entries with
+   | [] => None
+   | e :: rest =>
+      if eq_vec ((vpn_of (e.(DevTlbEntry_iova)))) ((vpn_of (iova))) then
+        Some ((e.(DevTlbEntry_pa), e.(DevTlbEntry_perm)))
+      else find_devtlb (rest) (iova)
+   end.
+
 Definition sfence_vma_all (core : Core) : Core :=
    {| Core_satp_ppn := core.(Core_satp_ppn);
       Core_tlb := [];

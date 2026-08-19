@@ -387,6 +387,16 @@ function find_tlb(entries, va) = match entries {
 val tlb_lookup : (Core, vaddr) -> option((paddr, Perm))
 function tlb_lookup(core, va) = find_tlb(core.tlb, va)
 
+// The endpoint's device-TLB lookup: the device consults its cached translation
+// for iova (the device-side twin of find_tlb; 4KiB granularity, no NAPOT).
+val find_devtlb : (list(DevTlbEntry), vaddr) -> option((paddr, Perm))
+function find_devtlb(entries, iova) = match entries {
+  [||] => None(),
+  e :: rest =>
+    if vpn_of(e.iova) == vpn_of(iova) then Some((e.pa, e.perm))
+    else find_devtlb(rest, iova)
+}
+
 // SFENCE.VMA all: invalidate every TLB entry on this core.
 val sfence_vma_all : Core -> Core
 function sfence_vma_all(core) = struct {

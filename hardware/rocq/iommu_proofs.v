@@ -1179,3 +1179,39 @@ Proof.
           iommu_shootdown_iotlb, iommu_shootdown_mem.
   split; reflexivity.
 Qed.
+
+(* ============================================================
+   Device-TLB lookup (S4.2b-3 strengthening): the endpoint's device-TLB lookup
+   (`find_devtlb`) faults for the freed frame after the ATS invalidation — the
+   concrete "no device translates the freed frame" claim, beyond the Forall
+   no-matching-VPN form.
+   ============================================================ *)
+
+(* A device-TLB with no entry for va's page answers None to a lookup. *)
+Lemma find_devtlb_none_of_forall (devtlbs : list DevTlbEntry) (va : mword 64) :
+  Forall (fun e => vpn_of e.(DevTlbEntry_iova) <> vpn_of va) devtlbs ->
+  find_devtlb devtlbs va = None.
+Proof.
+  intros H. induction H as [| e rest Hne Hrest IH]; cbn.
+  - reflexivity.
+  - destruct (eq_vec (vpn_of e.(DevTlbEntry_iova)) (vpn_of va)) eqn:E.
+    + apply eq_vec_true_iff in E. congruence.
+    + exact IH.
+Qed.
+
+(* After the ATS device-TLB invalidation, a lookup of the unmapped page faults. *)
+Lemma find_devtlb_after_ats_invalidate (devtlbs : list DevTlbEntry) (va : mword 64) :
+  find_devtlb (ats_invalidate devtlbs va) va = None.
+Proof.
+  apply find_devtlb_none_of_forall.
+  apply (ats_invalidate_removes devtlbs va).
+Qed.
+
+(* The concrete claim: after the full ATS-tier shootdown, no device-TLB entry
+   answers a lookup for the freed frame. *)
+Theorem iommu_shootdown_ats_devtlb_faults (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  find_devtlb (iommu_shootdown_ats m root va p).(Machine_devtlbs) va = None.
+Proof.
+  rewrite iommu_shootdown_ats_devtlbs.
+  apply find_devtlb_after_ats_invalidate.
+Qed.
