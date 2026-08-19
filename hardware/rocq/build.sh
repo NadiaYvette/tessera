@@ -91,6 +91,7 @@ rocq compile $FLAGS intc.v
 rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
+rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS shootdown_iris.v
 
@@ -265,6 +266,15 @@ axiom_free conformance      test_vector_napot_conforms
 axiom_free conformance      test_vector_napot_bad_conforms
 axiom_free conformance      test_vector_napot_nonleaf_faults
 axiom_free conformance      test_vector_napot_nonleaf_conforms
+# IOMMU (SSG-4) conformance cross-check: the walker is translate re-rooted (so
+# G1's upstream-oracle agreement transfers), and the invalidation is pinned per
+# platform (VT-d IOTLB Invalidate §6.5.2.3 / SMMU TLBI §4.4 /
+# AMD-Vi INVALIDATE_IOMMU_PAGES §2.4.3).
+axiom_free iommu_conformance iommu_walk_conforms
+axiom_free iommu_conformance iommu_walk_translate_conforms
+axiom_free iommu_conformance test_vector_vtd_iotlb_invalidate
+axiom_free iommu_conformance test_vector_smmu_iotlb_invalidate
+axiom_free iommu_conformance test_vector_amdvi_iotlb_invalidate_noop
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
