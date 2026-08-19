@@ -110,15 +110,19 @@ increments, each landed build-green and axiom-free:
   wait descriptor is reached. Prove `iommu_shootdown_via_queue_correct`: unmap →
   enqueue Invalidate + Wait → drain ⇒ every cached translation for `va` is gone
   (the queue formulation of S4.2a's `iommu_shootdown_correct`).
-- **S4.2b-2 — the weak-memory lift (gpfsl).** The leader's PTE write (release) →
-  command-queue descriptor write (release) → doorbell; the IOMMU's queue read
-  (acquire) → drain → Invalidation-Wait completion (release) → the leader's
-  completion read (acquire). This is S2.5's `pending → doorbell → ack` chain with
-  the device (`intc.sail`) replaced by the command queue, so
-  `bc_wait_all_intc_spec` / `bc_broadcast_intc_spec` re-instantiate with the
-  queue as the ghost device. Prove the IRIS spec `iommu_broadcast_weak_spec`:
-  the leader's unmap is observed by every IOTLB flush before the wait returns.
-- **S4.2b-3 — the ATS device-TLB tier (a second broadcast).** The IOMMU's own
+- **S4.2b-2 — the weak-memory lift (gpfsl).** *(groundwork landed; Iris lift
+  pending)* The leader's PTE write (release) → command-queue descriptor write
+  (release) → doorbell; the IOMMU's queue read (acquire) → drain →
+  Invalidation-Wait completion (release) → the leader's completion read
+  (acquire). This is S2.5's `pending → doorbell → ack` chain with the device
+  (`intc.sail`) replaced by the command queue, so `bc_wait_all_intc_spec` /
+  `bc_broadcast_intc_spec` re-instantiate with the queue as the ghost device.
+  Prove the IRIS spec `iommu_broadcast_weak_spec`: the leader's unmap is observed
+  by every IOTLB flush before the wait returns. The pure precondition is landed:
+  `iommu_shootdown_via_queue_refines_iommu_shootdown` (S4.2b-1's queue drain and
+  S4.2a's broadcast agree on mem + IOTLB); the gpfsl program is the next
+  increment.
+- **S4.2b-3 — the ATS device-TLB tier (a second broadcast).** *(landed)* The IOMMU's own
   IOTLB is one translation point; each endpoint's **device-TLB** (filled by ATS)
   is a second. The shootdown must invalidate both — `iotlb_invalidate` (IOMMU) and
   `ats_invalidate` (per-device; PCIe ATS §4.3 / SMMU §4.5 / AMD-Vi §2.11). This is
@@ -127,9 +131,10 @@ increments, each landed build-green and axiom-free:
   per-device ack. Prove `iommu_shootdown_ats_correct`: after the full shootdown no
   CPU TLB, no IOTLB, and no device-TLB entry translates the freed frame.
 
-The model additions 2b-1/2b-3 need (`InvalidationCmd`, `Machine_ioqueue`,
-`ats_invalidate`) are part of the S4.3 model work below; 2b-3 is where the ATS
-device-TLB tier first becomes a proof obligation rather than just a field.
+The model additions 2b-1/2b-3 (`InvalidationCmd`, `Machine_ioqueue`,
+`ats_invalidate`) are now in place (2b-1's command queue and 2b-3's ATS tier
+both landed); 2b-3's `iommu_shootdown_ats_correct` makes the device-TLB tier a
+proof obligation rather than just a field.
 
 ## Stage 4.3 — the device side (ATS / PRI), genuinely new
 
