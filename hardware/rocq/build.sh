@@ -275,6 +275,10 @@ axiom_free iommu_conformance iommu_walk_translate_conforms
 axiom_free iommu_conformance test_vector_vtd_iotlb_invalidate
 axiom_free iommu_conformance test_vector_smmu_iotlb_invalidate
 axiom_free iommu_conformance test_vector_amdvi_iotlb_invalidate_noop
+# ATS/PRI device side vs PCIe 6.0: the translation completion is the walk's,
+# and a page request is serviced at most once per (Requestor ID, address).
+axiom_free iommu_conformance test_vector_pcie_ats_completion
+axiom_free iommu_conformance test_vector_pcie_pri_at_most_once
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).

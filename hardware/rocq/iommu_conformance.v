@@ -100,3 +100,60 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_amdvi_iotlb_invalidate_noop :
   iotlb_invalidate conf_iotlb (mword_of_int 8192 : mword 64) = conf_iotlb.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   The ATS/PRI device side: cross-checked against PCIe 6.0.
+
+   The device↔IOMMU interface is the genuinely-new part of SSG-4 (not a replay
+   of the CPU MMU).  PCIe 6.0 specifies two flows the CPU track never had:
+
+     - ATS §4.3 (Translation Request → Translation Completion): the device asks
+       the IOMMU for a translation; the completion carries exactly the walk's
+       physical address and permission, and the device caches it (device-TLB).
+       A failed translation produces no completion (the device then issues PRI).
+     - PRI §4.2 (Page Request): on a translation fault the device issues a page
+       request, the kernel maps the page, and the device retries.  At most one
+       page request is outstanding per (Requestor ID, address).
+
+   The proofs live in iommu_proofs.v (S4.3): ats_translate_spec (completion =
+   walk), ats_translate_fault (a fault caches nothing), ats_invalidate_removes
+   (the device-TLB tier), pri_request_idempotent (serviced at most once).  Here
+   two executable vectors pin those flows against the PCIe descriptions.
+   ============================================================ *)
+
+(* A three-level table mapping IOVA 0 -> leaf PPN 42 (read-only). *)
+Definition pcie_ptr_pte (next : mword 44) : Pte :=
+  {| Pte_valid := true; Pte_read := false; Pte_write := false;
+     Pte_exec := false; Pte_user := false; Pte_napot := false; Pte_ppn := next |}.
+Definition pcie_ro_pte (next : mword 44) : Pte :=
+  {| Pte_valid := true; Pte_read := true; Pte_write := false;
+     Pte_exec := false; Pte_user := false; Pte_napot := false; Pte_ppn := next |}.
+
+Definition pcie_table : PageTable :=
+  [ {| MemEntry_addr := pte_address (mword_of_int 1 : mword 44) (vpn2 (mword_of_int 0 : mword 64));
+       MemEntry_pte := pcie_ptr_pte (mword_of_int 2 : mword 44) |};
+    {| MemEntry_addr := pte_address (mword_of_int 2 : mword 44) (vpn1 (mword_of_int 0 : mword 64));
+       MemEntry_pte := pcie_ptr_pte (mword_of_int 3 : mword 44) |};
+    {| MemEntry_addr := pte_address (mword_of_int 3 : mword 44) (vpn0 (mword_of_int 0 : mword 64));
+       MemEntry_pte := pcie_ro_pte (mword_of_int 42 : mword 44) |} ].
+
+(* PCIe §4.3 ATS: a translation completion carries exactly the walk's physical
+   address and permission — the device-TLB entry is filled from the walk, not
+   anything the device supplied. *)
+Lemma test_vector_pcie_ats_completion :
+  ats_translate [] [] (mword_of_int 1 : mword 44) 0 (mword_of_int 0 : mword 64) pcie_table
+  = ([ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
+          IotlbEntry_iova := (mword_of_int 0 : mword 64);
+          IotlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
+          IotlbEntry_perm := Read |} ],
+     [ {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
+          DevTlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
+          DevTlbEntry_perm := Read |} ]).
+Proof. vm_compute. reflexivity. Qed.
+
+(* PCIe §4.2 PRI: a page request is serviced at most once per (Requestor ID,
+   address) — re-issuing the same request leaves the pending set unchanged. *)
+Lemma test_vector_pcie_pri_at_most_once :
+  let q := pri_request [] 0 (mword_of_int 4096 : mword 64) in
+  pri_request q 0 (mword_of_int 4096 : mword 64) = q.
+Proof. vm_compute. reflexivity. Qed.
