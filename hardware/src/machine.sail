@@ -463,6 +463,28 @@ function iotlb_invalidate_all(entries) = [||]
 val ats_invalidate_all : list(DevTlbEntry) -> list(DevTlbEntry)
 function ats_invalidate_all(devtlbs) = [||]
 
+// ---- ASID / domain-granularity invalidation (SSG-4 / S4.4) ----
+//
+// The coarser invalidation shapes beside the 4KiB selective `iotlb_invalidate`
+// and the ALL `iotlb_invalidate_all`: drop every cached translation matching a
+// tag — SMMU TLBI-by-ASID (the pasid tag, §4.4) and AMD-Vi
+// INVALIDATE_IOMMU_PAGES-by-domain (the did tag, §2.4.3).
+val iotlb_invalidate_pasid : (list(IotlbEntry), int) -> list(IotlbEntry)
+function iotlb_invalidate_pasid(entries, asid) = match entries {
+  [||] => [||],
+  e :: rest =>
+    if e.pasid == asid then iotlb_invalidate_pasid(rest, asid)
+    else e :: iotlb_invalidate_pasid(rest, asid)
+}
+
+val iotlb_invalidate_domain : (list(IotlbEntry), int) -> list(IotlbEntry)
+function iotlb_invalidate_domain(entries, did) = match entries {
+  [||] => [||],
+  e :: rest =>
+    if e.did == did then iotlb_invalidate_domain(rest, did)
+    else e :: iotlb_invalidate_domain(rest, did)
+}
+
 // PRI page request: enqueue a request to map the page (at most one pending per
 // (did, iova) — a device retries the same fault, it does not issue fresh ones).
 val pri_request : (list(PriRequest), int, vaddr) -> list(PriRequest)

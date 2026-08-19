@@ -369,6 +369,22 @@ Definition iotlb_invalidate_all (entries : list IotlbEntry) : list IotlbEntry :=
 
 Definition ats_invalidate_all (devtlbs : list DevTlbEntry) : list DevTlbEntry := [].
 
+Fixpoint iotlb_invalidate_pasid (entries : list IotlbEntry) (asid : Z) : list IotlbEntry :=
+   match entries with
+   | [] => []
+   | e :: rest =>
+      if Z.eqb (e.(IotlbEntry_pasid)) (asid) then iotlb_invalidate_pasid (rest) (asid)
+      else e :: (iotlb_invalidate_pasid (rest) (asid))
+   end.
+
+Fixpoint iotlb_invalidate_domain (entries : list IotlbEntry) (did : Z) : list IotlbEntry :=
+   match entries with
+   | [] => []
+   | e :: rest =>
+      if Z.eqb (e.(IotlbEntry_did)) (did) then iotlb_invalidate_domain (rest) (did)
+      else e :: (iotlb_invalidate_domain (rest) (did))
+   end.
+
 Fixpoint pri_request (prireqs : list PriRequest) (did : Z) (iova : mword 64) : list PriRequest :=
    match prireqs with
    | [] => ({| PriRequest_did := did;  PriRequest_iova := iova |}) :: []

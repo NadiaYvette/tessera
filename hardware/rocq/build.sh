@@ -284,6 +284,8 @@ axiom_free iommu_conformance test_vector_pcie_ats_completion
 axiom_free iommu_conformance test_vector_pcie_pri_at_most_once
 axiom_free iommu_conformance test_vector_amdvi_invalidate_iotlb_all
 axiom_free iommu_conformance test_vector_smmu_invalidate_devtlb_all
+axiom_free iommu_conformance test_vector_smmu_tlbi_asid
+axiom_free iommu_conformance test_vector_amdvi_invalidate_domain
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
@@ -381,6 +383,8 @@ axiom_free iommu_proofs      iommu_shootdown_ats_devtlb_faults
 axiom_free iommu_proofs      iotlb_invalidate_all_clears
 axiom_free iommu_proofs      ats_invalidate_all_clears
 axiom_free iommu_proofs      find_devtlb_after_ats_invalidate_all
+axiom_free iommu_proofs      iotlb_invalidate_pasid_removes
+axiom_free iommu_proofs      iotlb_invalidate_domain_removes
 # command-queue MMIO (SSG-4 / S4.2c): the head/tail (prod/cons) registers are
 # pure bookkeeping — the MMIO drain realizes iommu_process_queue.
 axiom_free cmdq_mmio         cmdq_drain_refines_iommu_process_queue

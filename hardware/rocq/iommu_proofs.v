@@ -1234,3 +1234,36 @@ Proof. reflexivity. Qed.
 Lemma find_devtlb_after_ats_invalidate_all (devtlbs : list DevTlbEntry) (va : mword 64) :
   find_devtlb (ats_invalidate_all devtlbs) va = None.
 Proof. cbn. reflexivity. Qed.
+
+(* ============================================================
+   ASID / domain-granularity invalidation (S4.4): the coarser shapes beside
+   the 4KiB selective `iotlb_invalidate` and the ALL `iotlb_invalidate_all`.
+
+   SMMU TLBI-by-ASID (the pasid tag) and AMD-Vi INVALIDATE_IOMMU_PAGES-by-
+   domain (the did tag) drop every cached translation matching the tag, so
+   every surviving entry has a *different* tag.
+   ============================================================ *)
+
+Lemma iotlb_invalidate_pasid_removes (iotlb : list IotlbEntry) (asid : Z) :
+  Forall (fun e => e.(IotlbEntry_pasid) <> asid) (iotlb_invalidate_pasid iotlb asid).
+Proof.
+  induction iotlb as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (Z.eqb e.(IotlbEntry_pasid) asid) eqn:E.
+    + exact IH.
+    + constructor.
+      * apply Z.eqb_neq. exact E.
+      * exact IH.
+Qed.
+
+Lemma iotlb_invalidate_domain_removes (iotlb : list IotlbEntry) (did : Z) :
+  Forall (fun e => e.(IotlbEntry_did) <> did) (iotlb_invalidate_domain iotlb did).
+Proof.
+  induction iotlb as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (Z.eqb e.(IotlbEntry_did) did) eqn:E.
+    + exact IH.
+    + constructor.
+      * apply Z.eqb_neq. exact E.
+      * exact IH.
+Qed.

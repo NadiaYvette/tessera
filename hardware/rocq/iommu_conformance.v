@@ -177,3 +177,39 @@ Lemma test_vector_smmu_invalidate_devtlb_all :
                          DevTlbEntry_pa := (mword_of_int 4096 : mword 56); DevTlbEntry_perm := ReadWrite |} ]
   = [].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   The ASID / domain-granularity invalidation (S4.4): the coarser shapes
+   beside the 4KiB selective and the ALL invalidations.  A four-entry IOTLB
+   spanning (did 0, pasid 0), (did 0, pasid 1), (did 1, pasid 0),
+   (did 1, pasid 1).
+   ============================================================ *)
+
+Definition conf_mixed_iotlb : list IotlbEntry :=
+  [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
+       IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |};
+    {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
+       IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |};
+    {| IotlbEntry_did := 1; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 8192 : mword 64);
+       IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite |};
+    {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
+       IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+
+(* SMMU §4.4 TLBI-by-ASID: dropping ASID 0 leaves exactly the pasid-1 entries. *)
+Lemma test_vector_smmu_tlbi_asid :
+  iotlb_invalidate_pasid conf_mixed_iotlb 0
+  = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |};
+      {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
+         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+Proof. vm_compute. reflexivity. Qed.
+
+(* AMD-Vi §2.4.3 INVALIDATE_IOMMU_PAGES-by-domain: dropping domain 1 leaves exactly
+   the did-0 entries. *)
+Lemma test_vector_amdvi_invalidate_domain :
+  iotlb_invalidate_domain conf_mixed_iotlb 1
+  = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
+         IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |};
+      {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+Proof. vm_compute. reflexivity. Qed.
