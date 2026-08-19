@@ -133,6 +133,11 @@ struct Machine = {
 
 // ---- VPN / offset extraction (Sv39) ----
 
+// vpn3 is the extra top level of the AMD-Vi 4-level walk (bits [47..39]);
+// unused by the 3-level Sv39 walk but present for S4.4's AMD-Vi walker.
+val vpn3 : vaddr -> bits(9)
+function vpn3(va) = va[47 .. 39]
+
 val vpn2 : vaddr -> bits(9)
 function vpn2(va) = va[38 .. 30]
 
@@ -308,6 +313,22 @@ function smmu_walk(s1_root, s2_root, mem, gva) =
     Some((gpa, _)) =>
       translate(struct { satp_ppn = s2_root, tlb = [||], hart = 0, node = 0 }, mem,
                sail_zero_extend(gpa, 64))
+  }
+
+// ---- AMD-Vi 4-level I/O page-table walk (SSG-4 / S4.4) ----
+//
+// AMD-Vi's distinctive feature: a *4-level* I/O page table (52-bit GPA,
+// 4 x 9-bit levels + 12-bit offset) vs Sv39's 3 levels.  Modelled as the extra
+// top level (vpn3) resolving to a non-leaf PTE, then the bottom 3 levels are
+// exactly the Sv39 `translate` re-rooted at that PTE.
+val amdvi_walk : (bits(44), PageTable, vaddr) -> option((paddr, Perm))
+function amdvi_walk(root, mem, iova) =
+  match read_pte(mem, pte_address(root, vpn3(iova))) {
+    None() => None(),
+    Some(p3) =>
+      if p3.valid & not_bool(is_leaf(p3)) & not_bool(p3.napot) then
+        translate(struct { satp_ppn = p3.ppn, tlb = [||], hart = 0, node = 0 }, mem, iova)
+      else None()
   }
 
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose

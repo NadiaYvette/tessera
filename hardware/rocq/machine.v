@@ -142,6 +142,8 @@ Definition undefined_InvalidationCmd '(tt : unit) : M (InvalidationCmd) :=
    (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
    returnM (({| InvalidationCmd_is_wait := w__0;  InvalidationCmd_va := w__1 |})).
 
+Definition vpn3 (va : mword 64) : mword 9 := subrange_vec_dec (va) (47) (39).
+
 Definition vpn2 (va : mword 64) : mword 9 := subrange_vec_dec (va) (38) (30).
 
 Definition vpn1 (va : mword 64) : mword 9 := subrange_vec_dec (va) (29) (21).
@@ -262,6 +264,20 @@ Definition smmu_walk
              Core_tlb := [];
              Core_hart := 0;
              Core_node := 0 |})) (mem) ((zero_extend (gpa) (64)))
+   end.
+
+Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
+: option ((mword 56 * Perm)) :=
+   match read_pte (mem) ((pte_address (root) ((vpn3 (iova))))) with
+   | None => None
+   | Some p3 =>
+      if andb (p3.(Pte_valid)) ((andb ((negb ((is_leaf (p3))))) ((negb (p3.(Pte_napot)))))) then
+        translate
+          (({| Core_satp_ppn := p3.(Pte_ppn);
+               Core_tlb := [];
+               Core_hart := 0;
+               Core_node := 0 |})) (mem) (iova)
+      else None
    end.
 
 Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=
