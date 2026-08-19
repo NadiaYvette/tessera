@@ -197,6 +197,33 @@ of being pushed invalidations.
     `iommu_shootdown_via_queue_correct`'s conclusion under weak memory.  These
     are the S2.2c/S2.5 `send/remote/wait/broadcast` lemmas with the mailbox
     ghost replaced by the command queue.
+
+    **Concrete design (execute this):** the program is the 2-party chain of two
+    release/acquire pairs — `shootdown_weak.v` (`sd_inv`, leader→remote) composed
+    with the `shootdown_weak_ack` direction (remote→leader) — with the message
+    cell being the IOTLB rather than the TLB.
+
+    - *Ghost state:* reuse `shootdown_weak.v`'s `uniqTokΣ` (excl unitO) for the
+      leader's exclusive write token.  Two heap cells: `iq_prod` (the doorbell,
+      release-written by the leader after the PTE write) and `iq_iotlb` (the
+      completion/result cell, release-written by the IOMMU after the drain).
+    - *Program* `iommu_broadcast_weak : expr` (two threads):
+      `leader: iq_iotlb <- #(encode invalid);; iq_prod <-ʳᵉˡ #1` (release the
+      unmap + doorbell); `iommu: repeat: !ᵃᶜ(iq_prod);; iq_iotlb <-ʳᵉˡ #(encode drained)`
+      (acquire the doorbell, release the drain completion); `leader:
+      repeat: !ᵃᶜ(iq_iotlb)` (acquire the completion, observe the invalidated
+      IOTLB).  The `encode`/`decode` pack the IOTLB state into a Z exactly as
+      `encode_tlb`/`encode_pte` do for the TLB.
+    - *Invariant* `iq_inv N` is `sd_inv` re-keyed: `iq_prod sw↦ ζ` with ζ the
+      `0 → 1` history, and the `iq_iotlb` cell holding *either* the leader's
+      token (not yet drained) *or* the drained value under the released view.
+    - *Specs:* `leader_enqueue_spec` (release PTE+doorbell makes the invalidate
+      observable), `iommu_drain_spec` (acquire doorbell + release completion
+      realises `iotlb_invalidate`), `leader_wait_spec` (acquire completion
+      observes the drained IOTLB), `broadcast_spec` (compose the three ⇒
+      `iommu_shootdown_via_queue_correct` under weak memory).  Each closed under
+      the global context (`Print Assumptions`), as S2.5's are.
+
 11. **S4.4 — second-platform port.** *(most slices landed)*
     - ALL-granularity invalidation (`iotlb_invalidate_all` / `ats_invalidate_all`,
       AMD-Vi §2.4.8 / SMMU TLBI_ALL) — landed.
