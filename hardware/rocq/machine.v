@@ -247,6 +247,23 @@ Definition iommu_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
    translate (({| Core_satp_ppn := root;  Core_tlb := [];  Core_hart := 0;  Core_node := 0 |}))
      (mem) (iova).
 
+Definition smmu_walk
+(s1_root : mword 44) (s2_root : mword 44) (mem : list MemEntry) (gva : mword 64)
+: option ((mword 56 * Perm)) :=
+   match translate
+           (({| Core_satp_ppn := s1_root;
+                Core_tlb := [];
+                Core_hart := 0;
+                Core_node := 0 |})) (mem) (gva) with
+   | None => None
+   | Some (gpa, _) =>
+      translate
+        (({| Core_satp_ppn := s2_root;
+             Core_tlb := [];
+             Core_hart := 0;
+             Core_node := 0 |})) (mem) ((zero_extend (gpa) (64)))
+   end.
+
 Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=
    match entries with
    | [] => []

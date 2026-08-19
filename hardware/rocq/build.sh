@@ -94,6 +94,7 @@ rocq compile $FLAGS conformance.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
+rocq compile $FLAGS smmu_proofs.v
 rocq compile $FLAGS shootdown_iris.v
 
 # --- 5. axiom hygiene: every headline theorem must be closed under the global
@@ -384,6 +385,13 @@ axiom_free iommu_proofs      find_devtlb_after_ats_invalidate_all
 axiom_free cmdq_mmio         cmdq_drain_refines_iommu_process_queue
 axiom_free cmdq_mmio         cmdq_drain_invalidate_wait_spec
 axiom_free cmdq_mmio         test_vector_cmdq_mmio_drain
+# SMMUv3 two-stage walk (SSG-4 / S4.4): the composition is GVA → GPA → SPA —
+# faults iff either stage faults, and a two-stage hit returns the stage-2
+# (SPA, perm).
+axiom_free smmu_proofs        smmu_walk_stage1_faults
+axiom_free smmu_proofs        smmu_walk_stage2_faults
+axiom_free smmu_proofs        smmu_walk_spec
+axiom_free smmu_proofs        test_vector_smmu_two_stage_empty_faults
 # IOMMU (SSG-4 / S4.2b-2 groundwork): the queue drain reifies the functional
 # broadcast — iommu_shootdown_via_queue and iommu_shootdown agree on mem and
 # IOTLB (the pure precondition the weak-memory lift must satisfy).

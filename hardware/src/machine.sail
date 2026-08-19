@@ -294,6 +294,22 @@ val iommu_walk : (bits(44), PageTable, vaddr) -> option((paddr, Perm))
 function iommu_walk(root, mem, iova) =
   translate(struct { satp_ppn = root, tlb = [||], hart = 0, node = 0 }, mem, iova)
 
+// ---- SMMUv3 two-stage translation (SSG-4 / S4.4) ----
+//
+// The SMMU's distinctive feature over the CPU MMU: a *two-stage* walk.  Stage-1
+// (GVA -> GPA) is re-rooted at the context descriptor's stage-1 table; stage-2
+// (GPA -> SPA) is re-rooted at the stream table's stage-2 table.  Both stages
+// reuse the same Sv39 walk; the stage-1 GPA is zero-extended to a VA for the
+// stage-2 input (SMMUv3 §3.3, the stage-1/stage-2 composition).
+val smmu_walk : (bits(44), bits(44), PageTable, vaddr) -> option((paddr, Perm))
+function smmu_walk(s1_root, s2_root, mem, gva) =
+  match translate(struct { satp_ppn = s1_root, tlb = [||], hart = 0, node = 0 }, mem, gva) {
+    None() => None(),
+    Some((gpa, _)) =>
+      translate(struct { satp_ppn = s2_root, tlb = [||], hart = 0, node = 0 }, mem,
+               sail_zero_extend(gpa, 64))
+  }
+
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
 // IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI
 // (4.4) / AMD-Vi INVALIDATE_IOMMU_PAGES (2.4.3).  4KiB granularity for now;
