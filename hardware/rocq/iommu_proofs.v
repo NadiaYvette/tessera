@@ -1137,3 +1137,45 @@ Proof.
   split; [exact Hcpu | split; [exact Hwalk | split; [exact Hiotlb |]]].
   apply (ats_invalidate_removes m.(Machine_devtlbs) va).
 Qed.
+
+(* ============================================================
+   S4.2b-2 (weak-memory lift) — groundwork: the queue drain reifies the
+   functional broadcast.
+
+   The full gpfsl lift proves `iommu_broadcast_weak_spec` (the leader's unmap is
+   observed by every IOTLB flush before the Invalidation-Wait returns) with the
+   command queue as the ghost device, re-instantiating S2.5's release/acquire
+   chain.  That Iris proof rests on one pure precondition, proved here: the
+   queue formulation (S4.2b-1) and the functional broadcast (S4.2a) produce the
+   *same* mem and IOTLB — draining [Invalidate va; Wait] realizes exactly the
+   broadcast's IOTLB invalidation.
+   ============================================================ *)
+
+(* The functional broadcast's mem is the break-before-make (the IPI loop
+   preserves mem). *)
+Lemma iommu_shootdown_mem (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown m root va p).(Machine_mem)
+  = invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p.
+Proof.
+  unfold iommu_shootdown.
+  destruct (ipi_broadcast_cores_preserves
+    {| Machine_mem := invalidate_leaf_mem (core_with_root root) m.(Machine_mem) va p;
+       Machine_cores := m.(Machine_cores); Machine_ram := m.(Machine_ram);
+       Machine_ipi := m.(Machine_ipi);
+       Machine_iotlb := iotlb_invalidate m.(Machine_iotlb) va;
+       Machine_devtlbs := m.(Machine_devtlbs); Machine_prireqs := m.(Machine_prireqs);
+       Machine_ioqueue := m.(Machine_ioqueue) |}
+    (length m.(Machine_cores)) va) as [Hmem _].
+  rewrite Hmem. cbn. reflexivity.
+Qed.
+
+(* The queue formulation and the functional broadcast agree on mem and IOTLB. *)
+Lemma iommu_shootdown_via_queue_refines_iommu_shootdown
+    (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_via_queue m root va p).(Machine_mem) = (iommu_shootdown m root va p).(Machine_mem) /\
+  (iommu_shootdown_via_queue m root va p).(Machine_iotlb) = (iommu_shootdown m root va p).(Machine_iotlb).
+Proof.
+  rewrite iommu_shootdown_via_queue_mem, iommu_shootdown_via_queue_iotlb,
+          iommu_shootdown_iotlb, iommu_shootdown_mem.
+  split; reflexivity.
+Qed.

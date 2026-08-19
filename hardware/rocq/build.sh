@@ -365,6 +365,11 @@ axiom_free iommu_proofs      iommu_shootdown_ats_cores
 axiom_free iommu_proofs      iommu_shootdown_ats_iotlb
 axiom_free iommu_proofs      iommu_shootdown_ats_devtlbs
 axiom_free iommu_proofs      iommu_shootdown_ats_correct
+# IOMMU (SSG-4 / S4.2b-2 groundwork): the queue drain reifies the functional
+# broadcast — iommu_shootdown_via_queue and iommu_shootdown agree on mem and
+# IOTLB (the pure precondition the weak-memory lift must satisfy).
+axiom_free iommu_proofs      iommu_shootdown_mem
+axiom_free iommu_proofs      iommu_shootdown_via_queue_refines_iommu_shootdown
 axiom_free tlb_tags         flush_tlb_entry_leaf
 axiom_free tlb_tags         flush_tlb_entry_vivt_leaf
 axiom_free tlb_tags         filter_tlb_leaf
