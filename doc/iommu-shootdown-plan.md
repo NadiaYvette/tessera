@@ -157,21 +157,46 @@ of being pushed invalidations.
 
 ## Concrete increments (landed one at a time, build green each)
 
-1. **S4.1a — model.** `Machine_iotlb` + `IotlbEntry` + `iommu_walk` + `iotlb_invalidate`
-   in `machine.sail` (regenerate), compile, conformance vectors against the
-   three specs (one `vm_compute` vector per platform's invalidation shape).
-2. **S4.1b — coherence.** `iommu_unmap_correct` / `iommu_unmap_without_invalidate_breaks`
-   (+ leaf variant), wired into `build.sh` axiom checks.
-3. **S4.2a — functional shootdown.** `iommu_shootdown_correct` over the pure
-   `Machine` (no concurrency yet), the IOMMU twin of `ipi_broadcast_correct`.
-4. **S4.2b — weak-memory lift.** gpfsl lift of the queued-invalidation shootdown,
-   reusing S2.2c/S2.5's release/acquire chain (command-queue write → doorbell →
-   Invalidation-Wait completion).
-5. **S4.3 — ATS/PRI.** Translation-request/completion and page-request flows,
-   with the "completion = walk" and "serviced at most once" lemmas.
-6. **Conformance cross-check.** A `conformance.v`-style file pinning the IOMMU
-   walker/invalidation against VT-d §3/§6.2/§6.5, SMMU §3.3/§4.4, AMD-Vi
-   §2.2/§2.4 (the three-platform equivalent of `translate_conforms`).
+1. **S4.1a — model.** *(landed)* `Machine_iotlb` + `IotlbEntry` + `iommu_walk` +
+   `iotlb_invalidate` in `machine.sail`, conformance vectors per platform.
+2. **S4.1b — coherence.** *(landed)* `iommu_unmap_correct` /
+   `iommu_unmap_without_invalidate_breaks` (+ leaf variant).
+3. **S4.1c/d — universal invariant.** *(landed)* `pte_address` injectivity +
+   `iommu_unmap_preserves_coherence` (the literal `IOTLB ⊆ mapping`).
+4. **S4.2a — functional shootdown.** *(landed)* `iommu_shootdown_correct` over
+   the pure `Machine` (the IOMMU twin of `ipi_broadcast_correct`).
+5. **S4.2b-1 — command queue (functional).** *(landed)* `InvalidationCmd` +
+   `Machine_ioqueue` + `iommu_process_queue` + `iommu_shootdown_via_queue_correct`.
+6. **S4.2b-3 — ATS device-TLB tier.** *(landed)* `iommu_shootdown_ats_correct` +
+   `find_devtlb` (lookup faults for the freed frame) — no CPU TLB, no IOTLB, and
+   no device-TLB entry translates the freed frame.
+7. **S4.2c — command-queue MMIO.** *(landed)* `cmdq_mmio.v` head/tail (prod/cons)
+   registers; `cmdq_drain_refines_iommu_process_queue` (the MMIO drain realizes
+   the functional queue; circular wrap is a later increment).
+8. **S4.3 — ATS/PRI.** *(landed)* completion=walk, fault-caches-nothing,
+   device-TLB tier, PRI dedup + PCIe 6.0 cross-check vectors.
+9. **Conformance cross-check.** *(landed)* `iommu_conformance.v`: walker =
+   translate re-rooted (`iommu_walk_translate_conforms`) + per-platform
+   invalidation vectors (VT-d §6.5.2.3 / SMMU §4.4 / AMD-Vi §2.4.3).
+
+**Next (not yet landed):**
+
+10. **S4.2b-2 — the weak-memory lift (gpfsl).** The Iris program
+    `iommu_broadcast_weak_spec` with the command queue (`cmdq_mmio.v`) as the
+    ghost device: leader PTE write (release) → `cmdq_enqueue` + doorbell
+    (release); IOMMU `cmdq_drain` (acquire) → Invalidation-Wait completion
+    (release); leader completion read (acquire). Re-instantiates S2.5's
+    `pending → doorbell → ack` chain (the 2-party leader↔IOMMU protocol, the
+    S2.2b pattern, not the N-core broadcast). Pure precondition landed:
+    `iommu_shootdown_via_queue_refines_iommu_shootdown` +
+    `cmdq_drain_refines_iommu_process_queue`.
+11. **S4.4 — second-platform port.** A faithful second IOMMU walker: SMMUv3
+    stage-1/stage-2 (Arm VMSAv8-64 — reuse `aarch64_tlb.sail`) + stream table
+    (STE) + context descriptor (CD) + TLBI granularity (VA/ASID/ALL); or AMD-Vi
+    device table + 4-level I/O page tables + `INVALIDATE_IOMMU_PAGES`/`_ALL`.
+    First slice: the ALL-granularity invalidation (`iotlb_invalidate_all` /
+    `ats_invalidate_all`, AMD-Vi §2.4.8 / SMMU TLBI_ALL) as the second
+    invalidation shape, then the two-stage walker.
 
 ## What is replayed vs. new
 
