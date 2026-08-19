@@ -188,15 +188,34 @@ of being pushed invalidations.
     S2.2b pattern, not the N-core broadcast). Pure precondition landed:
     `iommu_shootdown_via_queue_refines_iommu_shootdown` +
     `cmdq_drain_refines_iommu_process_queue`.
-11. **S4.4 — second-platform port.** *(first slices landed)*
+    The remaining obligations are the four Iris specs (each axiom-free, as in
+    S2.5): (a) `leader_enqueue_spec` — release PTE write + release doorbell
+    makes the descriptor + invalidate observable; (b) `iommu_drain_spec` —
+    acquire queue read + drain realises `iommu_process_queue`'s IOTLB
+    invalidation; (c) `leader_wait_spec` — acquire completion read observes the
+    drained IOTLB; (d) `broadcast_spec` — composing (a)+(b)+(c) yields
+    `iommu_shootdown_via_queue_correct`'s conclusion under weak memory.  These
+    are the S2.2c/S2.5 `send/remote/wait/broadcast` lemmas with the mailbox
+    ghost replaced by the command queue.
+11. **S4.4 — second-platform port.** *(most slices landed)*
     - ALL-granularity invalidation (`iotlb_invalidate_all` / `ats_invalidate_all`,
       AMD-Vi §2.4.8 / SMMU TLBI_ALL) — landed.
     - SMMUv3 two-stage walk (`smmu_walk`: GVA → GPA → SPA, `smmu_proofs.v`) — landed.
     - AMD-Vi 4-level walk (`amdvi_walk` = vpn3 then translate re-rooted,
       `amdvi_proofs.v`, subsumes the 3-level walk) — landed.
-    Still open: the stream table (STE) + context descriptor (CD) data
-    structures, the ASID/leaf-granularity TLBI shapes, and the full coherence
-    replay of each walker (unmap → invalidation → walk faults).
+    - SMMUv3 stream table + context descriptor (`Ste`/`Cd` structs,
+      SID-indexed `ste_lookup` / `cd_lookup`, `smmu_translate`) — landed;
+      `smmu_translate_spec` proves a valid STE+CD selects exactly `smmu_walk`'s
+      roots (the structural layer is a lookup, not a new translation).
+    - Coherence replay of both walkers (unmap → invalidation → walk faults) —
+      landed: `smmu_unmap_stage1_faults` / `smmu_unmap_stage2_faults` and
+      `amdvi_unmap_faults` / `amdvi_unmap_correct` (the SMMU stage-2 and AMD-Vi
+      level-3 cases take the alias-free "distinct tables" premise that
+      `wf_page_table` implies at the platform level).
+    Still open: the ASID/leaf-granularity TLBI shapes (e.g. SMMU TLBI by
+    ASID+VA, AMD-Vi INVALIDATE_PAGES with the domain-ID granularity), the
+    PASID/SVM second-level (GVA→GPA) tagging, and threading Ste/Cd tables into
+    the `Machine` record once the SMMU walk is exercised end-to-end.
 
 ## What is replayed vs. new
 
