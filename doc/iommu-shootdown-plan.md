@@ -96,6 +96,41 @@ Replays **Stage 2** (`shootdown.v` → `shootdown_iris.v` →
   interrupt controller (`intc.sail`) replaced by the IOMMU's command queue
   (`SMMU_CMDQ_*` §6.3.26-6.3.28 / AMD-Vi command buffer §2.4).
 
+### S4.2b — the concurrent queued-invalidation shootdown (detailed increments)
+
+S4.2a proved the **functional** IOMMU broadcast. S4.2b lifts it to genuine
+concurrency under weak memory, replaying S2.2c/S2.5 with the interrupt
+controller's per-hart mailbox replaced by the IOMMU's command queue. Landed in
+three increments, each build-green and axiom-free:
+
+- **S4.2b-1 — the command queue (functional).** Add `Machine_ioqueue : list
+  InvalidationCmd` (descriptors `IotlbInvalidate va` / `InvalidationWait`) and
+  the functional `iommu_process_queue` that drains the queue (applying each
+  invalidate to the IOTLB) and returns the Invalidation-Wait completion once the
+  wait descriptor is reached. Prove `iommu_shootdown_via_queue_correct`: unmap →
+  enqueue Invalidate + Wait → drain ⇒ every cached translation for `va` is gone
+  (the queue formulation of S4.2a's `iommu_shootdown_correct`).
+- **S4.2b-2 — the weak-memory lift (gpfsl).** The leader's PTE write (release) →
+  command-queue descriptor write (release) → doorbell; the IOMMU's queue read
+  (acquire) → drain → Invalidation-Wait completion (release) → the leader's
+  completion read (acquire). This is S2.5's `pending → doorbell → ack` chain with
+  the device (`intc.sail`) replaced by the command queue, so
+  `bc_wait_all_intc_spec` / `bc_broadcast_intc_spec` re-instantiate with the
+  queue as the ghost device. Prove the IRIS spec `iommu_broadcast_weak_spec`:
+  the leader's unmap is observed by every IOTLB flush before the wait returns.
+- **S4.2b-3 — the ATS device-TLB tier (a second broadcast).** The IOMMU's own
+  IOTLB is one translation point; each endpoint's **device-TLB** (filled by ATS)
+  is a second. The shootdown must invalidate both — `iotlb_invalidate` (IOMMU) and
+  `ats_invalidate` (per-device; PCIe ATS §4.3 / SMMU §4.5 / AMD-Vi §2.11). This is
+  the N-core broadcast instantiated twice (once over cores for the CPU-TLB, once
+  over devices for the device-TLB), with the ATS invalidation completion as the
+  per-device ack. Prove `iommu_shootdown_ats_correct`: after the full shootdown no
+  CPU TLB, no IOTLB, and no device-TLB entry translates the freed frame.
+
+The model additions 2b-1/2b-3 need (`InvalidationCmd`, `Machine_ioqueue`,
+`ats_invalidate`) are part of the S4.3 model work below; 2b-3 is where the ATS
+device-TLB tier first becomes a proof obligation rather than just a field.
+
 ## Stage 4.3 — the device side (ATS / PRI), genuinely new
 
 Not a replay. The device↔IOMMU interface (PCIe 6.0) introduces two flows the CPU
