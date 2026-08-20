@@ -19,6 +19,7 @@ Require Import shootdown.      (* core_with_root *)
 Require Import coherence.      (* remove_entry *)
 Require Import coherence_leaf. (* unmap_leaf_mem, read_pte_remove_other, leaf_addr *)
 Require Import iommu_proofs.   (* iommu_unmap_faults, iotlb_invalidate_removes *)
+Require Import machine_encoding. (* invalid_pte (test vectors) *)
 Require Import conformance.    (* oracle_walk, translate_conforms *)
 Import ListNotations.
 
@@ -52,6 +53,49 @@ Qed.
 (* The empty table faults the 4-level walk (no level-3 PTE). *)
 Lemma test_vector_amdvi_4level_empty_faults :
   amdvi_walk (mword_of_int 1 : mword 44) [] (mword_of_int 0 : mword 64) = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.4 conformance vectors (non-empty): a full 4-level HIT (level-3 + the
+   bottom 3 levels) and the level-3 fault cases, pinned against AMD-Vi §2.4
+   (device table + I/O page table: 52-bit GPA, 4 x 9-bit levels + 12-bit
+   offset).
+   ============================================================ *)
+
+(* The level-3 table root (distinct from the 3-level table's root_ppn). *)
+Definition amd_root : mword 44 := mword_of_int 7.
+
+(* Level-3 resolves to a valid non-leaf non-NAPOT PTE at root_ppn; the bottom 3
+   levels are table_ok (va0 -> expected_pa). *)
+Definition table_amd_hit : PageTable :=
+  {| MemEntry_addr := pte_address amd_root (vpn3 va0); MemEntry_pte := ptr_pte root_ppn |} :: table_ok.
+
+Lemma test_vector_amdvi_4level_hit :
+  amdvi_walk amd_root table_amd_hit va0 = Some (expected_pa, Read).
+Proof. vm_compute. reflexivity. Qed.
+
+(* An invalid level-3 PTE faults (no I/O page-table root to use). *)
+Definition table_amd_invalid_l3 : PageTable :=
+  [ {| MemEntry_addr := pte_address amd_root (vpn3 va0); MemEntry_pte := invalid_pte |} ].
+
+Lemma test_vector_amdvi_4level_invalid_l3 :
+  amdvi_walk amd_root table_amd_invalid_l3 va0 = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* A leaf level-3 PTE faults (the 4-level walk has no level-3 leaf). *)
+Definition table_amd_leaf_l3 : PageTable :=
+  [ {| MemEntry_addr := pte_address amd_root (vpn3 va0); MemEntry_pte := ro_pte root_ppn |} ].
+
+Lemma test_vector_amdvi_4level_leaf_l3 :
+  amdvi_walk amd_root table_amd_leaf_l3 va0 = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* A NAPOT level-3 PTE faults (N=1 is reserved on a non-leaf pointer). *)
+Definition table_amd_napot_l3 : PageTable :=
+  [ {| MemEntry_addr := pte_address amd_root (vpn3 va0); MemEntry_pte := napot_pte root_ppn |} ].
+
+Lemma test_vector_amdvi_4level_napot_l3 :
+  amdvi_walk amd_root table_amd_napot_l3 va0 = None.
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================

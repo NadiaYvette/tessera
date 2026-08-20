@@ -172,6 +172,49 @@ Lemma test_vector_smmu_translate_hit_empty_walk :
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
+   S4.4 conformance vectors (non-empty): a full two-stage HIT (both stages
+   resolve) and the SID -> STE -> CD -> SPA path, pinned against SMMUv3 §3.3
+   (stage-1/stage-2 translation) and §3.4 (stream table / context descriptor).
+   ============================================================ *)
+
+(* Distinct roots so the stage-1 and stage-2 tables do not alias in the shared
+   mem.  Stage-1 maps va0 to GPA 0 (leaf ppn = 0); stage-2 maps va0 (the
+   zero-extended GPA) to the SPA [expected_pa]. *)
+Definition s1_root : mword 44 := mword_of_int 1.
+Definition s1_mid  : mword 44 := mword_of_int 2.
+Definition s1_leaf : mword 44 := mword_of_int 3.
+Definition s2_root : mword 44 := mword_of_int 4.
+Definition s2_mid  : mword 44 := mword_of_int 5.
+Definition s2_leaf : mword 44 := mword_of_int 6.
+
+Definition table_s1_gpa0 : PageTable :=
+  [ {| MemEntry_addr := pte_address s1_root (vpn2 va0); MemEntry_pte := ptr_pte s1_mid |};
+    {| MemEntry_addr := pte_address s1_mid  (vpn1 va0); MemEntry_pte := ptr_pte s1_leaf |};
+    {| MemEntry_addr := pte_address s1_leaf (vpn0 va0); MemEntry_pte := ro_pte (mword_of_int 0 : mword 44) |} ].
+
+Definition table_s2_spa : PageTable :=
+  [ {| MemEntry_addr := pte_address s2_root (vpn2 va0); MemEntry_pte := ptr_pte s2_mid |};
+    {| MemEntry_addr := pte_address s2_mid  (vpn1 va0); MemEntry_pte := ptr_pte s2_leaf |};
+    {| MemEntry_addr := pte_address s2_leaf (vpn0 va0); MemEntry_pte := ro_pte leaf_ppn |} ].
+
+Definition mem_smmu_hit : PageTable := List.app table_s1_gpa0 table_s2_spa.
+
+(* Both stages resolve: va0 -> GPA 0 -> SPA [expected_pa] with Read. *)
+Lemma test_vector_smmu_two_stage_hit :
+  smmu_walk s1_root s2_root mem_smmu_hit va0 = Some (expected_pa, Read).
+Proof. vm_compute. reflexivity. Qed.
+
+(* The full SID -> STE -> CD -> two-stage walk resolves to the same SPA. *)
+Definition st_hit : Ste :=
+  {| Ste_valid := true; Ste_s2_root := s2_root; Ste_cd_ptr := 0 |}.
+Definition cd_hit : Cd :=
+  {| Cd_valid := true; Cd_s1_root := s1_root; Cd_asid := 0 |}.
+
+Lemma test_vector_smmu_translate_hit :
+  smmu_translate [st_hit] [cd_hit] 0 mem_smmu_hit va0 = Some (expected_pa, Read).
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
    S4.4 end-to-end SMMU shootdown (STE/CD threaded through Machine).
 
    A translation shootdown mutates page tables and caches, never the stream

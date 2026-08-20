@@ -412,6 +412,8 @@ axiom_free smmu_proofs        smmu_translate_faults_invalid_ste
 axiom_free smmu_proofs        smmu_translate_faults_invalid_cd
 axiom_free smmu_proofs        test_vector_smmu_translate_empty_stes
 axiom_free smmu_proofs        test_vector_smmu_translate_hit_empty_walk
+axiom_free smmu_proofs        test_vector_smmu_two_stage_hit
+axiom_free smmu_proofs        test_vector_smmu_translate_hit
 axiom_free smmu_proofs        smmu_shootdown_iotlb
 axiom_free smmu_proofs        smmu_shootdown_stage1_correct
 axiom_free smmu_proofs        smmu_shootdown_stage2_correct
@@ -423,6 +425,10 @@ axiom_free smmu_proofs        smmu_translate_conforms
 axiom_free amdvi_proofs        amdvi_walk_refines_iommu_walk
 axiom_free amdvi_proofs        amdvi_walk_level3_faults
 axiom_free amdvi_proofs        test_vector_amdvi_4level_empty_faults
+axiom_free amdvi_proofs        test_vector_amdvi_4level_hit
+axiom_free amdvi_proofs        test_vector_amdvi_4level_invalid_l3
+axiom_free amdvi_proofs        test_vector_amdvi_4level_leaf_l3
+axiom_free amdvi_proofs        test_vector_amdvi_4level_napot_l3
 axiom_free amdvi_proofs        amdvi_unmap_faults
 axiom_free amdvi_proofs        amdvi_unmap_correct
 axiom_free amdvi_proofs        amdvi_walk_conforms
