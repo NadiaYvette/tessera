@@ -94,6 +94,7 @@ rocq compile $FLAGS conformance.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
+rocq compile $FLAGS iommu_broadcast_reify.v
 rocq compile $FLAGS smmu_proofs.v
 rocq compile $FLAGS amdvi_proofs.v
 rocq compile $FLAGS shootdown_iris.v
@@ -390,6 +391,12 @@ axiom_free iommu_proofs      iotlb_invalidate_domain_removes
 axiom_free cmdq_mmio         cmdq_drain_refines_iommu_process_queue
 axiom_free cmdq_mmio         cmdq_drain_invalidate_wait_spec
 axiom_free cmdq_mmio         test_vector_cmdq_mmio_drain
+# IOMMU (SSG-4 / S4.2b-2 reification): the composition's MMIO drain ghost step
+# produces exactly iommu_shootdown_via_queue's invalidated IOTLB, and the freed
+# frame faults / no stale IOTLB entry survives (iommu_shootdown_via_queue_correct).
+axiom_free iommu_broadcast_reify iommu_drain_iotlb_reifies
+axiom_free iommu_broadcast_reify iommu_broadcast_reifies_correct
+axiom_free iommu_broadcast_reify test_vector_iommu_broadcast_reifies
 # SMMUv3 two-stage walk (SSG-4 / S4.4): the composition is GVA → GPA → SPA —
 # faults iff either stage faults, and a two-stage hit returns the stage-2
 # (SPA, perm).
