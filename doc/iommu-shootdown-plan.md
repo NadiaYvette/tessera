@@ -179,7 +179,7 @@ of being pushed invalidations.
    translate re-rooted (`iommu_walk_translate_conforms`) + per-platform
    invalidation vectors (VT-d §6.5.2.3 / SMMU §4.4 / AMD-Vi §2.4.3).
 
-10. **S4.2b-2 — the weak-memory lift (gpfsl).** *(first direction landed)* The Iris
+10. **S4.2b-2 — the weak-memory lift (gpfsl).** *(landed)* The Iris
     program with the command queue (`cmdq_mmio.v`)
     as the ghost device: leader PTE write (release) → `cmdq_enqueue` + doorbell
     (release); IOMMU `cmdq_drain` (acquire) → Invalidation-Wait completion
@@ -188,11 +188,15 @@ of being pushed invalidations.
     S2.2b pattern, not the N-core broadcast). Pure precondition landed:
     `iommu_shootdown_via_queue_refines_iommu_shootdown` +
     `cmdq_drain_refines_iommu_process_queue`.
-    **Landed:** the leader → IOMMU doorbell direction — `iommu_broadcast_weak.v`
-    re-instantiates `shootdown_weak_gen_inv` (S2.2a) with the request flag `1` as
-    the message (`iommu_broadcast_gen_inv`, axiom-free): the leader's RELEASE of
-    the doorbell is observed by the IOMMU's ACQUIRE, so the IOMMU reads the
-    invalidate request.  The remaining three specs are below.
+    **Landed (all three directions, axiom-free):** `iommu_broadcast_weak.v` proves
+    (1) `iommu_broadcast_gen_inv` — the leader → IOMMU doorbell direction, a
+    re-instantiation of `shootdown_weak_gen_inv` (S2.2a) with the request flag
+    `1` as the message; (2) `iommu_broadcast_ack_gen_inv` — the IOMMU → leader
+    completion direction (the S2.2b release/acquire ack); and (3)
+    `iommu_broadcast_full_gen_inv` — the **composition**: four cells
+    (`door`/`req`/`done`/`res`) and two `iq_inv`s, chaining the two release/acquire
+    pairs so the leader provably reads the drained result `1` after the IOMMU
+    releases the Invalidation-Wait completion.
     The remaining obligations are the four Iris specs (each axiom-free, as in
     S2.5): (a) `leader_enqueue_spec` — release PTE write + release doorbell
     makes the descriptor + invalidate observable; (b) `iommu_drain_spec` —
