@@ -82,6 +82,17 @@ Proof.
   rewrite iq_inv'_eq.
   apply exists_objective=>?. apply exists_objective=>[[|]]; by apply _.
 Qed.
+(* The same objective instance for the *unfolded* `iq_inv'_def`: the composition
+   (below) opens the same invariant under both names, and a `rewrite iq_inv'_eq`
+   in one branch unfolds the persistent `inv` in *both* threads.  Without this,
+   `iInv` on the unfolded `iq_inv'_def` wraps the content in `<obj>` (the
+   `Objective` instance above only fires on the sealed `iq_inv'`), which the
+   `AtomicSWriter_release_write`/`AtomicSeen_acquire_read` framing cannot see
+   through. *)
+#[global] Instance iq_inv'_def_objective x y γ γx : Objective (iq_inv'_def x y γ γx).
+Proof.
+  apply exists_objective=>?. apply exists_objective=>[[|]]; by apply _.
+Qed.
 
 Definition iq_inv N x y γ γx := inv N (iq_inv' x y γ γx).
 End inv.
@@ -189,6 +200,200 @@ Proof.
       iIntros "!> !>".
 
       wp_pures. wp_read. by iApply "Post".
+Qed.
+
+(* ============================================================
+   S4.2b-2 (composition) — the full 2-party leader <-> IOMMU protocol.
+
+   Two release/acquire pairs chained: the leader RELEASES the doorbell (with
+   the invalidate request) and the IOMMU ACQUIREs it; then the IOMMU RELEASES
+   the Invalidation-Wait completion (with the drained result) and the leader
+   ACQUIREs it.  The leader reads the result cell, provably observing `1` (the
+   drain completed).  This is the doorbell direction and the completion
+   direction sequenced in each thread, over four heap cells and two `iq_inv`s.
+   ============================================================ *)
+
+Definition iommu_broadcast : expr :=
+  let: "door" := new [ #1] in
+  let: "req" := new [ #1] in
+  let: "done" := new [ #1] in
+  let: "res" := new [ #1] in
+  "door" +ₗ #0 <- #0 ;;
+  "req" +ₗ #0 <- #0 ;;
+  "done" +ₗ #0 <- #0 ;;
+  "res" +ₗ #0 <- #0 ;;
+  Fork ((repeat: !ᵃᶜ("door" +ₗ #0)) ;; (* IOMMU: acquire the doorbell *)
+        !("req" +ₗ #0) ;;               (* IOMMU: read the invalidate request *)
+        "res" +ₗ #0 <- #1 ;;            (* IOMMU: write the drained result *)
+        "done" +ₗ #0 <-ʳᵉˡ #1) ;;       (* IOMMU: release the completion *)
+  "req" +ₗ #0 <- #1 ;;                  (* leader: write the invalidate request *)
+  "door" +ₗ #0 <-ʳᵉˡ #1 ;;              (* leader: release the doorbell *)
+  (repeat: !ᵃᶜ("done" +ₗ #0)) ;;        (* leader: acquire the completion *)
+  !("res" +ₗ #0).                        (* leader: read — provably the result *)
+
+Lemma iommu_broadcast_full_gen_inv `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ} :
+  iommu_broadcast_spec Σ iommu_broadcast.
+Proof.
+  iIntros (tid Φ) "_ Post". rewrite /iommu_broadcast.
+  (* four single-cell allocations *)
+  wp_apply wp_new; [done..|]. iIntros (door) "(_ & Hdoor & _)". rewrite own_loc_na_vec_singleton.
+  wp_let.
+  wp_apply wp_new; [done..|]. iIntros (req) "(_ & Hreq & _)". rewrite own_loc_na_vec_singleton.
+  wp_let.
+  wp_apply wp_new; [done..|]. iIntros (done) "(_ & Hdone & _)". rewrite own_loc_na_vec_singleton.
+  wp_let.
+  wp_apply wp_new; [done..|]. iIntros (res) "(_ & Hres & _)". rewrite own_loc_na_vec_singleton.
+  wp_let.
+  (* initialise the four cells *)
+  wp_op. rewrite shift_0. wp_write.
+  wp_op. rewrite shift_0. wp_write.
+  wp_op. rewrite shift_0. wp_write.
+  wp_op. rewrite shift_0. wp_write.
+
+  (* two one-shot tokens + two atomic sync writers *)
+  iMod UTok_alloc as (γ1) "Tok1".
+  iMod UTok_alloc as (γ2) "Tok2".
+  iMod (AtomicPtsTo_from_na with "Hdoor") as (γx1 t1 V1) "(#SeenV1 & SW1 & Pts1)".
+  iDestruct (AtomicSWriter_AtomicSync with "SW1") as "#S1".
+  iMod (AtomicPtsTo_from_na with "Hdone") as (γx2 t2 V2) "(#SeenV2 & SW2 & Pts2)".
+  iDestruct (AtomicSWriter_AtomicSync with "SW2") as "#S2".
+  iDestruct (view_at_intro with "Pts1") as (Vx1) "[SeenVx1 Pts1]".
+  iDestruct (view_at_intro with "Pts2") as (Vx2) "[SeenVx2 Pts2]".
+  iMod (inv_alloc (iqN door) _ (iq_inv' door req γ1 γx1) with "[Pts1]") as "#Inv1".
+  { rewrite iq_inv'_eq. iIntros "!>". iExists _, false, t1, V1, Vx1. by iFrame "Pts1". }
+  iMod (inv_alloc (iqN done) _ (iq_inv' done res γ2 γx2) with "[Pts2]") as "#Inv2".
+  { rewrite iq_inv'_eq. iIntros "!>". iExists _, false, t2, V2, Vx2. by iFrame "Pts2". }
+
+  (* fork: the IOMMU (acquire door, write res, release done) *)
+  wp_apply (wp_fork with "[SW2 Hres Tok1 SeenVx1]"); [done|..].
+  - iIntros "!>" (tid').
+    (* IOMMU: acquire-spin on the doorbell *)
+    wp_bind (repeat: _)%E.
+    iLöb as "IH". iApply wp_repeat; [done|].
+    wp_op. rewrite shift_0.
+    iInv (iqN door) as "INV" "Close". rewrite iq_inv'_eq.
+    iDestruct "INV" as (ζ' b t0 V0 Vx0) "[>Pts Own]".
+    iApply (AtomicSeen_acquire_read with "[$Pts $SeenV1]"); [solve_ndisj|..].
+    { by iApply (AtomicSync_AtomicSeen with "S1"). }
+    iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Pts)".
+    iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
+    case (decide (t' = t0)) => [?|NEqt'].
+    + subst t'.
+      iAssert (⌜v' = #0⌝)%I as %Eq0.
+      { destruct b.
+        - iDestruct "Own" as (t1' V1' [Lt1 Eqζ']) "_".
+          iPureIntro. rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_ne in Sub2.
+          + rewrite lookup_insert_eq in Sub2. by inversion Sub2.
+          + clear -Lt1. intros ?. subst. lia.
+        - iDestruct "Own" as %Eqζ'. iPureIntro.
+          rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_eq in Sub2. by inversion Sub2. }
+      iMod ("Close" with "[Pts Own]").
+      { iIntros "!>". iExists ζ', b, t0, V0, _. by iFrame. }
+      iIntros "!>". iExists 0. iSplit; [done|].
+      iIntros "!> !>". iApply ("IH" with "SW2 Hres Tok1 SeenVx1").
+    + destruct b; last first.
+      { iDestruct "Own" as %Eqζ'. exfalso.
+        rewrite Eqζ' in Sub2.
+        apply (lookup_weaken _ _ _ _ Eqt'), lookup_singleton_Some in Sub2 as [].
+        by apply NEqt'. }
+      iClear "IH".
+      iDestruct "Own" as (t1' V1' [Lt1 Eqζ']) "Own".
+      rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+      have ? : t' = t1'.
+      { case (decide (t' = t1')) => [//|NEqt1].
+        exfalso. by rewrite !lookup_insert_ne // in Sub2. }
+      subst t'. rewrite lookup_insert_eq in Sub2. inversion Sub2. subst v' V'.
+      iDestruct "Own" as "[Own|Data]".
+      { iExFalso. by iDestruct (UTok_unique with "Tok1 Own") as "$". }
+      iDestruct (view_at_elim with "[SV'] Data") as "Data".
+      { iApply (monPred_in_mono with "SV'"). simpl. solve_lat. }
+      iMod ("Close" with "[Pts Tok1]").
+      { iIntros "!>". iExists ζ', true, t0, V0, _. iFrame "Pts".
+        iExists t1', V1'. iSplit; [done|]. by iLeft. }
+      iIntros "!>". iExists 1. iSplit; [done|].
+      iIntros "!> !>".
+      (* IOMMU: write the drained result, then release the completion *)
+      wp_pures. rewrite shift_0. wp_read.  (* read the request (proves the doorbell was observed) *)
+      wp_pures. rewrite shift_0. wp_write.  (* res := 1 *)
+      wp_op. rewrite shift_0.               (* done :=ʳᵉˡ 1: reduce the offset *)
+      iInv (iqN done) as "INV" "Close".
+      iDestruct "INV" as (ζ2 b2 t02 V02 Vx02) "[>Pts _]".
+      iDestruct (AtomicPtsTo_AtomicSWriter_agree_1 with "Pts SW2") as %->.
+      iApply (AtomicSWriter_release_write _ _ _ _ V2 Vx02 #1 (res ↦{1} #1)%I
+                with "[$SW2 $Pts $Hres $SeenV2]"); [solve_ndisj|..].
+      iIntros "!>" (t1'' V1'') "(%MAX & SeenV' & [Hres SW2'] & Pts')".
+      iMod ("Close" with "[-]"); last done.
+      iIntros "!>". iExists _, true, t2, V2, _. iFrame "Pts'".
+      iExists t1'', V1''. iSplit.
+      { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
+      iRight. by iFrame "Hres".
+
+  - iIntros "_". wp_seq.
+    (* leader: write the request, release the doorbell *)
+    wp_op. rewrite shift_0. wp_write.  (* req := 1 *)
+    wp_op. rewrite shift_0.               (* door :=ʳᵉˡ 1: reduce the offset *)
+    wp_bind (#door <-ʳᵉˡ #1)%E.           (* focus the release write (has a continuation) *)
+    iInv (iqN door) as "INV" "Close". rewrite iq_inv'_eq.
+    iDestruct "INV" as (ζ' b t0 V0 Vx0) "[>Pts _]".
+    iDestruct (AtomicPtsTo_AtomicSWriter_agree_1 with "Pts SW1") as %->.
+    iApply (AtomicSWriter_release_write _ _ _ _ V1 Vx0 #1 (req ↦{1} #1)%I
+              with "[$SW1 $Pts $Hreq $SeenV1]"); [solve_ndisj|..].
+    iIntros "!>" (t1''' V1''') "(%MAX & SeenV' & [Hreq SW1'] & Pts')".
+    iMod ("Close" with "[Pts' Hreq SW1']").
+    { iIntros "!>". iExists _, true, t1, V1, _. iFrame "Pts'".
+      iExists t1''', V1'''. iSplit.
+      { iPureIntro. split; [|done]. apply MAX. rewrite lookup_insert_eq. by eexists. }
+      iRight. by iFrame "Hreq". }
+    (* leader: acquire the completion, read the result *)
+    iModIntro. wp_seq. wp_bind (repeat: _)%E.
+    iLöb as "IH". iApply wp_repeat; [done|].
+    wp_op. rewrite shift_0.
+    iInv (iqN done) as "INV" "Close".
+    iDestruct "INV" as (ζ3 b3 t03 V03 Vx03) "[>Pts Own]".
+    iApply (AtomicSeen_acquire_read with "[$Pts $SeenV2]"); [solve_ndisj|..].
+    { by iApply (AtomicSync_AtomicSeen with "S2"). }
+    iIntros "!>" (t' v' V' V'' ζ'') "(HF & SV' & SN' & Pts)".
+    iDestruct "HF" as %([Sub1 Sub2] & Eqt' & MAX' & MAX'' & LeV'').
+    case (decide (t' = t03)) => [?|NEqt'].
+    + subst t'.
+      iAssert (⌜v' = #0⌝)%I as %Eq0.
+      { destruct b3.
+        - iDestruct "Own" as (t1' V1' [Lt1 Eqζ']) "_".
+          iPureIntro. rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_ne in Sub2.
+          + rewrite lookup_insert_eq in Sub2. by inversion Sub2.
+          + clear -Lt1. intros ?. subst. lia.
+        - iDestruct "Own" as %Eqζ'. iPureIntro.
+          rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+          rewrite lookup_insert_eq in Sub2. by inversion Sub2. }
+      iMod ("Close" with "[Pts Own]").
+      { iIntros "!>". iExists ζ3, b3, t03, V03, _. by iFrame. }
+      iIntros "!>". iExists 0. iSplit; [done|].
+      iIntros "!> !>". by iApply ("IH" with "Post Tok2 SeenVx2 SeenV'").
+    + destruct b3; last first.
+      { iDestruct "Own" as %Eqζ'. exfalso.
+        rewrite Eqζ' in Sub2.
+        apply (lookup_weaken _ _ _ _ Eqt'), lookup_singleton_Some in Sub2 as [].
+        by apply NEqt'. }
+      iClear "IH".
+      iDestruct "Own" as (t1' V1' [Lt1 Eqζ']) "Own".
+      rewrite Eqζ' in Sub2. apply (lookup_weaken _ _ _ _ Eqt') in Sub2.
+      have ? : t' = t1'.
+      { case (decide (t' = t1')) => [//|NEqt1].
+        exfalso. by rewrite !lookup_insert_ne // in Sub2. }
+      subst t'. rewrite lookup_insert_eq in Sub2. inversion Sub2. subst v' V'.
+      iDestruct "Own" as "[Own|Data]".
+      { iExFalso. by iDestruct (UTok_unique with "Tok2 Own") as "$". }
+      iDestruct (view_at_elim with "[SV'] Data") as "Data".
+      { iApply (monPred_in_mono with "SV'"). simpl. solve_lat. }
+      iMod ("Close" with "[Pts Tok2]").
+      { iIntros "!>". iExists ζ3, true, t03, V03, _. iFrame "Pts".
+        iExists t1', V1'. iSplit; [done|]. by iLeft. }
+      iIntros "!>". iExists 1. iSplit; [done|].
+      iIntros "!> !>".
+      wp_pures. rewrite shift_0. wp_read. by iApply "Post".
 Qed.
 
 (* ============================================================

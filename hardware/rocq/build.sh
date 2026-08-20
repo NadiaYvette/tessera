@@ -654,6 +654,7 @@ if [ -d "$GP" ]; then
   rocq compile $WFLAGS iommu_broadcast_weak.v
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
+  axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"
   # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
   rocq compile $WFLAGS shootdown_weak_broadcast.v
   rocq compile $WFLAGS intc_weak_broadcast.v
