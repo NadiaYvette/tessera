@@ -213,3 +213,14 @@ Lemma test_vector_amdvi_invalidate_domain :
       {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
          IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |} ].
 Proof. vm_compute. reflexivity. Qed.
+
+(* An ASID absent from the cache is a no-op; this guards the filter's
+   non-target preservation in addition to the positive-removal vector above. *)
+Lemma test_vector_smmu_tlbi_asid_noop :
+  iotlb_invalidate_pasid conf_mixed_iotlb 2 = conf_mixed_iotlb.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Likewise, a domain absent from the cache does not disturb any translation. *)
+Lemma test_vector_amdvi_invalidate_domain_noop :
+  iotlb_invalidate_domain conf_mixed_iotlb 2 = conf_mixed_iotlb.
+Proof. vm_compute. reflexivity. Qed.

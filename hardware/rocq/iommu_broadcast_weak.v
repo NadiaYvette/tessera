@@ -34,6 +34,8 @@ Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
 Require Import machine_types.
 Require Import shootdown_weak.  (* UTok, uniqTokΣ, subG_uniqTokΣ, UTok_alloc, UTok_unique *)
+Require Import shootdown_weak_broadcast.  (* machine_ctx, bcG, machine_ctx_update *)
+Require Import iommu_proofs.              (* iommu_shootdown_via_queue *)
 Require Import iris.prelude.options.
 
 (* ===== the program: the IOMMU ordering core, leader -> IOMMU =====
@@ -231,10 +233,12 @@ Definition iommu_broadcast : expr :=
   (repeat: !ᵃᶜ("done" +ₗ #0)) ;;        (* leader: acquire the completion *)
   !("res" +ₗ #0).                        (* leader: read — provably the result *)
 
-Lemma iommu_broadcast_full_gen_inv `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ} :
-  iommu_broadcast_spec Σ iommu_broadcast.
+Lemma iommu_broadcast_full_gen_inv_update `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ}
+    (R R' : vProp Σ) (Hupd : R ⊢ |==> R') :
+  ∀ tid, {{{ R }}} iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ R' }}}.
 Proof.
-  iIntros (tid Φ) "_ Post". rewrite /iommu_broadcast.
+  iIntros (tid Φ) "HR Post". rewrite /iommu_broadcast.
   (* four single-cell allocations *)
   wp_apply wp_new; [done..|]. iIntros (door) "(_ & Hdoor & _)". rewrite own_loc_na_vec_singleton.
   wp_let.
@@ -371,7 +375,7 @@ Proof.
       iMod ("Close" with "[Pts Own]").
       { iIntros "!>". iExists ζ3, b3, t03, V03, _. by iFrame. }
       iIntros "!>". iExists 0. iSplit; [done|].
-      iIntros "!> !>". by iApply ("IH" with "Post Tok2 SeenVx2 SeenV'").
+      iIntros "!> !>". by iApply ("IH" with "HR Post Tok2 SeenVx2 SeenV'").
     + destruct b3; last first.
       { iDestruct "Own" as %Eqζ'. exfalso.
         rewrite Eqζ' in Sub2.
@@ -393,7 +397,43 @@ Proof.
         iExists t1', V1'. iSplit; [done|]. by iLeft. }
       iIntros "!>". iExists 1. iSplit; [done|].
       iIntros "!> !>".
-      wp_pures. rewrite shift_0. wp_read. by iApply "Post".
+      (* The machine/device ghost update is performed while the final read is
+         still a WP goal.  This is the required atomic-step boundary; it cannot
+         be moved into a postcondition adapter. *)
+      iMod (Hupd with "HR") as "HR'".
+      wp_pures. rewrite shift_0. wp_read.
+      iApply "Post". iSplit; [done|]. iFrame "HR'".
+Qed.
+
+(* The pure composition is the R = R' = True instance. *)
+Lemma iommu_broadcast_full_gen_inv `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ} :
+  iommu_broadcast_spec Σ iommu_broadcast.
+Proof.
+  iIntros (tid Φ) "_ Post".
+  iApply (iommu_broadcast_full_gen_inv_update (Σ := Σ) (True%I) (True%I) _ tid).
+  - iPureIntro. done.
+  - iIntros "!>" (v) "Hv". iDestruct "Hv" as %[Hv _]. iApply ("Post" $! v). iPureIntro. exact Hv.
+  Unshelve.
+  exact (bupd_intro _).
+Qed.
+
+(* The machine-aware composition: the leader owns the machine ghost exclusively
+   and advances it to the functional queue-shootdown state while the final read
+   is still the program's step (inside the WP), not in a postcondition adapter. *)
+Lemma iommu_broadcast_full_gen_inv_machine `{!noprolG Σ, !atomicG Σ, !uniqTokG Σ,
+    !bcG Σ} (γm : gname) (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  ∀ tid, {{{ machine_ctx γm m }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ machine_ctx γm (iommu_shootdown_via_queue m root va p) }}}.
+Proof.
+  iIntros (tid Φ) "Hm Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (machine_ctx γm m) (machine_ctx γm (iommu_shootdown_via_queue m root va p)) _ tid
+            with "Hm").
+  - iIntros (v) "(Hv & Hm')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hm'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (machine_ctx_update γm m (iommu_shootdown_via_queue m root va p)).
 Qed.
 
 (* ============================================================

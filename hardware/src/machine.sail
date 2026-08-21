@@ -136,6 +136,17 @@ struct Cd = {
   asid    : int
 }
 
+// Intel VT-d context entry (VT-d §3.3 / §6.2): the requester-ID-indexed
+// context table selects a domain and its second-level paging root.  This first
+// slice deliberately models only the present bit, domain ID, and second-level
+// root; fault-recording, PASID tables, and scalable-mode device tables remain
+// later SSG-4 increments.
+struct VtdContext = {
+  present : bool,
+  did     : int,
+  sl_root : bits(44)
+}
+
 // The machine: a set of cores sharing one physical memory (page-table
 // descriptors plus data RAM), a per-core IPI mailbox (SSG-3 / S2.3), the
 // IOMMU's translation cache (SSG-4) — the device-side twin of the per-core
@@ -394,6 +405,29 @@ function smmu_translate(stes, cds, sid, mem, gva) =
             if c.valid then smmu_walk(c.s1_root, s.s2_root, mem, gva)
             else None()
         }
+      else None()
+  }
+
+// ---- Intel VT-d context-table / second-level walk (SSG-4 / S4.5) ----
+//
+// Legacy VT-d indexes a context entry by PCIe Requester ID.  A present context
+// selects a domain ID and a second-level root; the second-level walk is the
+// same four-level-capable IOMMU interface represented here by `iommu_walk`.
+// PASID first-stage translation and scalable-mode device/ PASID tables are
+// intentionally separate follow-on increments.
+val vtd_context_lookup : (list(VtdContext), int) -> option(VtdContext)
+function vtd_context_lookup(contexts, rid) = match (contexts, rid) {
+  (c :: _, 0) => Some(c),
+  (_ :: rest, n) => vtd_context_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+val vtd_walk : (list(VtdContext), int, PageTable, vaddr) -> option((paddr, Perm))
+function vtd_walk(contexts, rid, mem, iova) =
+  match vtd_context_lookup(contexts, rid) {
+    None() => None(),
+    Some(c) =>
+      if c.present then iommu_walk(c.sl_root, mem, iova)
       else None()
   }
 

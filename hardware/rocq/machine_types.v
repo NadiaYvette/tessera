@@ -586,6 +586,49 @@ Instance dummy_Cd : Inhabited (Cd) := {
 |} }.
 
 
+Record VtdContext := {
+  VtdContext_present : bool;
+  VtdContext_did : Z;
+  VtdContext_sl_root : bits 44;
+}.
+Arguments VtdContext : clear implicits.
+#[export]
+Instance Decidable_eq_VtdContext : EqDecision VtdContext.
+   intros [x0 x1 x2].
+   intros [y0 y1 y2].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_VtdContext : Countable VtdContext.
+refine {|
+  encode x := encode (VtdContext_present x, VtdContext_did x, VtdContext_sl_root x);
+  decode x := '(x0, x1, x2) ← decode x;
+              mret (Build_VtdContext x0 x1 x2)
+|}.
+abstract (
+  intros [x0 x1 x2];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'VtdContext_present' := e ]}" :=
+  match r with Build_VtdContext _ (_ as f1) (_ as f2) => Build_VtdContext e f1 f2 end (at level 0).
+Notation "{[ r 'with' 'VtdContext_did' := e ]}" :=
+  match r with Build_VtdContext (_ as f0) _ (_ as f2) => Build_VtdContext f0 e f2 end (at level 0).
+Notation "{[ r 'with' 'VtdContext_sl_root' := e ]}" :=
+  match r with Build_VtdContext (_ as f0) (_ as f1) _ => Build_VtdContext f0 f1 e end (at level 0).
+#[export]
+Instance dummy_VtdContext : Inhabited (VtdContext) := {
+  inhabitant := {|
+    VtdContext_present := inhabitant;
+    VtdContext_did := inhabitant;
+    VtdContext_sl_root := inhabitant
+|} }.
+
+
 Record Machine := {
   Machine_cores : list Core;
   Machine_mem : PageTable;

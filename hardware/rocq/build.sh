@@ -92,6 +92,7 @@ rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS iommu_conformance.v
+rocq compile $FLAGS vtd_proofs.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
 rocq compile $FLAGS iommu_broadcast_reify.v
@@ -287,6 +288,18 @@ axiom_free iommu_conformance test_vector_amdvi_invalidate_iotlb_all
 axiom_free iommu_conformance test_vector_smmu_invalidate_devtlb_all
 axiom_free iommu_conformance test_vector_smmu_tlbi_asid
 axiom_free iommu_conformance test_vector_amdvi_invalidate_domain
+axiom_free iommu_conformance test_vector_smmu_tlbi_asid_noop
+axiom_free iommu_conformance test_vector_amdvi_invalidate_domain_noop
+# Intel VT-d S4.5 first slice: Requester-ID context selection and the
+# second-level walk, with explicit missing/non-present faults and oracle replay.
+axiom_free vtd_proofs vtd_walk_context_spec
+axiom_free vtd_proofs vtd_walk_missing_context
+axiom_free vtd_proofs vtd_walk_nonpresent_context
+axiom_free vtd_proofs vtd_walk_conforms
+axiom_free vtd_proofs test_vector_vtd_context_hit
+axiom_free vtd_proofs test_vector_vtd_nonpresent_fault
+axiom_free vtd_proofs test_vector_vtd_missing_context_fault
+axiom_free vtd_proofs test_vector_vtd_context_walk_fault
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
@@ -664,12 +677,13 @@ if [ -d "$GP" ]; then
   # S4.2b-2 (first direction): the IOMMU broadcast's leader -> IOMMU doorbell
   # release/acquire, a faithful re-instantiation of shootdown_weak_gen_inv with
   # the request flag as the message.
+  # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
+  rocq compile $WFLAGS shootdown_weak_broadcast.v
   rocq compile $WFLAGS iommu_broadcast_weak.v
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"
-  # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
-  rocq compile $WFLAGS shootdown_weak_broadcast.v
+  axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv_machine "$WFLAGS"
   rocq compile $WFLAGS intc_weak_broadcast.v
   # S2.5 (program, full controller in the loop): the device-in-the-loop program
   # (pending/masked/delivery/ipi as per-hart arrays) and its specs.

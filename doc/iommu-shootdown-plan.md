@@ -197,20 +197,21 @@ of being pushed invalidations.
     (`door`/`req`/`done`/`res`) and two `iq_inv`s, chaining the two release/acquire
     pairs so the leader provably reads the drained result `1` after the IOMMU
     releases the Invalidation-Wait completion.
-    The remaining obligations are the four Iris specs (each axiom-free, as in
-    S2.5): (a) `leader_enqueue_spec` — release PTE write + release doorbell
-    makes the descriptor + invalidate observable; (b) `iommu_drain_spec` —
-    acquire queue read + drain realises `iommu_process_queue`'s IOTLB
-    invalidation; (c) `leader_wait_spec` — acquire completion read observes the
-    drained IOTLB; (d) `broadcast_spec` — composing (a)+(b)+(c) yields
-    `iommu_shootdown_via_queue_correct`'s conclusion under weak memory.  These
-    are the S2.2c/S2.5 `send/remote/wait/broadcast` lemmas with the mailbox
-    ghost replaced by the command queue.
+    The abstract weak-memory core is complete and axiom-free: the three
+    checked lemmas are `iommu_broadcast_gen_inv` (leader → IOMMU),
+    `iommu_broadcast_ack_gen_inv` (IOMMU → leader), and
+    `iommu_broadcast_full_gen_inv` (their composition).  The pure machine bridge
+    is separately checked in `iommu_broadcast_reify.v` via
+    `iommu_shootdown_via_queue_correct`.
 
-    **Concrete design (execute this):** the program is the 2-party chain of two
-    release/acquire pairs — `shootdown_weak.v` (`sd_inv`, leader→remote) composed
-    with the `shootdown_weak_ack` direction (remote→leader) — with the message
-    cell being the IOTLB rather than the TLB.
+    The machine-ghost integration is **landed**: the composition is stated
+    generically (`iommu_broadcast_full_gen_inv_update`, threading `R ⊢ |==> R'`),
+    and `iommu_broadcast_full_gen_inv_machine` instantiates it with the
+    exclusive `machine_ctx` — the ghost update runs at the leader's final
+    program step (inside the WP, before the atomic read), exactly as the
+    atomic-step boundary requires, yielding
+    `machine_ctx γm (iommu_shootdown_via_queue m root va p)` at the end.
+    Both corollaries (pure and machine) are axiom-free and in the build.
 
     - *Ghost state:* reuse `shootdown_weak.v`'s `uniqTokΣ` (excl unitO) for the
       leader's exclusive write token.  Two heap cells: `iq_prod` (the doorbell,
@@ -248,10 +249,16 @@ of being pushed invalidations.
       `amdvi_unmap_faults` / `amdvi_unmap_correct` (the SMMU stage-2 and AMD-Vi
       level-3 cases take the alias-free "distinct tables" premise that
       `wf_page_table` implies at the platform level).
-    Still open: the ASID/leaf-granularity TLBI shapes (e.g. SMMU TLBI by
-    ASID+VA, AMD-Vi INVALIDATE_PAGES with the domain-ID granularity), the
-    PASID/SVM second-level (GVA→GPA) tagging, and threading Ste/Cd tables into
-    the `Machine` record once the SMMU walk is exercised end-to-end.
+    - Granularity vectors — landed: selective, ALL, SMMU PASID/ASID, and
+      AMD-Vi domain invalidations, including no-op preservation vectors.
+    - SMMU STE/CD tables are threaded through `Machine` and the end-to-end
+      `smmu_translate` shootdown theorems are landed.
+    - **S4.5 VT-d first slice** — landed in `vtd_proofs.v`: Requester-ID-indexed
+      context selection, present/non-present/missing faults, second-level walk
+      refinement, oracle replay, and executable HIT/fault vectors.
+    Still open: PASID/SVM first-stage (GVA→GPA) tagging, VT-d scalable-mode
+    device/PASID tables and fault recording, and the final machine-ghost threading
+    of the weak-memory IOMMU program described in S4.2b-2 above.
 
 ## What is replayed vs. new
 
