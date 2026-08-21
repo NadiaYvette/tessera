@@ -178,3 +178,111 @@ Proof.
            (ats_invalidate m.(Machine_devtlbs) va)
            (snd (ats_translate iotlb (ats_invalidate m.(Machine_devtlbs) va) root did va mem))).
 Qed.
+
+(* ============================================================
+   The ATS *translation* path (the device-side fill-on-miss) as a weak
+   program: where the lifts above are the invalidate-then-retranslate cycle
+   (pre = the ATS-invalidated cache, post = the refilled one), this lift is
+   the translation itself — an ATS request arriving against the shared page
+   table fills the device-TLB on a walk hit (the device-side fill-on-miss)
+   and caches nothing on a fault (the device issues a PRI page request
+   instead).  The devtlb ghost steps from the pre-translation cache to the
+   post-translation one at the leader's final read.
+   ============================================================ *)
+
+(* The pure fill: on a walk hit the device-TLB is refilled with exactly the
+   walk's completion — the fresh entry carries (did, iova, pa, perm).  This is
+   the snd-projection of `ats_translate_spec` (the IOTLB half is the fst). *)
+Lemma ats_translate_refills_devtlb (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry)
+    (pa : mword 56) (perm : Perm) :
+  iommu_walk root mem iova = Some (pa, perm) ->
+  snd (ats_translate iotlb devtlbs root did iova mem)
+  = {| DevTlbEntry_did := did; DevTlbEntry_iova := iova;
+       DevTlbEntry_pa := pa; DevTlbEntry_perm := perm |} :: devtlbs.
+Proof.
+  intros H.
+  pose proof (ats_translate_spec iotlb devtlbs root did iova mem pa perm H) as Hs.
+  exact (f_equal snd Hs).
+Qed.
+
+(* The pure fault: on a walk fault the device-TLB is untouched (the device
+   issues a PRI page request instead) — the snd-projection of
+   `ats_translate_fault`. *)
+Lemma ats_translate_fault_devtlb (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry) :
+  iommu_walk root mem iova = None ->
+  snd (ats_translate iotlb devtlbs root did iova mem) = devtlbs.
+Proof.
+  intros H.
+  pose proof (ats_translate_fault iotlb devtlbs root did iova mem H) as Hs.
+  exact (f_equal snd Hs).
+Qed.
+
+(* The translation-path lift: the same release/acquire program, with the
+   devtlb ghost stepped from the pre-translation cache to the post-translation
+   (refilled-on-hit) one — the device-side fill-on-miss. *)
+Lemma ats_translate_dt_lift `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !dtG Σ}
+    (γd : gname) (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry) :
+  ∀ tid, {{{ dt_ctx γd devtlbs }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ dt_ctx γd (snd (ats_translate iotlb devtlbs root did iova mem)) }}}.
+Proof.
+  iIntros (tid Φ) "Hc Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (dt_ctx γd devtlbs)
+            (dt_ctx γd (snd (ats_translate iotlb devtlbs root did iova mem))) _ tid
+            with "Hc").
+  - iIntros (v) "(Hv & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (dt_ctx_update γd devtlbs (snd (ats_translate iotlb devtlbs root did iova mem))).
+Qed.
+
+(* The machine-aware translation lift: the devtlb ghost advances alongside the
+   machine ghost to the *translated* machine (the ATS request's walk result is
+   not a machine mutation — the device-side fill is the only change, carried
+   by the devtlb ghost). *)
+Lemma ats_translate_dt_machine `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !bcG Σ, !dtG Σ}
+    (γm γd : gname) (m : Machine) (iotlb : list IotlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry) :
+  ∀ tid, {{{ machine_ctx γm m ∗ dt_ctx γd m.(Machine_devtlbs) }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ machine_ctx γm m
+                    ∗ dt_ctx γd (snd (ats_translate iotlb m.(Machine_devtlbs) root did iova mem)) }}}.
+Proof.
+  iIntros (tid Φ) "[Hm Hc] Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (machine_ctx γm m ∗ dt_ctx γd m.(Machine_devtlbs))
+            (machine_ctx γm m ∗
+             dt_ctx γd (snd (ats_translate iotlb m.(Machine_devtlbs) root did iova mem))) _ tid
+            with "[$Hm $Hc]").
+  - iIntros (v) "(Hv & Hm' & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hm' Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (dt_machine_update γm γd m m m.(Machine_devtlbs)
+           (snd (ats_translate iotlb m.(Machine_devtlbs) root did iova mem))).
+Qed.
+
+(* The fault path is silent at the device-TLB level: a walk fault caches
+   nothing, so the devtlb ghost is the identity update (the device issues a
+   PRI page request instead — the S4.3 fault path, whose weak delivery is the
+   `pri_fault_intc_weak.v` program). *)
+Lemma ats_translate_fault_dt_lift `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !dtG Σ}
+    (γd : gname) (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
+    (root : mword 44) (did : Z) (iova : mword 64) (mem : list MemEntry) :
+  iommu_walk root mem iova = None ->
+  ∀ tid, {{{ dt_ctx γd devtlbs }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ dt_ctx γd devtlbs }}}.
+Proof.
+  iIntros (Hfault tid Φ) "Hc Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (dt_ctx γd devtlbs) (dt_ctx γd devtlbs) _ tid
+            with "Hc").
+  - iIntros (v) "(Hv & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (dt_ctx_update γd devtlbs devtlbs).
+Qed.

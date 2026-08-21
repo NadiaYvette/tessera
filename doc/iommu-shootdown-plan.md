@@ -561,13 +561,41 @@ of being pushed invalidations.
       `test_vector_granularity_valid_p_iotlb` /
       `test_vector_granularity_valid_reserved_10b`).
 
-    Still open on the device side: the SMMU two-stage / AMD-Vi second-platform
-    walker *replay of the generation machinery* at the gen-tagged level (the
-    `smmu_translate_fill_gen` / `amdvi_translate_fill_gen` loops exist in
-    Sail; their gen-tag lookups/refills/conflict lemmas mirroring the IOTLB
-    section are not yet proved), and the ATS *translation* path (the
-    device-side fill-on-miss of the device-TLB, `ats_translate`) as a weak
-    program.
+    - **S4.5 gen-tag walker replay (SMMU/AMD-Vi)** — landed: the
+      generation-tagged fill-on-miss loops proved — a gen-g hit answers from
+      the cache (`smmu_translate_fill_gen_hit` /
+      `amdvi_translate_fill_gen_hit`), a gen-g miss (absent, or a stale
+      generation after a CD / PASID-table re-root) re-walks and refills under
+      g (`smmu_translate_fill_gen_miss_refills` /
+      `amdvi_translate_fill_gen_miss_refills`), and after a 4KiB TLBI /
+      INVALIDATE_IOMMU_PAGES the gen-g lookup misses at *any* generation
+      (`iotlb_lookup_gen_after_invalidate`, the gen twin of
+      `iotlb_lookup_after_invalidate`) so the loop is forced onto the miss
+      path and recovers by refilling under g
+      (`smmu_translate_fill_gen_after_invalidate` /
+      `amdvi_translate_fill_gen_after_invalidate`), plus four executable
+      gen-tag vectors.  This closes the SMMU/AMD-Vi replay of the generation
+      machinery.
+    - **S4.3 ATS translation-path weak lift** — landed: the device-side
+      fill-on-miss (`ats_translate`) as a first-class weak program — the
+      devtlb ghost steps from the pre-translation cache to the
+      post-translation (refilled-on-hit) one at the leader's final read
+      (`ats_translate_dt_lift`, with `ats_translate_dt_machine` threading it
+      alongside the machine ghost; the machine itself is unchanged — the ATS
+      walk does not mutate it).  The pure content is the snd-projections of
+      the S4.3 specs: `ats_translate_refills_devtlb` (on a walk hit the
+      device-TLB carries exactly the walk's completion) and
+      `ats_translate_fault_devtlb` (a fault caches nothing); the fault path
+      lifts as the identity `ats_translate_fault_dt_lift` (no device-TLB
+      fill — the device issues a PRI page request instead, whose weak
+      delivery is the `pri_fault_intc_weak.v` program).
+
+    Still open on the device side: the ATS *translation* as a weak program
+    over the *full* ATS shootdown composition (the IOTLB + device-TLB +
+    core-TLB teardown lifted end-to-end rather than tier-by-tier), and the
+    gen-tag machinery's weak lift (the `*_fill_gen` loops are proved pure;
+    the SMMU/AMD-Vi gen-tagged *weak* programs mirroring
+    `smmu_translate_weak.v` / `amdvi_translate_weak.v` are not yet written).
 
 ## What is replayed vs. new
 

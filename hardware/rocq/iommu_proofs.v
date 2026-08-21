@@ -1511,6 +1511,28 @@ Proof.
       cbn. rewrite E. destruct (Z.eqb_spec e.(IotlbEntry_did) did); cbn; exact IH.
 Qed.
 
+(* After a 4KiB invalidation of the page, the gen-g lookup for it misses: the
+   invalidation drops every entry with the page's VPN, so no entry — at any
+   generation — can answer the (d, p, va, g) lookup.  The gen-tagged twin of
+   `iotlb_lookup_after_invalidate`. *)
+Lemma iotlb_lookup_gen_after_invalidate (iotlb : list IotlbEntry) (d p g : Z) (va : mword 64) :
+  iotlb_lookup_gen (iotlb_invalidate iotlb va) (d, p) va g = None.
+Proof.
+  induction iotlb as [| e rest IH]; cbn.
+  - reflexivity.
+  - destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:E.
+    + (* same VPN: the entry is dropped by the invalidation *)
+      exact IH.
+    + (* different VPN: the entry survives, but the lookup's VPN guard is
+         false, so it skips the head — the did/pasid guards precede the VPN
+         guard in the lookup's andb chain, so destruct them first, then the
+         false VPN guard decides the conjunction *)
+      cbn. rewrite E. cbn.
+      destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn;
+      destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn;
+      exact IH.
+Qed.
+
 (* ============================================================
    IOTLB generation tags (S4.5, SMMU/AMD-Vi replay of the PASID-cache gen
    machinery): an IotlbEntry carries the generation its (did, pasid) tag was

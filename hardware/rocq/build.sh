@@ -689,6 +689,23 @@ axiom_free iommu_proofs      iotlb_lookup_gen_after_evict_gen_same_g
 axiom_free iommu_proofs      iotlb_lookup_gen_after_refill_gen
 axiom_free iommu_proofs      iotlb_tag_conflict_after_refill_gen
 axiom_free iommu_proofs      iotlb_evict_gen_refill_cycle
+axiom_free iommu_proofs      iotlb_lookup_gen_after_invalidate
+# S4.5 gen-tag replay on the SMMU/AMD-Vi walker loops: the generation-tagged
+# fill-on-miss loops (smmu_translate_fill_gen / amdvi_translate_fill_gen) —
+# a gen-g hit answers from the cache, a gen-g miss re-walks and refills under
+# g, and after a 4KiB TLBI / INVALIDATE_IOMMU_PAGES the gen-g lookup misses
+# (no entry survives at any generation) so the loop recovers by refilling
+# under g.
+axiom_free smmu_proofs      smmu_translate_fill_gen_hit
+axiom_free smmu_proofs      smmu_translate_fill_gen_miss_refills
+axiom_free smmu_proofs      smmu_translate_fill_gen_after_invalidate
+axiom_free smmu_proofs      test_vector_smmu_translate_fill_gen_miss
+axiom_free smmu_proofs      test_vector_smmu_translate_fill_gen_after_invalidate
+axiom_free amdvi_proofs     amdvi_translate_fill_gen_hit
+axiom_free amdvi_proofs     amdvi_translate_fill_gen_miss_refills
+axiom_free amdvi_proofs     amdvi_translate_fill_gen_after_invalidate
+axiom_free amdvi_proofs     test_vector_amdvi_translate_fill_gen_miss
+axiom_free amdvi_proofs     test_vector_amdvi_translate_fill_gen_after_invalidate
 # P_IOTLB (VT-d 5.20 §6.5.2.4) in the command queue: the PASID-selective
 # descriptor plus Invalidation-Wait, and the §6.5.2.2 pairing through the queue
 # (PASID-cache eviction half + IOTLB half both cleared).
@@ -971,6 +988,16 @@ if [ -d "$GP" ]; then
   axiom_free ats_devtlb_weak ats_devtlb_dt_lift "$WFLAGS"
   axiom_free ats_devtlb_weak ats_devtlb_dt_machine "$WFLAGS"
   axiom_free ats_devtlb_weak dt_ctx_update "$WFLAGS"
+  # S4.3 ATS *translation* path lift: the device-side fill-on-miss as a weak
+  # program — the devtlb ghost steps from the pre-translation cache to the
+  # post-translation (refilled-on-hit) one (ats_translate_dt_lift /
+  # ats_translate_dt_machine); the walk-fault path is the identity lift (no
+  # device-TLB fill — the device issues a PRI page request instead).
+  axiom_free ats_devtlb_weak ats_translate_refills_devtlb "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_translate_fault_devtlb "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_translate_dt_lift "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_translate_dt_machine "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_translate_fault_dt_lift "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"

@@ -404,3 +404,73 @@ Lemma test_vector_smmu_translate_fill_after_invalidate :
   smmu_translate_fill [st_hit] [cd_hit] 0 (iotlb_invalidate [smmu_iotlb_hit] va0) mem_smmu_hit va0
   = (Some (expected_pa, Read), [smmu_iotlb_hit]).
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 gen-tag replay on the SMMU walker loop: the generation-tagged twin of
+   the fill-on-miss loop (`smmu_translate_fill_gen`).  The gen-g lookup
+   answers only entries at generation g; a miss (absent, or a stale
+   generation — the reused (SID, ASID) tag after a CD re-root) re-walks the
+   two-stage tables and refills under g (`iotlb_refill_gen`), so the loop
+   recovers the fresh translation after an address-space teardown.  After a
+   4KiB TLBI of the page no entry survives at any generation, so the loop is
+   forced onto the miss path and refills under g.
+   ============================================================ *)
+
+(* A gen-g hit answers from the cache without walking the tables. *)
+Lemma smmu_translate_fill_gen_hit (stes : list Ste) (cds : list Cd) (sid g : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64)
+    (pa : mword 56) (perm : Perm) :
+  iotlb_lookup_gen iotlb (sid, 0) gva g = Some (pa, perm) ->
+  smmu_translate_fill_gen stes cds sid iotlb mem gva g = (Some (pa, perm), iotlb).
+Proof.
+  intros H. unfold smmu_translate_fill_gen. rewrite H. reflexivity.
+Qed.
+
+(* A gen-g miss re-walks the two-stage tables and refills the IOTLB under g:
+   the loop returns the table result and the gen-g refilled cache. *)
+Lemma smmu_translate_fill_gen_miss_refills (stes : list Ste) (cds : list Cd) (sid g : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64)
+    (pa : mword 56) (perm : Perm) :
+  iotlb_lookup_gen iotlb (sid, 0) gva g = None ->
+  smmu_translate stes cds sid mem gva = Some (pa, perm) ->
+  smmu_translate_fill_gen stes cds sid iotlb mem gva g
+  = (Some (pa, perm), iotlb_refill_gen iotlb (sid, 0) gva g pa perm).
+Proof.
+  intros Hmiss H. unfold smmu_translate_fill_gen.
+  rewrite Hmiss. cbn. rewrite H. cbn. reflexivity.
+Qed.
+
+(* After a 4KiB TLBI of the page the gen-g lookup misses (no entry survives
+   at any generation), so the loop is forced onto the miss path and recovers
+   by re-walking the tables and refilling under g — the invalidate-then-
+   retranslate cycle at the gen-tagged level. *)
+Lemma smmu_translate_fill_gen_after_invalidate (stes : list Ste) (cds : list Cd) (sid g : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64)
+    (pa : mword 56) (perm : Perm) :
+  smmu_translate stes cds sid mem gva = Some (pa, perm) ->
+  smmu_translate_fill_gen stes cds sid (iotlb_invalidate iotlb gva) mem gva g
+  = (Some (pa, perm), iotlb_refill_gen (iotlb_invalidate iotlb gva) (sid, 0) gva g pa perm).
+Proof.
+  intros H. unfold smmu_translate_fill_gen.
+  rewrite (iotlb_lookup_gen_after_invalidate iotlb sid 0 g gva). cbn.
+  rewrite H. cbn. reflexivity.
+Qed.
+
+(* Executable gen-tag vectors over the two-stage hit table: the gen-g miss ->
+   refill (the fresh entry carries generation 1), and the invalidate-then-
+   retranslate cycle under gen 1 (the TLBI drops the cached entry at any
+   generation; the loop refills it back under 1). *)
+Lemma test_vector_smmu_translate_fill_gen_miss :
+  smmu_translate_fill_gen [st_hit] [cd_hit] 0 [] mem_smmu_hit va0 1
+  = (Some (expected_pa, Read),
+     [{| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
+         IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read ; IotlbEntry_gen := 1|}]).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_smmu_translate_fill_gen_after_invalidate :
+  smmu_translate_fill_gen [st_hit] [cd_hit] 0 (iotlb_invalidate [smmu_iotlb_hit] va0)
+    mem_smmu_hit va0 1
+  = (Some (expected_pa, Read),
+     [{| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
+         IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read ; IotlbEntry_gen := 1|}]).
+Proof. vm_compute. reflexivity. Qed.
