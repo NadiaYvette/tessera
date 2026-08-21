@@ -13,6 +13,7 @@
 
 Require Import SailStdpp.Base.
 Require Import SailStdpp.Real.
+From Stdlib Require Import Lia.
 Require Import machine_types.
 Require Import machine.
 Require Import machine_encoding. (* invalid_pte *)
@@ -598,3 +599,312 @@ Lemma test_vector_vtd_shootdown_pasid_record :
   = Some {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
             FaultRecord_reason := FR_Stage2Fault |}.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 PASID-cache eviction / refill: invalidation clears the cached
+   first-stage root for a PASID (the slot turns non-present, so the cached
+   walk misses), and refill re-installs the table's root (so the cached walk
+   equals the table walk again).  Eviction breaks `pasid_cache_coherent`;
+   refill restores it — the miss/refill cycle a translation after
+   invalidation must go through.
+   ============================================================ *)
+
+(* Eviction clears the evicted PASID's slot: the lookup afterwards returns a
+   non-present entry — the cache-miss state. *)
+Lemma pasid_cache_evict_lookup (cache : list PasidCacheEntry) (pasid : Z) (ec : PasidCacheEntry) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  exists ec', pasid_cache_lookup (pasid_cache_evict cache pasid) pasid = Some ec' /\
+             ec'.(PasidCacheEntry_present) = false.
+Proof.
+  revert pasid ec. induction cache as [| e rest IH]; cbn.
+  - intros; discriminate.
+  - intros [|p|p] ec H; cbn in H.
+    + exists {| PasidCacheEntry_present := false; PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+               PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}.
+      cbn. split; reflexivity.
+    + apply (IH (Z.pos p - 1) ec). exact H.
+    + apply (IH (Z.neg p - 1) ec). exact H.
+Qed.
+
+(* The evicted PASID's cached walk misses: the slot is non-present, so the
+   cached two-stage walk faults — the IOMMU must re-walk the PASID table. *)
+Lemma pasid_cached_walk_evict_misses (contexts : list VtdContext) (rid : Z)
+    (cache : list PasidCacheEntry) (pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (c : VtdContext) (ec : PasidCacheEntry) :
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  pasid_cache_lookup cache pasid = Some ec ->
+  pasid_cached_walk contexts rid (pasid_cache_evict cache pasid) pasid mem iova = None.
+Proof.
+  intros Hc Hcp Hcl.
+  destruct (pasid_cache_evict_lookup cache pasid ec Hcl) as [ec' [Hcl' Hp']].
+  unfold pasid_cached_walk. rewrite Hc, Hcp, Hcl'. cbn. rewrite Hp'. cbn. reflexivity.
+Qed.
+
+(* Eviction is selective: lookups for any other PASID are untouched. *)
+Lemma pasid_cache_evict_preserves_other (cache : list PasidCacheEntry) (pasid pasid' : Z) :
+  pasid <> pasid' ->
+  forall e, pasid_cache_lookup cache pasid' = Some e ->
+         pasid_cache_lookup (pasid_cache_evict cache pasid) pasid' = Some e.
+Proof.
+  revert pasid pasid'. induction cache as [| hd rest IH]; cbn.
+  - intros; discriminate.
+  - intros [|p|p] [|q|q] Hneq e H.
+    + exfalso. apply Hneq. reflexivity.
+    + cbn in H. exact H.
+    + cbn in H. exact H.
+    + cbn in H. exact H.
+    + apply (IH (Z.pos p - 1) (Z.pos q - 1)); [intros Hsub; apply Hneq; lia | cbn in H; exact H].
+    + apply (IH (Z.pos p - 1) (Z.neg q - 1)); [intros Hsub; apply Hneq; lia | cbn in H; exact H].
+    + cbn in H. exact H.
+    + apply (IH (Z.neg p - 1) (Z.pos q - 1)); [intros Hsub; apply Hneq; lia | cbn in H; exact H].
+    + apply (IH (Z.neg p - 1) (Z.neg q - 1)); [intros Hsub; apply Hneq; lia | cbn in H; exact H].
+Qed.
+
+(* Refill re-installs the evicted slot as present with the given root. *)
+Lemma pasid_cache_refill_lookup (cache : list PasidCacheEntry) (pasid : Z) (root : mword 44)
+    (ec : PasidCacheEntry) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  exists ec', pasid_cache_lookup (pasid_cache_refill cache pasid root) pasid = Some ec' /\
+             ec'.(PasidCacheEntry_present) = true /\
+             ec'.(PasidCacheEntry_s1_root) = root.
+Proof.
+  revert pasid ec. induction cache as [| e rest IH]; cbn.
+  - intros; discriminate.
+  - intros [|p|p] ec H; cbn in H.
+    + exists {| PasidCacheEntry_present := true; PasidCacheEntry_pasid := 0;
+               PasidCacheEntry_s1_root := root |}.
+      cbn. repeat split; reflexivity.
+    + apply (IH (Z.pos p - 1) ec). exact H.
+    + apply (IH (Z.neg p - 1) ec). exact H.
+Qed.
+
+(* A refilled slot holding the table's first-stage root makes the cached walk
+   agree with the table-driven two-stage walk again — coherence restored. *)
+Lemma pasid_cache_refill_coherent (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (c : VtdContext) (e : VtdPasid) (ec : PasidCacheEntry) :
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  pasid_cache_lookup cache pasid = Some ec ->
+  pasid_cached_walk contexts rid (pasid_cache_refill cache pasid e.(VtdPasid_s1_root)) pasid mem iova
+  = vtd_walk_pasid contexts rid ptes pasid mem iova.
+Proof.
+  intros Hc Hcp Hp Hpp Hcl.
+  destruct (pasid_cache_refill_lookup cache pasid e.(VtdPasid_s1_root) ec Hcl) as [ec' [Hcl' [Hp' Hs]]].
+  apply (pasid_cached_walk_of_table contexts rid ptes (pasid_cache_refill cache pasid e.(VtdPasid_s1_root))
+           pasid mem iova c e ec' Hc Hcp Hp Hpp Hcl' Hp' Hs).
+Qed.
+
+(* The evict → refill cycle: eviction breaks the cached walk for the PASID
+   (a miss), and refilling with the table's root restores the table-driven
+   result — the invalidation-then-retranslate cycle in one theorem. *)
+Theorem pasid_cache_evict_refill_cycle (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (c : VtdContext) (e : VtdPasid) (ec : PasidCacheEntry) :
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  pasid_cache_lookup cache pasid = Some ec ->
+  pasid_cached_walk contexts rid (pasid_cache_evict cache pasid) pasid mem iova = None /\
+  pasid_cached_walk contexts rid (pasid_cache_refill (pasid_cache_evict cache pasid) pasid
+                                    e.(VtdPasid_s1_root)) pasid mem iova
+  = vtd_walk_pasid contexts rid ptes pasid mem iova.
+Proof.
+  intros Hc Hcp Hp Hpp Hcl.
+  destruct (pasid_cache_evict_lookup cache pasid ec Hcl) as [ec' [Hev Hpev]].
+  split.
+  - apply (pasid_cached_walk_evict_misses contexts rid cache pasid mem iova c ec Hc Hcp Hcl).
+  - apply (pasid_cache_refill_coherent contexts rid ptes (pasid_cache_evict cache pasid) pasid
+             mem iova c e ec' Hc Hcp Hp Hpp Hev).
+Qed.
+
+(* Executable vector: evicting PASID 0 turns the cached walk into a miss. *)
+Lemma test_vector_vtd_pasid_cache_evict :
+  pasid_cached_walk [vtd_pasid_hit_context] 0
+    (pasid_cache_evict [vtd_coherent_cache_entry] 0) 0 mem_vtd_pasid_hit va0 = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 scalable-mode device table: the requester-ID-indexed device table
+   (DTE) selects the context for the second-level walk; `vtd_walk_device`
+   reduces to the context's SL walk, and agrees with the flat `vtd_walk`
+   exactly when the DTE points at the context the flat lookup would find.
+   ============================================================ *)
+
+(* The device-table walk reduces to the selected context's second-level walk. *)
+Lemma vtd_walk_device_two_stage (devtbl : list VtdDeviceEntry) (contexts : list VtdContext)
+    (rid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (c : VtdContext) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  vtd_context_lookup contexts d.(VtdDeviceEntry_ctx_index) = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_walk_device devtbl contexts rid mem iova = iommu_walk c.(VtdContext_sl_root) mem iova.
+Proof.
+  intros Hd Hdp Hc Hcp.
+  unfold vtd_walk_device. rewrite Hd, Hdp, Hc, Hcp. cbn. reflexivity.
+Qed.
+
+(* The DTE for rid selecting the context the flat lookup finds makes the
+   device-table walk agree with `vtd_walk` — the two views of the same
+   context selection. *)
+Lemma vtd_walk_device_of_context (devtbl : list VtdDeviceEntry) (contexts : list VtdContext)
+    (rid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (c : VtdContext) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  d.(VtdDeviceEntry_ctx_index) = rid ->
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_walk_device devtbl contexts rid mem iova = vtd_walk contexts rid mem iova.
+Proof.
+  intros Hd Hdp Hidx Hc Hcp.
+  unfold vtd_walk_device, vtd_walk.
+  rewrite Hd, Hdp. rewrite Hidx in *. rewrite Hc, Hcp. cbn. reflexivity.
+Qed.
+
+(* Faults: a missing DTE, a non-present DTE, a missing context, and a
+   non-present context each fault the device-table walk. *)
+Lemma vtd_walk_device_missing_fault (contexts : list VtdContext) (rid : Z) (mem : list MemEntry) (iova : mword 64) :
+  vtd_walk_device [] contexts rid mem iova = None.
+Proof. unfold vtd_walk_device. cbn. reflexivity. Qed.
+
+Lemma vtd_walk_device_nonpresent_fault (devtbl : list VtdDeviceEntry) (contexts : list VtdContext)
+    (rid : Z) (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = false ->
+  vtd_walk_device devtbl contexts rid mem iova = None.
+Proof. intros Hd Hdp. unfold vtd_walk_device. rewrite Hd, Hdp. cbn. reflexivity. Qed.
+
+Lemma vtd_walk_device_missing_context_fault (devtbl : list VtdDeviceEntry) (contexts : list VtdContext)
+    (rid : Z) (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  vtd_context_lookup contexts d.(VtdDeviceEntry_ctx_index) = None ->
+  vtd_walk_device devtbl contexts rid mem iova = None.
+Proof. intros Hd Hdp Hc. unfold vtd_walk_device. rewrite Hd, Hdp, Hc. cbn. reflexivity. Qed.
+
+Lemma vtd_walk_device_nonpresent_context_fault (devtbl : list VtdDeviceEntry) (contexts : list VtdContext)
+    (rid : Z) (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) (c : VtdContext) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  vtd_context_lookup contexts d.(VtdDeviceEntry_ctx_index) = Some c ->
+  c.(VtdContext_present) = false ->
+  vtd_walk_device devtbl contexts rid mem iova = None.
+Proof. intros Hd Hdp Hc Hcp. unfold vtd_walk_device. rewrite Hd, Hdp, Hc, Hcp. cbn. reflexivity. Qed.
+
+(* Executable vector: a present DTE for rid 0 selecting the hit context
+   resolves the second-level walk to the same SPA as the direct walk. *)
+Definition vtd_dev_hit_entry : VtdDeviceEntry :=
+  {| VtdDeviceEntry_present := true; VtdDeviceEntry_did := 7; VtdDeviceEntry_ctx_index := 0 |}.
+
+Lemma test_vector_vtd_walk_device_hit :
+  vtd_walk_device [vtd_dev_hit_entry] [vtd_pasid_hit_context] 0 mem_vtd_pasid_hit va0 = Some (expected_pa, Read).
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 FRCD + fault-message signalling: a fault is recorded as an FRCD entry
+   (DID, PASID, IOVA, reason), the FRCD raises the interrupt line, and the
+   fault message carries the DID+PASID of the faulting endpoint.
+   ============================================================ *)
+
+(* The FaultRecord → FrcdEntry transcription. *)
+Definition frcd_of (fr : FaultRecord) : FrcdEntry :=
+  {| FrcdEntry_did := FaultRecord_did fr; FrcdEntry_pasid := FaultRecord_pasid fr;
+     FrcdEntry_iova := FaultRecord_iova fr; FrcdEntry_reason := FaultRecord_reason fr |}.
+
+(* Recording a fault makes it findable in the FRCD, keyed by (did, pasid, iova).
+   (The Sail model carries the (did, pasid) key as a pair to dodge a Sail
+   rocq-backend quirk with two unchanged int recursion args; the pair is
+   destructured in the guard, so the proofs see the two ints directly.) *)
+Lemma frcd_record_adds (fr : FaultRecord) (cache : list FrcdEntry) :
+  frcd_lookup (frcd_record fr cache) (FaultRecord_did fr, FaultRecord_pasid fr) (FaultRecord_iova fr)
+  = Some (frcd_of fr).
+Proof.
+  cbn.
+  rewrite (proj2 (Z.eqb_eq (FaultRecord_did fr) (FaultRecord_did fr)) eq_refl).
+  rewrite (proj2 (Z.eqb_eq (FaultRecord_pasid fr) (FaultRecord_pasid fr)) eq_refl).
+  rewrite (proj2 (eq_vec_true_iff (FaultRecord_iova fr) (FaultRecord_iova fr)) eq_refl).
+  cbn. reflexivity.
+Qed.
+
+(* Recording never loses a prior fault for a *different* endpoint/address
+   (the new record only shadows an entry with the same did+pasid+iova). *)
+Lemma frcd_record_preserves (fr : FaultRecord) (cache : list FrcdEntry) (did pasid : Z) (iova : mword 64) (e : FrcdEntry) :
+  (did <> FaultRecord_did fr \/ pasid <> FaultRecord_pasid fr \/ iova <> FaultRecord_iova fr) ->
+  frcd_lookup cache (did, pasid) iova = Some e ->
+  frcd_lookup (frcd_record fr cache) (did, pasid) iova = Some e.
+Proof.
+  intros [Hd | [Hp | Hi]] Hlook.
+  - cbn. destruct (Z.eqb (FaultRecord_did fr) did) eqn:E.
+    + exfalso. apply Hd. apply Z.eqb_eq in E. exact (eq_sym E).
+    + cbn. exact Hlook.
+  - cbn. destruct (Z.eqb (FaultRecord_pasid fr) pasid) eqn:E.
+    + exfalso. apply Hp. apply Z.eqb_eq in E. exact (eq_sym E).
+    + cbn. rewrite Bool.andb_false_r. cbn. exact Hlook.
+  - cbn. destruct (eq_vec (FaultRecord_iova fr) iova) eqn:E.
+    + exfalso. apply Hi. apply eq_vec_true_iff in E. exact (eq_sym E).
+    + cbn. rewrite Bool.andb_false_r. cbn. rewrite Bool.andb_false_r. cbn. exact Hlook.
+Qed.
+
+(* The interrupt line: any recorded fault makes the FRCD pending. *)
+Lemma frcd_record_signals (fr : FaultRecord) (cache : list FrcdEntry) :
+  frcd_pending (frcd_record fr cache) = true.
+Proof. cbn. reflexivity. Qed.
+
+(* The fault message carries the DID + PASID of the faulting endpoint. *)
+Lemma fault_msg_of_record (fr : FaultRecord) :
+  fault_msg_did_pasid (frcd_of fr) = (FaultRecord_did fr, FaultRecord_pasid fr).
+Proof. cbn. reflexivity. Qed.
+
+(* After the queue shootdown of the freed frame, the fault is recorded, the
+   FRCD raises the interrupt, and the fault message carries (rid, pasid). *)
+Theorem vtd_shootdown_frcd_pending (m : Machine) (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (pasid : Z) (c : VtdContext) (e : VtdPasid)
+    (root : mword 44) (va : mword 64) (p : Pte) (gpa : mword 56) (perm1 : Perm) (fr : FaultRecord) :
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  c.(VtdContext_sl_root) = root ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  e.(VtdPasid_s1_root) <> root ->
+  p.(Pte_valid) = false ->
+  iommu_walk e.(VtdPasid_s1_root) (Machine_mem (iommu_shootdown_via_queue m root va p)) va = Some (gpa, perm1) ->
+  zero_extend gpa 64 = va ->
+  vtd_record_fault contexts rid ptes pasid (Machine_mem (iommu_shootdown_via_queue m root va p)) va = Some fr ->
+  frcd_pending (frcd_record fr []) = true /\
+  fault_msg_did_pasid (frcd_of fr) = (rid, pasid).
+Proof.
+  intros Hc Hcp Hroot Hp Hpp Hdiff Hinv Hs1 Hze Hrec.
+  (* the recorded fault is the stage-2 fault for (rid, pasid, va) *)
+  assert (Hspec : vtd_record_fault contexts rid ptes pasid
+                    (Machine_mem (iommu_shootdown_via_queue m root va p)) va
+                  = Some {| FaultRecord_did := rid; FaultRecord_pasid := pasid;
+                           FaultRecord_iova := va; FaultRecord_reason := FR_Stage2Fault |}).
+  { apply (vtd_record_fault_stage2_spec contexts rid ptes pasid
+             (Machine_mem (iommu_shootdown_via_queue m root va p)) va
+             c e gpa perm1 Hc Hcp Hp Hpp Hs1).
+    rewrite Hroot. rewrite Hze.
+    rewrite (iommu_shootdown_via_queue_mem m root va p).
+    apply (iommu_invalidate_faults root m.(Machine_mem) va p Hinv). }
+  rewrite Hspec in Hrec.
+  injection Hrec as Hfr. subst fr.
+  split; cbn; reflexivity.
+Qed.
+
+(* Executable vector: after the shootdown of the freed frame the fault is
+   recorded, the FRCD pending, and the message carries (0, 0). *)
+Lemma test_vector_vtd_frcd_pending :
+  vtd_record_fault [vtd_pasid_hit_context] 0 [vtd_pasid_hit_entry] 0
+    (Machine_mem (iommu_shootdown_via_queue vtd_shoot_m vtd_s2_root va0 invalid_pte)) va0
+  = Some {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
+            FaultRecord_reason := FR_Stage2Fault |} /\
+  frcd_pending (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
+                              FaultRecord_reason := FR_Stage2Fault |} []) = true /\
+  fault_msg_did_pasid (frcd_of {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
+                                 FaultRecord_reason := FR_Stage2Fault |}) = (0, 0).
+Proof. vm_compute. repeat split; reflexivity. Qed.

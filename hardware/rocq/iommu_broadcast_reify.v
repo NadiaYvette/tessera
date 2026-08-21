@@ -29,8 +29,10 @@ Require Import SailStdpp.Operators_mwords.
 Require Import machine_types.
 Require Import machine.
 Require Import machine_encoding. (* invalid_pte (test vector) *)
+Require Import conformance.    (* va0 (test vector) *)
 Require Import iommu_proofs.   (* iommu_shootdown_via_queue + _iotlb + _correct *)
 Require Import cmdq_mmio.      (* cmdq_enqueue/cmdq_drain + invalidate_wait_spec *)
+Require Import vtd_proofs.     (* vtd_shootdown_via_queue_pasid_faults *)
 Import ListNotations.
 
 (* ============================================================
@@ -88,3 +90,56 @@ Lemma test_vector_iommu_broadcast_reifies :
                   Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}
                (mword_of_int 0 : mword 44) (mword_of_int 0 : mword 64) invalid_pte)).
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 the drain's VT-d meaning: the same MMIO drain whose IOTLB effect is
+   the functional queue shootdown makes the *two-stage PASID walk* fault and
+   records the fault — the pure precondition the weak-memory ghost's
+   post-state (`iommu_shootdown_via_queue`) must satisfy for the VT-d
+   two-stage walker.  This is the S4.5 analogue of `iommu_broadcast_reifies_correct`.
+   ============================================================ *)
+
+Theorem vtd_broadcast_reifies_pasid (m : Machine) (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (pasid : Z) (c : VtdContext) (e : VtdPasid)
+    (root : mword 44) (va : mword 64) (p : Pte) (gpa : mword 56) (perm1 : Perm) :
+  p.(Pte_valid) = false ->
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  c.(VtdContext_sl_root) = root ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  e.(VtdPasid_s1_root) <> root ->
+  iommu_walk e.(VtdPasid_s1_root) (Machine_mem (iommu_shootdown_via_queue m root va p)) va = Some (gpa, perm1) ->
+  zero_extend gpa 64 = va ->
+  exists iotlb',
+    cmdq_drain (iommu_broadcast_queue va) m.(Machine_iotlb) = Some iotlb' /\
+    vtd_walk_pasid contexts rid ptes pasid
+      (Machine_mem (iommu_shootdown_via_queue m root va p)) va = None /\
+    vtd_record_fault contexts rid ptes pasid
+      (Machine_mem (iommu_shootdown_via_queue m root va p)) va <> None.
+Proof.
+  intros Hinv Hc Hcp Hroot Hp Hpp Hdiff Hs1 Hze.
+  exists (Machine_iotlb (iommu_shootdown_via_queue m root va p)).
+  split; [apply iommu_drain_iotlb_reifies |].
+  apply (vtd_shootdown_via_queue_pasid_faults m contexts rid ptes pasid c e root va p gpa perm1
+            Hc Hcp Hroot Hp Hpp Hdiff Hinv Hs1 Hze).
+Qed.
+
+(* Executable vector: drain Invalidate va0 + Wait over a machine whose mem is
+   the two-stage hit tables — the drain drops IOVA-0 from the IOTLB, the PASID
+   two-stage walk faults for the freed frame, and the fault is recorded. *)
+Definition vtd_reify_m : Machine :=
+  {| Machine_mem := mem_vtd_pasid_hit; Machine_cores := []; Machine_ram := [];
+     Machine_ipi := []; Machine_iotlb := [cmdq_dev0; cmdq_dev1]; Machine_devtlbs := [];
+     Machine_prireqs := []; Machine_ioqueue := []; Machine_stes := []; Machine_cds := [] |}.
+
+Lemma test_vector_vtd_broadcast_reifies_pasid :
+  cmdq_drain (iommu_broadcast_queue va0) vtd_reify_m.(Machine_iotlb)
+  = Some (Machine_iotlb (iommu_shootdown_via_queue vtd_reify_m vtd_s2_root va0 invalid_pte)) /\
+  vtd_walk_pasid [vtd_pasid_hit_context] 0 [vtd_pasid_hit_entry] 0
+    (Machine_mem (iommu_shootdown_via_queue vtd_reify_m vtd_s2_root va0 invalid_pte)) va0 = None /\
+  vtd_record_fault [vtd_pasid_hit_context] 0 [vtd_pasid_hit_entry] 0
+    (Machine_mem (iommu_shootdown_via_queue vtd_reify_m vtd_s2_root va0 invalid_pte)) va0
+  = Some {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
+            FaultRecord_reason := FR_Stage2Fault |}.
+Proof. vm_compute. repeat split; reflexivity. Qed.

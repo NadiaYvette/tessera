@@ -94,8 +94,8 @@ rocq compile $FLAGS conformance.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
+rocq compile $FLAGS vtd_proofs.v   # before reify: iommu_broadcast_reify imports it
 rocq compile $FLAGS iommu_broadcast_reify.v
-rocq compile $FLAGS vtd_proofs.v
 rocq compile $FLAGS smmu_proofs.v
 rocq compile $FLAGS amdvi_proofs.v
 rocq compile $FLAGS shootdown_iris.v
@@ -339,6 +339,34 @@ axiom_free vtd_proofs test_vector_vtd_record_fault_hit_none
 axiom_free vtd_proofs vtd_shootdown_via_queue_pasid_faults
 axiom_free vtd_proofs test_vector_vtd_shootdown_pasid
 axiom_free vtd_proofs test_vector_vtd_shootdown_pasid_record
+# S4.5 PASID-cache eviction / refill: eviction breaks the cached walk for a
+# PASID (a miss), refill with the table root restores coherence — the
+# invalidation-then-retranslate cycle.
+axiom_free vtd_proofs pasid_cache_evict_lookup
+axiom_free vtd_proofs pasid_cached_walk_evict_misses
+axiom_free vtd_proofs pasid_cache_evict_preserves_other
+axiom_free vtd_proofs pasid_cache_refill_lookup
+axiom_free vtd_proofs pasid_cache_refill_coherent
+axiom_free vtd_proofs pasid_cache_evict_refill_cycle
+axiom_free vtd_proofs test_vector_vtd_pasid_cache_evict
+# S4.5 scalable-mode device table: the DTE-selected context walk reduces to
+# the context's SL walk and agrees with the flat vtd_walk when the DTE points
+# at the context the flat lookup finds; each structural fault is covered.
+axiom_free vtd_proofs vtd_walk_device_two_stage
+axiom_free vtd_proofs vtd_walk_device_of_context
+axiom_free vtd_proofs vtd_walk_device_missing_fault
+axiom_free vtd_proofs vtd_walk_device_nonpresent_fault
+axiom_free vtd_proofs vtd_walk_device_missing_context_fault
+axiom_free vtd_proofs vtd_walk_device_nonpresent_context_fault
+axiom_free vtd_proofs test_vector_vtd_walk_device_hit
+# S4.5 FRCD + fault-message signalling: a fault is recorded as an FRCD entry,
+# the FRCD raises the interrupt line, and the message carries (DID, PASID).
+axiom_free vtd_proofs frcd_record_adds
+axiom_free vtd_proofs frcd_record_preserves
+axiom_free vtd_proofs frcd_record_signals
+axiom_free vtd_proofs fault_msg_of_record
+axiom_free vtd_proofs vtd_shootdown_frcd_pending
+axiom_free vtd_proofs test_vector_vtd_frcd_pending
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
@@ -449,6 +477,10 @@ axiom_free cmdq_mmio         test_vector_cmdq_mmio_drain
 axiom_free iommu_broadcast_reify iommu_drain_iotlb_reifies
 axiom_free iommu_broadcast_reify iommu_broadcast_reifies_correct
 axiom_free iommu_broadcast_reify test_vector_iommu_broadcast_reifies
+# S4.5 the drain's VT-d meaning: the MMIO drain makes the two-stage PASID walk
+# fault and records the fault (the ghost post-state's VT-d precondition).
+axiom_free iommu_broadcast_reify vtd_broadcast_reifies_pasid
+axiom_free iommu_broadcast_reify test_vector_vtd_broadcast_reifies_pasid
 # SMMUv3 two-stage walk (SSG-4 / S4.4): the composition is GVA → GPA → SPA —
 # faults iff either stage faults, and a two-stage hit returns the stage-2
 # (SPA, perm).

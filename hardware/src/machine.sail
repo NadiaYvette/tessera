@@ -517,6 +517,66 @@ function pasid_cached_walk(contexts, rid, cache, pasid, mem, iova) =
       else None()
   }
 
+// ---- Intel VT-d scalable-mode device table (SSG-4 / S4.5) ----
+//
+// VT-d scalable mode indexes the *device table* by requester ID (BDF); each
+// device-table entry (DTE) selects a context table (and, with SVM, the PASID
+// table) rather than the legacy flat context table (VT-d 5.20 §3.4).  Here a
+// DTE selects a context by index into the shared contexts list, so the
+// device-table walk is the context's second-level walk re-rooted at the
+// selected entry: `vtd_walk_device` reduces to `vtd_walk` exactly when the
+// selected context is the one the flat lookup would find (proved in
+// vtd_proofs.v).  PASID-table pointers in the DTE (scalable-mode SVM) remain
+// a later increment.
+struct VtdDeviceEntry = {
+  present   : bool,
+  did       : int,
+  ctx_index : int
+}
+
+val vtd_device_lookup : (list(VtdDeviceEntry), int) -> option(VtdDeviceEntry)
+function vtd_device_lookup(devtbl, rid) = match (devtbl, rid) {
+  (e :: _, 0) => Some(e),
+  (_ :: rest, n) => vtd_device_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+val vtd_walk_device : (list(VtdDeviceEntry), list(VtdContext), int, PageTable, vaddr) -> option((paddr, Perm))
+function vtd_walk_device(devtbl, contexts, rid, mem, iova) =
+  match vtd_device_lookup(devtbl, rid) {
+    None() => None(),
+    Some(d) =>
+      if d.present then
+        match vtd_context_lookup(contexts, d.ctx_index) {
+          None() => None(),
+          Some(c) => if c.present then iommu_walk(c.sl_root, mem, iova) else None()
+        }
+      else None()
+  }
+
+// ---- PASID-cache eviction / refill (SSG-4 / S4.5) ----
+//
+// The PASID cache (VT-d 5.20 §15.4) is indexed by PASID: invalidation clears
+// the cached first-stage root for a PASID — the entry turns non-present, so
+// the cached two-stage walk misses and the IOMMU must re-walk the PASID
+// table; refill re-installs the table's root.  Together with
+// `pasid_cache_coherent` (the cache ⊆ table invariant), eviction is what
+// *breaks* coherence and refill what *restores* it: the miss/refill cycle a
+// translation after invalidation must go through.
+val pasid_cache_evict : (list(PasidCacheEntry), int) -> list(PasidCacheEntry)
+function pasid_cache_evict(cache, pasid) = match (cache, pasid) {
+  (e :: rest, 0) => struct { present = false, pasid = e.pasid, s1_root = e.s1_root } :: rest,
+  (e :: rest, n) => e :: pasid_cache_evict(rest, n - 1),
+  ([||], _) => [||]
+}
+
+val pasid_cache_refill : (list(PasidCacheEntry), int, bits(44)) -> list(PasidCacheEntry)
+function pasid_cache_refill(cache, pasid, root) = match (cache, pasid) {
+  (e :: rest, 0) => struct { present = true, pasid = 0, s1_root = root } :: rest,
+  (e :: rest, n) => e :: pasid_cache_refill(rest, n - 1, root),
+  ([||], _) => [||]
+}
+
 // ---- Intel VT-d fault recording (SSG-4 / S4.5) ----
 //
 // On a translation fault VT-d records (requester ID, PASID, IOVA, reason) in
@@ -564,6 +624,50 @@ function vtd_record_fault(contexts, rid, ptes, pasid, mem, iova) =
         }
       else Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_ContextNotPresent })
   }
+
+// ---- Intel VT-d fault-record cache (FRCD) + fault-message signalling (SSG-4 / S4.5) ----
+//
+// On a translation fault the IOMMU records a Fault Record Cache Descriptor
+// (FRCD: DID, PASID, IOVA, reason) and raises the fault interrupt; software
+// drains FRCD entries to learn which endpoint / address faulted (VT-d 5.20
+// §6.1).  `frcd_record` prepends the record, `frcd_lookup` scans by
+// (did, pasid, iova), `frcd_pending` is the interrupt line (pending iff the
+// FRCD holds a fault), and `fault_msg_did_pasid` is the interrupt payload —
+// the DID+PASID identifying the faulting endpoint.  A record is produced iff
+// a fault was taken (`vtd_record_fault`), so a pending FRCD entry ⟺ an
+// outstanding fault (proved in vtd_proofs.v).  FRCDR drain-by-software and
+// ATS/PRQ fault handling remain later increments.
+struct FrcdEntry = {
+  did    : int,
+  pasid  : int,
+  iova   : vaddr,
+  reason : FaultReason
+}
+
+val frcd_record : (FaultRecord, list(FrcdEntry)) -> list(FrcdEntry)
+function frcd_record(fr, cache) =
+  struct { did = fr.did, pasid = fr.pasid, iova = fr.iova, reason = fr.reason } :: cache
+
+val frcd_matches : (FrcdEntry, int, int, vaddr) -> bool
+function frcd_matches(e, d, p, va) = e.did == d & e.pasid == p & e.iova == va
+
+val frcd_lookup : (list(FrcdEntry), (int, int), vaddr) -> option(FrcdEntry)
+function frcd_lookup(cache, dp, va) = match cache {
+  [||] => None(),
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & e.iova == va then Some(e)
+    else frcd_lookup(rest, dp, va)
+}
+
+val frcd_pending : list(FrcdEntry) -> bool
+function frcd_pending(cache) = match cache {
+  [||] => false,
+  _    => true
+}
+
+val fault_msg_did_pasid : FrcdEntry -> (int, int)
+function fault_msg_did_pasid(e) = (e.did, e.pasid)
 
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
 // IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI

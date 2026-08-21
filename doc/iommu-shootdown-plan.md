@@ -276,10 +276,36 @@ of being pushed invalidations.
       two-stage PASID walk faults and a fault is recorded — the functional
       precondition the weak-memory ghost's post-state (`iommu_shootdown_via_queue`)
       satisfies.
-    Still open: scalable-mode device-table lookup, FRCD-cache storage and
-    fault-message (DID/PASID) interrupt signalling, PASID-cache eviction on
-    invalidation, and reifying the weak-memory IOMMU program onto the PASID
-    walker described in S4.2b-2 above.
+    - **S4.5 PASID-cache eviction / refill** — landed (`pasid_cache_evict` +
+      `pasid_cache_refill`): invalidation clears the cached first-stage root for
+      a PASID (the slot turns non-present, so the cached walk misses), refill
+      re-installs the table's root, and the evict→refill cycle
+      (`pasid_cache_evict_refill_cycle`) is exactly the
+      invalidation-then-retranslate sequence — eviction breaks
+      `pasid_cache_coherent`, refill restores it.
+    - **S4.5 scalable-mode device table** — landed (`VtdDeviceEntry` +
+      `vtd_device_lookup` + `vtd_walk_device`): the requester-ID-indexed DTE
+      selects the context for the second-level walk; the device-table walk
+      reduces to the context's SL walk and agrees with the flat `vtd_walk`
+      exactly when the DTE points at the context the flat lookup would find
+      (`vtd_walk_device_of_context`).
+    - **S4.5 FRCD + fault-message signalling** — landed (`FrcdEntry` +
+      `frcd_record` + `frcd_lookup` + `frcd_pending` + `fault_msg_did_pasid`):
+      a fault is recorded as an FRCD entry (DID, PASID, IOVA, reason), the
+      FRCD raises the interrupt line, and the message carries the DID+PASID of
+      the faulting endpoint; after the shootdown of the freed frame the fault
+      is recorded and the interrupt pending
+      (`vtd_shootdown_frcd_pending`).
+    - **S4.5 PASID ghost reification** — landed
+      (`vtd_broadcast_reifies_pasid` in `iommu_broadcast_reify.v`): the same
+      MMIO drain whose IOTLB effect is the functional queue shootdown makes the
+      *two-stage PASID walk* fault and records the fault — the S4.5 analogue of
+      `iommu_broadcast_reifies_correct`, giving the weak-memory program's ghost
+      post-state its VT-d two-stage meaning.
+    Still open: FRCDR drain-by-software, fault-message (DID/PASID) *interrupt
+    delivery* into the core interrupt controller, PASID-table pointers inside
+    the scalable-mode DTE, PASID-cache tags (DID+PASID) with hardware
+    fill-on-miss, and the in-loop weak-memory lift of the PASID walker.
 
 ## What is replayed vs. new
 

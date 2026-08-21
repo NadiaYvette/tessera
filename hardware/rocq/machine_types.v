@@ -851,6 +851,52 @@ Instance dummy_PasidCacheEntry : Inhabited (PasidCacheEntry) := {
 |} }.
 
 
+Record VtdDeviceEntry := {
+  VtdDeviceEntry_present : bool;
+  VtdDeviceEntry_did : Z;
+  VtdDeviceEntry_ctx_index : Z;
+}.
+Arguments VtdDeviceEntry : clear implicits.
+#[export]
+Instance Decidable_eq_VtdDeviceEntry : EqDecision VtdDeviceEntry.
+   intros [x0 x1 x2].
+   intros [y0 y1 y2].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_VtdDeviceEntry : Countable VtdDeviceEntry.
+refine {|
+  encode x := encode (VtdDeviceEntry_present x, VtdDeviceEntry_did x, VtdDeviceEntry_ctx_index x);
+  decode x := '(x0, x1, x2) ← decode x;
+              mret (Build_VtdDeviceEntry x0 x1 x2)
+|}.
+abstract (
+  intros [x0 x1 x2];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'VtdDeviceEntry_present' := e ]}" :=
+  match r with Build_VtdDeviceEntry _ (_ as f1) (_ as f2) =>
+    Build_VtdDeviceEntry e f1 f2 end (at level 0).
+Notation "{[ r 'with' 'VtdDeviceEntry_did' := e ]}" :=
+  match r with Build_VtdDeviceEntry (_ as f0) _ (_ as f2) =>
+    Build_VtdDeviceEntry f0 e f2 end (at level 0).
+Notation "{[ r 'with' 'VtdDeviceEntry_ctx_index' := e ]}" :=
+  match r with Build_VtdDeviceEntry (_ as f0) (_ as f1) _ =>
+    Build_VtdDeviceEntry f0 f1 e end (at level 0).
+#[export]
+Instance dummy_VtdDeviceEntry : Inhabited (VtdDeviceEntry) := {
+  inhabitant := {|
+    VtdDeviceEntry_present := inhabitant;
+    VtdDeviceEntry_did := inhabitant;
+    VtdDeviceEntry_ctx_index := inhabitant
+|} }.
+
+
 Inductive FaultReason :=
   | FR_ContextMissing
   | FR_ContextNotPresent
@@ -970,6 +1016,58 @@ Instance dummy_FaultRecord : Inhabited (FaultRecord) := {
     FaultRecord_pasid := inhabitant;
     FaultRecord_iova := inhabitant;
     FaultRecord_reason := inhabitant
+|} }.
+
+
+Record FrcdEntry := {
+  FrcdEntry_did : Z;
+  FrcdEntry_pasid : Z;
+  FrcdEntry_iova : vaddr_typ;
+  FrcdEntry_reason : FaultReason;
+}.
+Arguments FrcdEntry : clear implicits.
+#[export]
+Instance Decidable_eq_FrcdEntry : EqDecision FrcdEntry.
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_FrcdEntry : Countable FrcdEntry.
+refine {|
+  encode x := encode (FrcdEntry_did x, FrcdEntry_pasid x, FrcdEntry_iova x, FrcdEntry_reason x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_FrcdEntry x0 x1 x2 x3)
+|}.
+abstract (
+  intros [x0 x1 x2 x3];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'FrcdEntry_did' := e ]}" :=
+  match r with Build_FrcdEntry _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_FrcdEntry e f1 f2 f3 end (at level 0).
+Notation "{[ r 'with' 'FrcdEntry_pasid' := e ]}" :=
+  match r with Build_FrcdEntry (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_FrcdEntry f0 e f2 f3 end (at level 0).
+Notation "{[ r 'with' 'FrcdEntry_iova' := e ]}" :=
+  match r with Build_FrcdEntry (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_FrcdEntry f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'FrcdEntry_reason' := e ]}" :=
+  match r with Build_FrcdEntry (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_FrcdEntry f0 f1 f2 e end (at level 0).
+#[export]
+Instance dummy_FrcdEntry : Inhabited (FrcdEntry) := {
+  inhabitant := {|
+    FrcdEntry_did := inhabitant;
+    FrcdEntry_pasid := inhabitant;
+    FrcdEntry_iova := inhabitant;
+    FrcdEntry_reason := inhabitant
 |} }.
 
 
