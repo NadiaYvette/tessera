@@ -286,3 +286,92 @@ Proof.
   Unshelve.
   exact (dt_ctx_update γd devtlbs devtlbs).
 Qed.
+
+(* ============================================================
+   The full ATS shootdown composition lifted end-to-end as one weak program:
+   where the lifts above step individual ghosts (the machine to the queue
+   shootdown, the devtlb ghost to the ATS-invalidated / refilled cache), this
+   lift is the *whole* teardown in a single ghost step — the machine ghost
+   advances from the pre-shootdown machine to `iommu_shootdown_ats m root va
+   p`, which composes the S4.2a broadcast (cores flushed *and* IOTLB
+   invalidated, `iommu_shootdown`) with the ATS device-TLB invalidation
+   (`ats_invalidate`, PCIe ATS §4.3 / SMMU §4.5 / AMD-Vi §2.11).  The
+   post-state carries the full three-tier teardown — no CPU TLB, no IOTLB,
+   and no device-TLB entry translates the freed frame
+   (`iommu_shootdown_ats_correct`).  Same release/acquire program
+   (`iommu_broadcast`); the machine ghost is the S2.5 `machine_ctx`.
+   ============================================================ *)
+
+(* The end-to-end lift: the machine ghost steps from the pre-shootdown machine
+   to the full ATS teardown — the ATS tier (device-TLB invalidation)
+   composed with the S4.2a broadcast (core TLB flush + IOTLB invalidation) in
+   one step, so the post-state is the complete three-tier teardown. *)
+Lemma ats_shootdown_full_machine `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !bcG Σ}
+    (γm : gname) (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  ∀ tid, {{{ machine_ctx γm m }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ machine_ctx γm (iommu_shootdown_ats m root va p) }}}.
+Proof.
+  iIntros (tid Φ) "Hm Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (machine_ctx γm m) (machine_ctx γm (iommu_shootdown_ats m root va p)) _ tid
+            with "Hm").
+  - iIntros (v) "(Hv & Hm')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hm'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (machine_ctx_update γm m (iommu_shootdown_ats m root va p)).
+Qed.
+
+(* The three-tier refinement: the full-ATS post-machine agrees with the S4.2a
+   queue-shootdown post-machine on the memory and the IOTLB (the queue
+   formulation's drained IOTLB and the functional broadcast's invalidation
+   coincide, `iommu_shootdown_via_queue_refines_iommu_shootdown`), and
+   additionally carries the ATS-invalidated device-TLBs — the tier the
+   `iommu_broadcast_full_gen_inv_machine` post-state does not touch.  (The
+   cores differ by construction: the queue formulation leaves them unchanged
+   — the core TLB flush is the S2.x broadcast's own step — while the full
+   ATS teardown carries the S4.2a flushed cores, `iommu_shootdown_ats_cores`.) *)
+Lemma ats_shootdown_full_refines (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  (iommu_shootdown_ats m root va p).(Machine_mem)
+  = (iommu_shootdown_via_queue m root va p).(Machine_mem) /\
+  (iommu_shootdown_ats m root va p).(Machine_iotlb)
+  = (iommu_shootdown_via_queue m root va p).(Machine_iotlb) /\
+  (iommu_shootdown_ats m root va p).(Machine_devtlbs)
+  = ats_invalidate m.(Machine_devtlbs) va.
+Proof.
+  (* the mem/IOTLB steps: iommu_shootdown_ats_* to the functional broadcast,
+     then the queue-bridge (iommu_shootdown_via_queue_refines_iommu_shootdown:
+     the queue formulation's drained IOTLB and the broadcast's invalidation
+     coincide); the devtlb tier is the ATS invalidation *)
+  pose proof (iommu_shootdown_via_queue_refines_iommu_shootdown m root va p) as Hq.
+  destruct Hq as [Hmem Hiotlb].
+  rewrite iommu_shootdown_ats_mem.
+  rewrite iommu_shootdown_ats_iotlb.
+  rewrite iommu_shootdown_ats_devtlbs.
+  rewrite Hmem.
+  rewrite Hiotlb.
+  repeat split; try reflexivity.
+Qed.
+
+(* The combined full lift: the machine ghost to the full ATS teardown and the
+   devtlb ghost to the ATS-invalidated device-TLBs together — one step, both
+   tiers of the device side (the IOMMU's IOTLB is inside the machine step). *)
+Lemma ats_shootdown_full_machine_dt `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !bcG Σ, !dtG Σ}
+    (γm γd : gname) (m : Machine) (root : mword 44) (va : mword 64) (p : Pte) :
+  ∀ tid, {{{ machine_ctx γm m ∗ dt_ctx γd m.(Machine_devtlbs) }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ machine_ctx γm (iommu_shootdown_ats m root va p)
+                    ∗ dt_ctx γd (ats_invalidate m.(Machine_devtlbs) va) }}}.
+Proof.
+  iIntros (tid Φ) "[Hm Hc] Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (machine_ctx γm m ∗ dt_ctx γd m.(Machine_devtlbs))
+            (machine_ctx γm (iommu_shootdown_ats m root va p) ∗
+             dt_ctx γd (ats_invalidate m.(Machine_devtlbs) va)) _ tid
+            with "[$Hm $Hc]").
+  - iIntros (v) "(Hv & Hm' & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hm' Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (dt_machine_update γm γd m (iommu_shootdown_ats m root va p)
+           m.(Machine_devtlbs) (ats_invalidate m.(Machine_devtlbs) va)).
+Qed.

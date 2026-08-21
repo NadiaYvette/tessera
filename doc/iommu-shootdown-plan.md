@@ -590,12 +590,38 @@ of being pushed invalidations.
       fill — the device issues a PRI page request instead, whose weak
       delivery is the `pri_fault_intc_weak.v` program).
 
-    Still open on the device side: the ATS *translation* as a weak program
-    over the *full* ATS shootdown composition (the IOTLB + device-TLB +
-    core-TLB teardown lifted end-to-end rather than tier-by-tier), and the
-    gen-tag machinery's weak lift (the `*_fill_gen` loops are proved pure;
-    the SMMU/AMD-Vi gen-tagged *weak* programs mirroring
-    `smmu_translate_weak.v` / `amdvi_translate_weak.v` are not yet written).
+    - **S4.5 gen-tag weak lifts (SMMU/AMD-Vi)** — landed: the
+      generation-tagged fill-on-miss loops as first-class weak programs — the
+      IOTLB ghost steps from the *evicted* cache (the stale generations
+      cleared by `iotlb_evict_gen` after a CD / PASID-table re-root) to the
+      *gen-refilled* one at the leader's final read
+      (`smmu_translate_gen_sg_lift` / `amdvi_translate_gen_ag_lift`), with
+      `smmu_translate_gen_sg_machine` / `amdvi_translate_gen_ag_machine`
+      threading them alongside the machine ghost (the post-state carries both
+      the queue shootdown and the gen-refilled cache).  Justified at the pure
+      level by `smmu_translate_fill_gen_miss_refills` /
+      `amdvi_translate_fill_gen_miss_refills` and
+      `iotlb_evict_gen_refill_cycle`.  Four lemmas, all axiom-free.  This
+      closes the gen-tagged weak lift.
+    - **S4.3 full ATS shootdown lift** — landed: the end-to-end teardown as
+      one weak program — the machine ghost steps from the pre-shootdown
+      machine to `iommu_shootdown_ats` (the S4.2a broadcast — cores flushed
+      and IOTLB invalidated — composed with the ATS device-TLB invalidation
+      in a single step, so the post-state is the complete three-tier
+      teardown) (`ats_shootdown_full_machine`), alongside the devtlb ghost
+      to the ATS-invalidated device-TLBs
+      (`ats_shootdown_full_machine_dt`); `ats_shootdown_full_refines` ties
+      the full teardown to the queue formulation on the mem/IOTLB tiers (the
+      cores differ by construction — the queue formulation leaves them
+      unchanged, the full teardown carries the flushed ones).  Three lemmas,
+      all axiom-free.
+
+    Still open on the device side: nothing structural remains in S4.3/S4.5 —
+    the walker loops, the gen machinery, the invalidation granules, and the
+    ATS/PRI device side are all lifted at both the pure and the weak-memory
+    level.  Natural next steps: the SMMU two-stage / VT-d PASID *weak*
+    lifts at the gen-tagged level (the VT-d PASID-cache gen lift exists at
+    generation 0 only), or moving to the next SSG track.
 
 ## What is replayed vs. new
 

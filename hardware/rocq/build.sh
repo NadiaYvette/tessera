@@ -979,6 +979,14 @@ if [ -d "$GP" ]; then
   axiom_free amdvi_translate_weak amdvi_translate_ag_lift "$WFLAGS"
   axiom_free amdvi_translate_weak amdvi_translate_ag_machine "$WFLAGS"
   axiom_free amdvi_translate_weak ag_ctx_update "$WFLAGS"
+  # S4.5 gen-tag weak lifts: the generation-tagged fill-on-miss loops as weak
+  # programs — the IOTLB ghost steps from the *evicted* cache (the stale
+  # generations cleared by iotlb_evict_gen after a CD / PASID-table re-root)
+  # to the *gen-refilled* one, alone or alongside the machine ghost.
+  axiom_free smmu_translate_weak smmu_translate_gen_sg_lift "$WFLAGS"
+  axiom_free smmu_translate_weak smmu_translate_gen_sg_machine "$WFLAGS"
+  axiom_free amdvi_translate_weak amdvi_translate_gen_ag_lift "$WFLAGS"
+  axiom_free amdvi_translate_weak amdvi_translate_gen_ag_machine "$WFLAGS"
   # S4.3 ATS device-TLB weak lift: the gpfsl program over the device-TLB
   # invalidation (PCIe ATS §4.3 / the SMMU/AMD-Vi device-side tier) — the
   # devtlb ghost (`dt_ctx`, a ghost_var over the device-TLBs) stepped from the
@@ -998,6 +1006,15 @@ if [ -d "$GP" ]; then
   axiom_free ats_devtlb_weak ats_translate_dt_lift "$WFLAGS"
   axiom_free ats_devtlb_weak ats_translate_dt_machine "$WFLAGS"
   axiom_free ats_devtlb_weak ats_translate_fault_dt_lift "$WFLAGS"
+  # S4.3 full ATS shootdown lift: the end-to-end teardown as one weak program —
+  # the machine ghost steps from the pre-shootdown machine to
+  # iommu_shootdown_ats (the S4.2a broadcast cores/IOTLB flush composed with
+  # the ATS device-TLB invalidation in a single step), alone or alongside the
+  # devtlb ghost to the ATS-invalidated device-TLBs; the refines lemma ties
+  # the full teardown to the queue formulation.
+  axiom_free ats_devtlb_weak ats_shootdown_full_machine "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_shootdown_full_refines "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_shootdown_full_machine_dt "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"

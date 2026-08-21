@@ -150,3 +150,69 @@ Proof.
            (snd (smmu_translate_fill stes cds sid
                  (iotlb_invalidate iotlb gva) mem gva))).
 Qed.
+
+(* ============================================================
+   S4.5 gen-tag lift: the generation-tagged fill-on-miss loop
+   (`smmu_translate_fill_gen`) as a weak program.  Where the lift above
+   steps the ghost from the *invalidated* cache (after a 4KiB TLBI), this
+   lift steps it from the *evicted* cache — the stale generations cleared by
+   `iotlb_evict_gen` (the reused (SID, ASID) tag after a CD re-root, the
+   first-stage root changed at teardown) — to the *gen-refilled* one: the
+   ghost post-state is exactly
+   `snd (smmu_translate_fill_gen stes cds sid (iotlb_evict_gen iotlb (sid, 0) g) mem gva g)`,
+   justified at the pure level by `smmu_translate_fill_gen_miss_refills`
+   (the eviction clears the stale generations — no gen-g entry survives — so
+   the loop re-walks and refills under g) and `iotlb_evict_gen_refill_cycle`
+   (the evict-then-refill cycle ends conflict-free).  Same ghost class
+   (`sg_ctx`), same release/acquire program (`iommu_broadcast`).
+   ============================================================ *)
+
+Lemma smmu_translate_gen_sg_lift `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !sgG Σ}
+    (γi : gname) (stes : list Ste) (cds : list Cd) (sid g : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64) :
+  ∀ tid, {{{ sg_ctx γi (iotlb_evict_gen iotlb (sid, 0) g) }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ sg_ctx γi (snd (smmu_translate_fill_gen stes cds sid
+                                        (iotlb_evict_gen iotlb (sid, 0) g) mem gva g)) }}}.
+Proof.
+  iIntros (tid Φ) "Hc Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (sg_ctx γi (iotlb_evict_gen iotlb (sid, 0) g))
+            (sg_ctx γi (snd (smmu_translate_fill_gen stes cds sid
+                              (iotlb_evict_gen iotlb (sid, 0) g) mem gva g))) _ tid
+            with "Hc").
+  - iIntros (v) "(Hv & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (sg_ctx_update γi (iotlb_evict_gen iotlb (sid, 0) g)
+           (snd (smmu_translate_fill_gen stes cds sid
+                 (iotlb_evict_gen iotlb (sid, 0) g) mem gva g))).
+Qed.
+
+(* The machine-aware gen-tag lift: the machine ghost advances to the queue
+   shootdown and the SMMU-IOTLB ghost to the gen-refilled cache. *)
+Lemma smmu_translate_gen_sg_machine `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !bcG Σ, !sgG Σ}
+    (γm γi : gname) (m : Machine) (root : mword 44) (va : mword 64) (p : Pte)
+    (stes : list Ste) (cds : list Cd) (sid g : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64) :
+  ∀ tid, {{{ machine_ctx γm m ∗ sg_ctx γi (iotlb_evict_gen iotlb (sid, 0) g) }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ machine_ctx γm (iommu_shootdown_via_queue m root va p)
+                    ∗ sg_ctx γi (snd (smmu_translate_fill_gen stes cds sid
+                                      (iotlb_evict_gen iotlb (sid, 0) g) mem gva g)) }}}.
+Proof.
+  iIntros (tid Φ) "[Hm Hc] Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (machine_ctx γm m ∗ sg_ctx γi (iotlb_evict_gen iotlb (sid, 0) g))
+            (machine_ctx γm (iommu_shootdown_via_queue m root va p)
+             ∗ sg_ctx γi (snd (smmu_translate_fill_gen stes cds sid
+                               (iotlb_evict_gen iotlb (sid, 0) g) mem gva g))) _ tid
+            with "[$Hm $Hc]").
+  - iIntros (v) "(Hv & Hm' & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hm' Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (sg_machine_update γm γi m (iommu_shootdown_via_queue m root va p)
+           (iotlb_evict_gen iotlb (sid, 0) g)
+           (snd (smmu_translate_fill_gen stes cds sid
+                 (iotlb_evict_gen iotlb (sid, 0) g) mem gva g))).
+Qed.
