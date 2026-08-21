@@ -116,11 +116,13 @@ Definition undefined_IotlbEntry '(tt : unit) : M (IotlbEntry) :=
    (undefined_bitvector (64)) >>= fun (w__2 : mword 64) =>
    (undefined_bitvector (56)) >>= fun (w__3 : mword 56) =>
    (undefined_Perm (tt)) >>= fun (w__4 : Perm) =>
+   (undefined_int (tt)) >>= fun (w__5 : Z) =>
    returnM (({| IotlbEntry_did := w__0;
                 IotlbEntry_pasid := w__1;
                 IotlbEntry_iova := w__2;
                 IotlbEntry_pa := w__3;
-                IotlbEntry_perm := w__4 |})).
+                IotlbEntry_perm := w__4;
+                IotlbEntry_gen := w__5 |})).
 
 Definition undefined_DevTlbEntry '(tt : unit) : M (DevTlbEntry) :=
    (undefined_int (tt)) >>= fun (w__0 : Z) =>
@@ -142,10 +144,20 @@ Definition undefined_PriRequest '(tt : unit) : M (PriRequest) :=
                 PriRequest_iova := w__2;
                 PriRequest_pending := w__3 |})).
 
+Definition undefined_InvalidationGran '(tt : unit) : M (InvalidationGran) :=
+   (internal_pick ([Gran_VA; Gran_PasidDid]))  : M (InvalidationGran).
+
 Definition undefined_InvalidationCmd '(tt : unit) : M (InvalidationCmd) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
-   (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
-   returnM (({| InvalidationCmd_is_wait := w__0;  InvalidationCmd_va := w__1 |})).
+   (undefined_InvalidationGran (tt)) >>= fun (w__1 : InvalidationGran) =>
+   (undefined_bitvector (64)) >>= fun (w__2 : mword 64) =>
+   (undefined_int (tt)) >>= fun (w__3 : Z) =>
+   (undefined_int (tt)) >>= fun (w__4 : Z) =>
+   returnM (({| InvalidationCmd_is_wait := w__0;
+                InvalidationCmd_gran := w__1;
+                InvalidationCmd_va := w__2;
+                InvalidationCmd_did := w__3;
+                InvalidationCmd_pasid := w__4 |})).
 
 Definition undefined_Ste '(tt : unit) : M (Ste) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
@@ -329,7 +341,8 @@ Definition amdvi_translate_fill
                                   IotlbEntry_pasid := 0;
                                   IotlbEntry_iova := iova;
                                   IotlbEntry_pa := pa;
-                                  IotlbEntry_perm := perm |}) ::
+                                  IotlbEntry_perm := perm;
+                                  IotlbEntry_gen := 0 |}) ::
            iotlb))
       end
    end.
@@ -377,7 +390,8 @@ Definition smmu_translate_fill
                                   IotlbEntry_pasid := 0;
                                   IotlbEntry_iova := gva;
                                   IotlbEntry_pa := pa;
-                                  IotlbEntry_perm := perm |}) ::
+                                  IotlbEntry_perm := perm;
+                                  IotlbEntry_gen := 0 |}) ::
            iotlb))
       end
    end.
@@ -889,14 +903,18 @@ Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list Iot
       else e :: (iotlb_invalidate (rest) (va))
    end.
 
-Fixpoint iommu_process_queue (queue : list InvalidationCmd) (iotlb : list IotlbEntry)
-: option (list IotlbEntry) :=
-   match queue with
-   | [] => None
-   | c :: rest =>
-      if c.(InvalidationCmd_is_wait) then Some (iotlb)
-      else iommu_process_queue (rest) ((iotlb_invalidate (iotlb) (c.(InvalidationCmd_va))))
-   end.
+Definition pasid_cache_inv_granularity_valid (g : mword 2) : bool :=
+   let p0_ := g in
+   if eq_vec (p0_) (('b"00")) then true
+   else if eq_vec (p0_) (('b"01")) then true
+   else if eq_vec (p0_) (('b"11")) then true
+   else false.
+
+Definition p_iotlb_granularity_valid (g : mword 2) : bool :=
+   let p0_ := g in
+   if eq_vec (p0_) (('b"10")) then true
+   else if eq_vec (p0_) (('b"11")) then true
+   else false.
 
 Definition ats_translate
 (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry) (root : mword 44) (did : Z) (iova : mword 64)
@@ -909,7 +927,8 @@ Definition ats_translate
             IotlbEntry_pasid := 0;
             IotlbEntry_iova := iova;
             IotlbEntry_pa := pa;
-            IotlbEntry_perm := perm |}) ::
+            IotlbEntry_perm := perm;
+            IotlbEntry_gen := 0 |}) ::
         iotlb, ({| DevTlbEntry_did := did;
                    DevTlbEntry_iova := iova;
                    DevTlbEntry_pa := pa;
@@ -961,6 +980,114 @@ Fixpoint iotlb_invalidate_pasid_did (entries : list IotlbEntry) (dp : (Z * Z)) :
       if andb ((Z.eqb (e.(IotlbEntry_did)) (d))) ((Z.eqb (e.(IotlbEntry_pasid)) (p))) then
         iotlb_invalidate_pasid_did (rest) (dp)
       else e :: (iotlb_invalidate_pasid_did (rest) (dp))
+   end.
+
+Fixpoint iotlb_lookup_gen (entries : list IotlbEntry) (dp : (Z * Z)) (va : mword 64) (g : Z)
+: option ((mword 56 * Perm)) :=
+   match entries with
+   | [] => None
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(IotlbEntry_did)) (d)))
+           ((andb ((Z.eqb (e.(IotlbEntry_pasid)) (p)))
+               ((andb ((eq_vec ((vpn_of (e.(IotlbEntry_iova)))) ((vpn_of (va)))))
+                   ((Z.eqb (e.(IotlbEntry_gen)) (g))))))) then
+        Some ((e.(IotlbEntry_pa), e.(IotlbEntry_perm)))
+      else iotlb_lookup_gen (rest) (dp) (va) (g)
+   end.
+
+Fixpoint iotlb_tag_conflict (entries : list IotlbEntry) (dp : (Z * Z)) (g : Z) : bool :=
+   match entries with
+   | [] => false
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(IotlbEntry_did)) (d))) ((Z.eqb (e.(IotlbEntry_pasid)) (p))) then
+        if Z.eqb (e.(IotlbEntry_gen)) (g) then iotlb_tag_conflict (rest) (dp) (g)
+        else true
+      else iotlb_tag_conflict (rest) (dp) (g)
+   end.
+
+Fixpoint iotlb_refill_gen
+(entries : list IotlbEntry) (dp : (Z * Z)) (va : mword 64) (g : Z) (pa : mword 56) (perm : Perm)
+: list IotlbEntry :=
+   match entries with
+   | [] =>
+      let '((d, p)) := dp in
+      ({| IotlbEntry_did := d;
+          IotlbEntry_pasid := p;
+          IotlbEntry_iova := va;
+          IotlbEntry_pa := pa;
+          IotlbEntry_perm := perm;
+          IotlbEntry_gen := g |}) ::
+        []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(IotlbEntry_did)) (d)))
+           ((andb ((Z.eqb (e.(IotlbEntry_pasid)) (p)))
+               ((eq_vec ((vpn_of (e.(IotlbEntry_iova)))) ((vpn_of (va))))))) then
+        ({| IotlbEntry_did := e.(IotlbEntry_did);
+            IotlbEntry_pasid := e.(IotlbEntry_pasid);
+            IotlbEntry_iova := e.(IotlbEntry_iova);
+            IotlbEntry_pa := pa;
+            IotlbEntry_perm := perm;
+            IotlbEntry_gen := g |}) ::
+          rest
+      else e :: (iotlb_refill_gen (rest) (dp) (va) (g) (pa) (perm))
+   end.
+
+Fixpoint iotlb_evict_gen (entries : list IotlbEntry) (dp : (Z * Z)) (g : Z) : list IotlbEntry :=
+   match entries with
+   | [] => []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(IotlbEntry_did)) (d)))
+           ((andb ((Z.eqb (e.(IotlbEntry_pasid)) (p))) ((neq_int (e.(IotlbEntry_gen)) (g))))) then
+        iotlb_evict_gen (rest) (dp) (g)
+      else e :: (iotlb_evict_gen (rest) (dp) (g))
+   end.
+
+Definition smmu_translate_fill_gen
+(stes : list Ste) (cds : list Cd) (sid : Z) (iotlb : list IotlbEntry) (mem : list MemEntry)
+(gva : mword 64) (g : Z)
+: (option ((mword 56 * Perm)) * list IotlbEntry) :=
+   match iotlb_lookup_gen (iotlb) ((sid, 0)) (gva) (g) with
+   | Some r => ((Some (r), iotlb))
+   | None =>
+      match smmu_translate (stes) (cds) (sid) (mem) (gva) with
+      | None => ((None, iotlb))
+      | Some (pa, perm) =>
+         ((Some ((pa, perm)), iotlb_refill_gen (iotlb) ((sid, 0)) (gva) (g) (pa) (perm)))
+      end
+   end.
+
+Definition amdvi_translate_fill_gen
+(root : mword 44) (iotlb : list IotlbEntry) (mem : list MemEntry) (iova : mword 64) (g : Z)
+: (option ((mword 56 * Perm)) * list IotlbEntry) :=
+   match iotlb_lookup_gen (iotlb) ((0, 0)) (iova) (g) with
+   | Some r => ((Some (r), iotlb))
+   | None =>
+      match amdvi_walk (root) (mem) (iova) with
+      | None => ((None, iotlb))
+      | Some (pa, perm) =>
+         ((Some ((pa, perm)), iotlb_refill_gen (iotlb) ((0, 0)) (iova) (g) (pa) (perm)))
+      end
+   end.
+
+Fixpoint iommu_process_queue (queue : list InvalidationCmd) (iotlb : list IotlbEntry)
+: option (list IotlbEntry) :=
+   match queue with
+   | [] => None
+   | c :: rest =>
+      if c.(InvalidationCmd_is_wait) then Some (iotlb)
+      else
+        match c.(InvalidationCmd_gran) with
+        | Gran_VA =>
+           iommu_process_queue (rest) ((iotlb_invalidate (iotlb) (c.(InvalidationCmd_va))))
+        | Gran_PasidDid =>
+           iommu_process_queue (rest)
+             ((iotlb_invalidate_pasid_did (iotlb)
+                 ((c.(InvalidationCmd_did), c.(InvalidationCmd_pasid)))))
+        end
    end.
 
 Fixpoint pri_request (prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) : list PriRequest :=

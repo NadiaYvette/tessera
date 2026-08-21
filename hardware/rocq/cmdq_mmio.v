@@ -40,9 +40,19 @@ Record Cmdq := { Cmdq_entries : list InvalidationCmd; Cmdq_prod : Z; Cmdq_cons :
 Definition cmdq_empty : Cmdq := {| Cmdq_entries := []; Cmdq_prod := 0; Cmdq_cons := 0 |}.
 
 Definition invalidation_cmd (va : mword 64) : InvalidationCmd :=
-  {| InvalidationCmd_is_wait := false; InvalidationCmd_va := va |}.
+  {| InvalidationCmd_is_wait := false; InvalidationCmd_gran := Gran_VA;
+     InvalidationCmd_va := va; InvalidationCmd_did := 0; InvalidationCmd_pasid := 0 |}.
 Definition wait_cmd (va : mword 64) : InvalidationCmd :=
-  {| InvalidationCmd_is_wait := true; InvalidationCmd_va := va |}.
+  {| InvalidationCmd_is_wait := true; InvalidationCmd_gran := Gran_VA;
+     InvalidationCmd_va := va; InvalidationCmd_did := 0; InvalidationCmd_pasid := 0 |}.
+
+(* The P_IOTLB PASID-selective command (VT-d 5.20 §6.5.2.4, G = 10b): drop the
+   IOTLB entries associated with the specified (DID, PASID) — the IOTLB half
+   of the mandatory §6.5.2.2 PASID-cache -> IOTLB pairing. *)
+Definition pasid_did_cmd (did pasid : Z) : InvalidationCmd :=
+  {| InvalidationCmd_is_wait := false; InvalidationCmd_gran := Gran_PasidDid;
+     InvalidationCmd_va := (mword_of_int 0 : mword 64); InvalidationCmd_did := did;
+     InvalidationCmd_pasid := pasid |}.
 
 (* Software writes a descriptor then rings the doorbell (advances prod). *)
 Definition cmdq_enqueue (q : Cmdq) (cmd : InvalidationCmd) : Cmdq :=
@@ -69,7 +79,12 @@ Fixpoint cmdq_drain_entries (entries : list InvalidationCmd) (iotlb : list Iotlb
   | [] => None
   | c :: rest =>
       if c.(InvalidationCmd_is_wait) then Some iotlb
-      else cmdq_drain_entries rest (iotlb_invalidate iotlb c.(InvalidationCmd_va))
+      else match c.(InvalidationCmd_gran) with
+           | Gran_VA => cmdq_drain_entries rest (iotlb_invalidate iotlb c.(InvalidationCmd_va))
+           | Gran_PasidDid =>
+               cmdq_drain_entries rest
+                 (iotlb_invalidate_pasid_did iotlb (c.(InvalidationCmd_did), c.(InvalidationCmd_pasid)))
+           end
   end.
 
 Definition cmdq_drain (q : Cmdq) (iotlb : list IotlbEntry) : option (list IotlbEntry) :=
@@ -88,7 +103,9 @@ Proof.
   induction entries as [| c rest IH]; intros iotlb; cbn.
   - reflexivity.
   - destruct c.(InvalidationCmd_is_wait); [reflexivity |].
-    apply (IH (iotlb_invalidate iotlb c.(InvalidationCmd_va))).
+    destruct c.(InvalidationCmd_gran); cbn.
+    + apply IH.
+    + apply IH.
 Qed.
 
 (* Software enqueues [Invalidate va; Wait] and rings the doorbell; the IOMMU
@@ -102,10 +119,10 @@ Proof. cbn. reflexivity. Qed.
    drops the IOVA-0 entry and completes with the survivor. *)
 Definition cmdq_dev0 : IotlbEntry :=
   {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
-     IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |}.
+     IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|}.
 Definition cmdq_dev1 : IotlbEntry :=
   {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
-     IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |}.
+     IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|}.
 
 Lemma test_vector_cmdq_mmio_drain :
   cmdq_drain (cmdq_enqueue (cmdq_enqueue cmdq_empty (invalidation_cmd (mword_of_int 0 : mword 64)))

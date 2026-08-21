@@ -522,12 +522,52 @@ of being pushed invalidations.
       and from the IOTLB (no entry at all), so the translation path is forced
       onto the first-stage table re-walk.
 
-    Still open on the device side: the device-TLB (ATS) invalidation as a
-    first-class weak program (the current `ats_invalidate_*` proofs are pure;
-    the device side of the endpoint tier is not yet lifted), and the SMMU
-    two-stage / AMD-Vi second-platform walker *replay of the generation
-    machinery* (the `smmu_translate_fill` / `amdvi_translate_fill` loops are
-    lifted but stay at generation 0).
+    - **S4.5 ATS device-TLB weak lift** — landed (`ats_devtlb_weak.v`): the
+      device-TLB (ATS) invalidation as a first-class weak program — the
+      gpfsl program over `ats_invalidate` (PCIe ATS §4.3 / the SMMU/AMD-Vi
+      device-side tier), with the devtlb ghost (`dt_ctx`, a `ghost_var` over
+      `list DevTlbEntry`) stepped from the pre-invalidation device-TLBs to
+      the invalidated ones at the leader's final read
+      (`ats_devtlb_dt_lift`); `ats_devtlb_dt_machine` threads it alongside
+      the machine ghost.  Three lemmas, all axiom-free.
+    - **S4.5 gen-tag replay on the IOTLB (SMMU/AMD-Vi)** — landed: the
+      generation machinery replayed at the IOTLB level for the second
+      platforms.  `IotlbEntry` now carries a `gen` field (the full tag is
+      (did, pasid, gen)); `iotlb_lookup_gen` answers only entries at the
+      current generation (a stale generation is a miss —
+      `iotlb_lookup_gen_Some_implies` / `iotlb_lookup_gen_stale_misses`),
+      `iotlb_tag_conflict` detects a present stale-generation (d, p) tag
+      (`iotlb_tag_conflict_stale_exists`), `iotlb_evict_gen` clears exactly
+      the stale generations (`iotlb_evict_gen_clears_conflict`,
+      `iotlb_lookup_gen_after_evict_gen_same_g`), and `iotlb_refill_gen`
+      installs under the current generation — the evict-then-refill cycle
+      ends conflict-free (`iotlb_evict_gen_refill_cycle`, via
+      `iotlb_tag_conflict_after_refill_gen`).  The `smmu_translate_fill` /
+      `amdvi_translate_fill` loops are the generation-0 slice.
+    - **S4.5 P_IOTLB in the command queue** — landed: the PASID-selective
+      (DID, PASID) P_IOTLB invalidation (§6.5.2.4) as a queued descriptor
+      (`Gran_PasidDid`), the queue's IOTLB half of the §6.5.2.2 pairing.
+      Draining [P_IOTLB (d,p); Wait] completes with the PASID-selective
+      invalidation applied (`iommu_process_queue_piotlb_spec`), and the
+      *pairing through the queue* — the PASID-cache eviction half plus the
+      queued P_IOTLB half — clears the tag from both caches
+      (`iommu_queue_piotlb_pair_clears`), with an executable vector on the
+      four-entry mixed IOTLB.
+    - **S4.5 Reserved-10b granularity validity** — landed: the
+      descriptor-acceptance matrix pinned as vectors —
+      `pasid_cache_inv_granularity_valid` accepts 00b/01b/11b and rejects the
+      reserved 10b; `p_iotlb_granularity_valid` accepts 10b/11b and rejects
+      the reserved 00b/01b (`test_vector_granularity_valid_pasid_cache` /
+      `test_vector_granularity_valid_p_iotlb` /
+      `test_vector_granularity_valid_reserved_10b`).
+
+    Still open on the device side: the SMMU two-stage / AMD-Vi second-platform
+    walker *replay of the generation machinery* at the gen-tagged level (the
+    `smmu_translate_fill_gen` / `amdvi_translate_fill_gen` loops exist in
+    Sail; their gen-tag lookups/refills/conflict lemmas mirroring the IOTLB
+    section are not yet proved), and the ATS *translation* path (the
+    device-side fill-on-miss of the device-TLB, `ats_translate`) as a weak
+    program.
 
 ## What is replayed vs. new
 

@@ -357,7 +357,7 @@ Lemma smmu_translate_fill_miss_refills (stes : list Ste) (cds : list Cd) (sid : 
   smmu_translate_fill stes cds sid iotlb mem gva
   = (Some (pa, perm),
      {| IotlbEntry_did := sid; IotlbEntry_pasid := 0; IotlbEntry_iova := gva;
-        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb).
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm ; IotlbEntry_gen := 0|} :: iotlb).
 Proof.
   intros Hmiss H. unfold smmu_translate_fill.
   rewrite Hmiss. cbn. rewrite H. cbn. reflexivity.
@@ -373,7 +373,7 @@ Lemma smmu_translate_fill_after_invalidate (stes : list Ste) (cds : list Cd) (si
   smmu_translate_fill stes cds sid (iotlb_invalidate iotlb gva) mem gva
   = (Some (pa, perm),
      {| IotlbEntry_did := sid; IotlbEntry_pasid := 0; IotlbEntry_iova := gva;
-        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb_invalidate iotlb gva).
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm ; IotlbEntry_gen := 0|} :: iotlb_invalidate iotlb gva).
 Proof.
   intros H. unfold smmu_translate_fill.
   rewrite (iotlb_lookup_after_invalidate iotlb sid gva). cbn.
@@ -386,7 +386,7 @@ Qed.
    back). *)
 Definition smmu_iotlb_hit : IotlbEntry :=
   {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
-     IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read |}.
+     IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read ; IotlbEntry_gen := 0|}.
 
 Lemma test_vector_smmu_translate_fill_hit :
   smmu_translate_fill [st_hit] [cd_hit] 0 [smmu_iotlb_hit] mem_smmu_hit va0
@@ -397,7 +397,7 @@ Lemma test_vector_smmu_translate_fill_miss :
   smmu_translate_fill [st_hit] [cd_hit] 0 [] mem_smmu_hit va0
   = (Some (expected_pa, Read),
      [{| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
-        IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read |}]).
+        IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read ; IotlbEntry_gen := 0|}]).
 Proof. vm_compute. reflexivity. Qed.
 
 Lemma test_vector_smmu_translate_fill_after_invalidate :

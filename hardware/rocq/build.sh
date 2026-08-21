@@ -306,6 +306,14 @@ axiom_free iommu_conformance test_vector_vtd_piotlb_pair_iotlb_half
 axiom_free iommu_conformance test_vector_smmu_tlbi_va_asid
 axiom_free iommu_conformance test_vector_amdvi_invalidate_pages_domain_va
 axiom_free iommu_conformance test_vector_amdvi_invalidate_devtbl_domain
+# the descriptor-acceptance matrix (VT-d 5.20 §6.5.2.3/§6.5.2.4): the
+# granularity-validity vectors pin the reserved encodings — 10b on the
+# PASID-cache invalidation, 00b/01b on the P_IOTLB — as invalid descriptors,
+# and the queued P_IOTLB pairing vector.
+axiom_free iommu_conformance test_vector_granularity_valid_pasid_cache
+axiom_free iommu_conformance test_vector_granularity_valid_p_iotlb
+axiom_free iommu_conformance test_vector_granularity_valid_reserved_10b
+axiom_free iommu_conformance test_vector_iommu_queue_piotlb_pair
 # Intel VT-d S4.5 first slice: Requester-ID context selection and the
 # second-level walk, with explicit missing/non-present faults and oracle replay.
 axiom_free vtd_proofs vtd_walk_context_spec
@@ -669,6 +677,23 @@ axiom_free amdvi_proofs        test_vector_amdvi_translate_fill_after_invalidate
 # broadcast — iommu_shootdown_via_queue and iommu_shootdown agree on mem and
 # IOTLB (the pure precondition the weak-memory lift must satisfy).
 axiom_free iommu_proofs      iotlb_lookup_after_invalidate
+# S4.5 gen-tag replay on the IOTLB: the generation-tagged view of the walker
+# loops (lookup_gen answers current generations, stale generations miss,
+# evict_gen clears the stale-tag conflict, refill_gen installs the fresh one,
+# and the evict-then-refill cycle ends conflict-free).
+axiom_free iommu_proofs      iotlb_lookup_gen_Some_implies
+axiom_free iommu_proofs      iotlb_lookup_gen_stale_misses
+axiom_free iommu_proofs      iotlb_tag_conflict_stale_exists
+axiom_free iommu_proofs      iotlb_evict_gen_clears_conflict
+axiom_free iommu_proofs      iotlb_lookup_gen_after_evict_gen_same_g
+axiom_free iommu_proofs      iotlb_lookup_gen_after_refill_gen
+axiom_free iommu_proofs      iotlb_tag_conflict_after_refill_gen
+axiom_free iommu_proofs      iotlb_evict_gen_refill_cycle
+# P_IOTLB (VT-d 5.20 §6.5.2.4) in the command queue: the PASID-selective
+# descriptor plus Invalidation-Wait, and the §6.5.2.2 pairing through the queue
+# (PASID-cache eviction half + IOTLB half both cleared).
+axiom_free iommu_proofs      iommu_process_queue_piotlb_spec
+axiom_free iommu_proofs      iommu_queue_piotlb_pair_clears
 axiom_free iommu_proofs      iommu_shootdown_mem
 axiom_free iommu_proofs      iommu_shootdown_via_queue_refines_iommu_shootdown
 axiom_free tlb_tags         flush_tlb_entry_leaf
@@ -937,6 +962,15 @@ if [ -d "$GP" ]; then
   axiom_free amdvi_translate_weak amdvi_translate_ag_lift "$WFLAGS"
   axiom_free amdvi_translate_weak amdvi_translate_ag_machine "$WFLAGS"
   axiom_free amdvi_translate_weak ag_ctx_update "$WFLAGS"
+  # S4.3 ATS device-TLB weak lift: the gpfsl program over the device-TLB
+  # invalidation (PCIe ATS §4.3 / the SMMU/AMD-Vi device-side tier) — the
+  # devtlb ghost (`dt_ctx`, a ghost_var over the device-TLBs) stepped from the
+  # pre-invalidation state to the invalidated one at the leader's final read,
+  # alone or alongside the machine ghost.
+  rocq compile $WFLAGS ats_devtlb_weak.v
+  axiom_free ats_devtlb_weak ats_devtlb_dt_lift "$WFLAGS"
+  axiom_free ats_devtlb_weak ats_devtlb_dt_machine "$WFLAGS"
+  axiom_free ats_devtlb_weak dt_ctx_update "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"

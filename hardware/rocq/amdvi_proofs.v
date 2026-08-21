@@ -205,7 +205,7 @@ Lemma amdvi_translate_fill_miss_refills (root : mword 44) (iotlb : list IotlbEnt
   amdvi_translate_fill root iotlb mem iova
   = (Some (pa, perm),
      {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := iova;
-        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb).
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm ; IotlbEntry_gen := 0|} :: iotlb).
 Proof.
   intros Hmiss H. unfold amdvi_translate_fill.
   rewrite Hmiss. cbn. rewrite H. cbn. reflexivity.
@@ -220,7 +220,7 @@ Lemma amdvi_translate_fill_after_invalidate (root : mword 44) (iotlb : list Iotl
   amdvi_translate_fill root (iotlb_invalidate iotlb iova) mem iova
   = (Some (pa, perm),
      {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := iova;
-        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb_invalidate iotlb iova).
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm ; IotlbEntry_gen := 0|} :: iotlb_invalidate iotlb iova).
 Proof.
   intros H. unfold amdvi_translate_fill.
   rewrite (iotlb_lookup_after_invalidate iotlb 0 iova). cbn.
@@ -231,7 +231,7 @@ Qed.
    walk -> refill, and the invalidate-then-retranslate cycle. *)
 Definition amdvi_iotlb_hit : IotlbEntry :=
   {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
-     IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read |}.
+     IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read ; IotlbEntry_gen := 0|}.
 
 Lemma test_vector_amdvi_translate_fill_miss :
   amdvi_translate_fill amd_root [] table_amd_hit va0

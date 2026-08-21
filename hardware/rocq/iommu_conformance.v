@@ -68,11 +68,11 @@ Definition conf_iotlb : list IotlbEntry :=
   [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
        IotlbEntry_iova := (mword_of_int 0 : mword 64);
        IotlbEntry_pa := (mword_of_int 0 : mword 56);
-       IotlbEntry_perm := ReadWrite |};
+       IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
     {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
        IotlbEntry_iova := (mword_of_int 4096 : mword 64);
        IotlbEntry_pa := (mword_of_int 4096 : mword 56);
-       IotlbEntry_perm := ReadWrite |} ].
+       IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 
 (* VT-d §6.5.2.3 IOTLB Invalidate: a 4KiB selective invalidation of page 0 drops
    the IOVA-0 translation and keeps the IOVA-4096 one. *)
@@ -81,7 +81,7 @@ Lemma test_vector_vtd_iotlb_invalidate :
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
          IotlbEntry_iova := (mword_of_int 4096 : mword 64);
          IotlbEntry_pa := (mword_of_int 4096 : mword 56);
-         IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* SMMU §4.4 TLBI: the same page-granularity invalidation, the symmetric case —
@@ -92,7 +92,7 @@ Lemma test_vector_smmu_iotlb_invalidate :
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
          IotlbEntry_iova := (mword_of_int 0 : mword 64);
          IotlbEntry_pa := (mword_of_int 0 : mword 56);
-         IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* AMD-Vi §2.4.3 INVALIDATE_IOMMU_PAGES: a selective invalidation for a page not
@@ -145,7 +145,7 @@ Lemma test_vector_pcie_ats_completion :
   = ([ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
           IotlbEntry_iova := (mword_of_int 0 : mword 64);
           IotlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
-          IotlbEntry_perm := Read |} ],
+          IotlbEntry_perm := Read ; IotlbEntry_gen := 0|} ],
      [ {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
           DevTlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
           DevTlbEntry_perm := Read |} ]).
@@ -206,21 +206,21 @@ Proof. vm_compute. reflexivity. Qed.
 
 Definition conf_mixed_iotlb : list IotlbEntry :=
   [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
-       IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |};
+       IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
     {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
-       IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |};
+       IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
     {| IotlbEntry_did := 1; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 8192 : mword 64);
-       IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite |};
+       IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
     {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
-       IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+       IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 
 (* SMMU §4.4 TLBI-by-ASID: dropping ASID 0 leaves exactly the pasid-1 entries. *)
 Lemma test_vector_smmu_tlbi_asid :
   iotlb_invalidate_pasid conf_mixed_iotlb 0
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
-         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |};
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
       {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
-         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* AMD-Vi §2.4.3 INVALIDATE_IOMMU_PAGES-by-domain: dropping domain 1 leaves exactly
@@ -228,9 +228,9 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_amdvi_invalidate_domain :
   iotlb_invalidate_domain conf_mixed_iotlb 1
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
-         IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |};
+         IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
       {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
-         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* An ASID absent from the cache is a no-op; this guards the filter's
@@ -260,11 +260,11 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_vtd_piotlb_pasid_selective :
   iotlb_invalidate_pasid_did conf_mixed_iotlb (0, 1)
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
-         IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |};
+         IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
       {| IotlbEntry_did := 1; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 8192 : mword 64);
-         IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite |};
+         IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
       {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
-         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* A (DID, PASID) absent from the IOTLB is a no-op: the (0,2) tag matches no
@@ -298,9 +298,9 @@ Proof. reflexivity. Qed.
 Lemma test_vector_smmu_tlbi_va_asid :
   iotlb_invalidate_pasid (iotlb_invalidate conf_mixed_iotlb (mword_of_int 0 : mword 64)) 0
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
-         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |};
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
       {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
-         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* AMD-Vi §2.4.3 INVALIDATE_IOMMU_PAGES-by-(domain, VA): invalidate
@@ -309,7 +309,7 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_amdvi_invalidate_pages_domain_va :
   iotlb_invalidate_domain (iotlb_invalidate conf_mixed_iotlb (mword_of_int 0 : mword 64)) 1
   = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
-         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
@@ -333,3 +333,58 @@ Lemma test_vector_amdvi_invalidate_devtbl_domain :
   find_devtlb (ats_invalidate_domain conf_devtlb_two_domains 0) (mword_of_int 4096 : mword 64)
   = Some ((mword_of_int 4096 : mword 56), ReadWrite).
 Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
+   The granularity-validity matrix (VT-d 5.20 §6.5.2.3 / §6.5.2.4): the
+   descriptor-acceptance check.  For the PASID-cache invalidation the G field
+   encodes Domain-Selective = 00b, PASID-Selective-within-Domain = 01b,
+   Global = 11b, and 10b is Reserved; for the P_IOTLB it encodes
+   PASID-selective = 10b and Page-Selective-within-PASID = 11b, with 00b and
+   01b Reserved.  `granularity_valid` rejects the reserved encodings — a
+   reserved descriptor is invalid (the model's fault path).
+   ============================================================ *)
+
+(* The PASID-cache invalidation accepts 00b/01b/11b and rejects the
+   reserved 10b. *)
+Lemma test_vector_granularity_valid_pasid_cache :
+  pasid_cache_inv_granularity_valid (mword_of_int 0 : mword 2) = true /\
+  pasid_cache_inv_granularity_valid (mword_of_int 1 : mword 2) = true /\
+  pasid_cache_inv_granularity_valid (mword_of_int 2 : mword 2) = false /\
+  pasid_cache_inv_granularity_valid (mword_of_int 3 : mword 2) = true.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* The P_IOTLB accepts 10b/11b and rejects the reserved 00b/01b. *)
+Lemma test_vector_granularity_valid_p_iotlb :
+  p_iotlb_granularity_valid (mword_of_int 0 : mword 2) = false /\
+  p_iotlb_granularity_valid (mword_of_int 1 : mword 2) = false /\
+  p_iotlb_granularity_valid (mword_of_int 2 : mword 2) = true /\
+  p_iotlb_granularity_valid (mword_of_int 3 : mword 2) = true.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* The reserved 10b on the PASID-cache invalidation is rejected (invalid
+   descriptor), so the cache is not touched by a 10b descriptor. *)
+Lemma test_vector_granularity_valid_reserved_10b :
+  pasid_cache_inv_granularity_valid (mword_of_int 2 : mword 2) = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The two-descriptor queue: the P_IOTLB PASID-selective command (the IOTLB
+   half of §6.5.2.2) followed by the Invalidation-Wait completion (§6.5.2.9). *)
+Definition piotlb_pair_queue (d p : Z) : list InvalidationCmd :=
+  [ {| InvalidationCmd_is_wait := false; InvalidationCmd_gran := Gran_PasidDid;
+       InvalidationCmd_va := (mword_of_int 0 : mword 64); InvalidationCmd_did := d; InvalidationCmd_pasid := p |};
+    {| InvalidationCmd_is_wait := true;  InvalidationCmd_gran := Gran_PasidDid;
+       InvalidationCmd_va := (mword_of_int 0 : mword 64); InvalidationCmd_did := d; InvalidationCmd_pasid := p |} ].
+
+(* The queue form of the P_IOTLB pairing (VT-d 5.20 §6.5.2.2 / §6.5.2.4):
+   on the four-entry mixed IOTLB the queued PASID-selective (0, 1) command
+   keeps exactly the entries whose DID or PASID differs, and the
+   Invalidation-Wait reports completion. *)
+Lemma test_vector_iommu_queue_piotlb_pair :
+  iommu_process_queue (piotlb_pair_queue 0 1) conf_mixed_iotlb
+  = Some [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
+              IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
+           {| IotlbEntry_did := 1; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 8192 : mword 64);
+              IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|};
+           {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
+              IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|} ].
+Proof. vm_compute. reflexivity. Qed.

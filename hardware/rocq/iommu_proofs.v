@@ -33,6 +33,7 @@ Require Import SailStdpp.Operators_mwords. (* eq_vec_false_iff *)
 Require Import SailStdpp.MachineWord.  (* slice / word_to_N (unfolding subrange_vec_dec) *)
 Require Import machine_types.
 Require Import machine.
+Require Import iommu_conformance. (* conf_mixed_iotlb, piotlb_pair_queue (the vectors) *)
 Require Import coherence.       (* remove_entry, read_pte_absent_after_remove *)
 Require Import coherence_leaf.  (* unmap_leaf_mem, leaf_addr_removal_faults,
                                    leaf_addr_none_implies_translate_none *)
@@ -131,12 +132,12 @@ Definition iommu_e0 : IotlbEntry :=
   {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
      IotlbEntry_iova := (mword_of_int 0 : mword 64);
      IotlbEntry_pa := (mword_of_int 0 : mword 56);
-     IotlbEntry_perm := ReadWrite |}.
+     IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|}.
 Definition iommu_e1 : IotlbEntry :=
   {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
      IotlbEntry_iova := (mword_of_int 4096 : mword 64);
      IotlbEntry_pa := (mword_of_int 4096 : mword 56);
-     IotlbEntry_perm := ReadWrite |}.
+     IotlbEntry_perm := ReadWrite ; IotlbEntry_gen := 0|}.
 
 (* Invalidating the page containing va = 0 drops e0 (VPN 0) and keeps e1 (VPN 1). *)
 Lemma test_vector_iommu_invalidate_va0 :
@@ -902,7 +903,7 @@ Lemma test_vector_ats_translate_hit :
   = ([ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0;
           IotlbEntry_iova := (mword_of_int 0 : mword 64);
           IotlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
-          IotlbEntry_perm := Read |} ],
+          IotlbEntry_perm := Read ; IotlbEntry_gen := 0|} ],
      [ {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
           DevTlbEntry_pa := phys_addr (mword_of_int 42 : mword 44) (page_offset (mword_of_int 0 : mword 64));
           DevTlbEntry_perm := Read |} ]).
@@ -952,7 +953,7 @@ Lemma ats_translate_spec (iotlb : list IotlbEntry) (devtlbs : list DevTlbEntry)
   iommu_walk root mem iova = Some (pa, perm) ->
   ats_translate iotlb devtlbs root did iova mem
   = ({| IotlbEntry_did := did; IotlbEntry_pasid := 0; IotlbEntry_iova := iova;
-        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb,
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm ; IotlbEntry_gen := 0|} :: iotlb,
      {| DevTlbEntry_did := did; DevTlbEntry_iova := iova;
         DevTlbEntry_pa := pa; DevTlbEntry_perm := perm |} :: devtlbs).
 Proof. intros H. unfold ats_translate. rewrite H. reflexivity. Qed.
@@ -1084,8 +1085,10 @@ Proof. intros H. unfold pri_fault_delivers. rewrite H. cbn. reflexivity. Qed.
 
 (* The two-descriptor queue: invalidate va, then wait (the completion barrier). *)
 Definition invalidate_wait_queue (va : mword 64) : list InvalidationCmd :=
-  [ {| InvalidationCmd_is_wait := false; InvalidationCmd_va := va |};
-    {| InvalidationCmd_is_wait := true;  InvalidationCmd_va := va |} ].
+  [ {| InvalidationCmd_is_wait := false; InvalidationCmd_gran := Gran_VA;
+       InvalidationCmd_va := va; InvalidationCmd_did := 0; InvalidationCmd_pasid := 0 |};
+    {| InvalidationCmd_is_wait := true;  InvalidationCmd_gran := Gran_VA;
+       InvalidationCmd_va := va; InvalidationCmd_did := 0; InvalidationCmd_pasid := 0 |} ].
 
 (* Draining [Invalidate va; Wait] applies exactly one invalidation and then
    completes with the invalidated IOTLB. *)
@@ -1507,3 +1510,303 @@ Proof.
          conjunction reduces once either side is decided) *)
       cbn. rewrite E. destruct (Z.eqb_spec e.(IotlbEntry_did) did); cbn; exact IH.
 Qed.
+
+(* ============================================================
+   IOTLB generation tags (S4.5, SMMU/AMD-Vi replay of the PASID-cache gen
+   machinery): an IotlbEntry carries the generation its (did, pasid) tag was
+   filled under, so a reused tag across address-space teardown (the first-stage
+   root changed: a new SMMU CD / AMD-Vi PASID-table root for the same
+   (SID, ASID) / (0, PASID)) does not answer stale cached translations.
+
+   - `iotlb_lookup_gen_Some_implies` — a gen-g lookup answer witnesses a cached
+     entry at generation g (did/pasid/VPN all match).
+   - `iotlb_lookup_gen_stale_misses` — a cache whose (did, pasid) entries are
+     all at stale generations misses the gen-g lookup: the reused tag's old
+     translations cannot answer.
+   - `iotlb_tag_conflict_stale_exists` — the conflict holds iff some (did,
+     pasid) entry carries a stale generation.
+   - `iotlb_evict_gen_clears_conflict` — evicting the stale generations clears
+     the conflict.
+   - `iotlb_lookup_gen_after_evict_gen_same_g` — the eviction preserves the
+     gen-g view of the cache (fresh entries survive).
+   - `iotlb_lookup_gen_after_refill_gen` / `iotlb_evict_gen_refill_cycle` —
+     after evict + refill under g the gen-g lookup answers with the fresh
+     translation (the stale-generation conflict resolved).
+   ============================================================ *)
+
+Lemma iotlb_lookup_gen_Some_implies (iotlb : list IotlbEntry) (d p : Z) (va : mword 64)
+    (g : Z) (r : mword 56 * Perm) :
+  iotlb_lookup_gen iotlb (d, p) va g = Some r ->
+  exists e, In e iotlb /\ e.(IotlbEntry_did) = d /\ e.(IotlbEntry_pasid) = p /\
+            vpn_of e.(IotlbEntry_iova) = vpn_of va /\ e.(IotlbEntry_gen) = g.
+Proof.
+  revert d p g. induction iotlb as [| e rest IH]; cbn; intros d p g H.
+  - discriminate.
+  - destruct (Z.eqb e.(IotlbEntry_did) d) eqn:Hd; cbn in H.
+    + destruct (Z.eqb e.(IotlbEntry_pasid) p) eqn:Hp; cbn in H.
+      * destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Hva; cbn in H.
+        -- destruct (Z.eqb e.(IotlbEntry_gen) g) eqn:Hg; cbn in H.
+           ++ injection H as <-.
+              exists e. split; [left; reflexivity |].
+              repeat split.
+              ** apply Z.eqb_eq. exact Hd.
+              ** apply Z.eqb_eq. exact Hp.
+              ** apply eq_vec_true_iff. exact Hva.
+              ** apply Z.eqb_eq. exact Hg.
+           ++ destruct (IH d p g H) as [e' [He' Hprops]].
+              exists e'. split; [right; exact He' | exact Hprops].
+        -- destruct (IH d p g H) as [e' [He' Hprops]].
+           exists e'. split; [right; exact He' | exact Hprops].
+      * destruct (IH d p g H) as [e' [He' Hprops]].
+        exists e'. split; [right; exact He' | exact Hprops].
+    + destruct (IH d p g H) as [e' [He' Hprops]].
+      exists e'. split; [right; exact He' | exact Hprops].
+Qed.
+
+(* A cache with no gen-g (did, pasid, VPN) entry misses the gen-g lookup. *)
+Lemma iotlb_lookup_gen_stale_misses (iotlb : list IotlbEntry) (d p : Z) (va : mword 64) (g : Z) :
+  Forall (fun e => e.(IotlbEntry_did) <> d \/ e.(IotlbEntry_pasid) <> p
+                   \/ vpn_of e.(IotlbEntry_iova) <> vpn_of va \/ e.(IotlbEntry_gen) <> g)
+         iotlb ->
+  iotlb_lookup_gen iotlb (d, p) va g = None.
+Proof.
+  intros Hf. induction Hf as [| e rest Hhead Hrest IH]; cbn.
+  - reflexivity.
+  - destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn.
+      * destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Hva; cbn.
+        -- destruct (Z.eqb_spec e.(IotlbEntry_gen) g) as [Hg | Hg]; cbn.
+           ++ (* all four guards match: the head would answer — contradict the
+                head disjunct of the Forall *)
+              exfalso.
+              destruct Hhead as [Hd' | [Hp' | [Hva' | Hg']]].
+              ** apply Hd'. exact Hd.
+              ** apply Hp'. exact Hp.
+              ** apply Hva'. apply eq_vec_true_iff. exact Hva.
+              ** apply Hg'. exact Hg.
+           ++ exact IH.
+        -- exact IH.
+      * exact IH.
+    + exact IH.
+Qed.
+
+(* A (did, pasid) tag conflict means some entry carries a stale generation. *)
+Lemma iotlb_tag_conflict_stale_exists (iotlb : list IotlbEntry) (d p g : Z) :
+  iotlb_tag_conflict iotlb (d, p) g = true ->
+  exists e, In e iotlb /\ e.(IotlbEntry_did) = d /\ e.(IotlbEntry_pasid) = p /\ e.(IotlbEntry_gen) <> g.
+Proof.
+  revert d p g. induction iotlb as [| e rest IH]; cbn; intros d p g H.
+  - discriminate.
+  - destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn in H.
+      * destruct (Z.eqb_spec e.(IotlbEntry_gen) g) as [Hg | Hg]; cbn in H.
+        -- destruct (IH d p g H) as [e' [He' Hprops]].
+           exists e'. split; [right; exact He' | exact Hprops].
+        -- exists e. split; [left; reflexivity |]. repeat split; auto.
+      * destruct (IH d p g H) as [e' [He' Hprops]].
+        exists e'. split; [right; exact He' | exact Hprops].
+    + destruct (IH d p g H) as [e' [He' Hprops]].
+      exists e'. split; [right; exact He' | exact Hprops].
+Qed.
+
+(* Evicting the stale generations clears the conflict. *)
+Lemma iotlb_evict_gen_clears_conflict (iotlb : list IotlbEntry) (d p g : Z) :
+  iotlb_tag_conflict (iotlb_evict_gen iotlb (d, p) g) (d, p) g = false.
+Proof.
+  revert d p g. induction iotlb as [| e rest IH]; cbn; intros d p g.
+  - reflexivity.
+  - destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn.
+      * destruct (Z.eqb_spec e.(IotlbEntry_gen) g) as [Hg | Hg]; cbn.
+        -- (* e is current: the eviction keeps it; the conflict scan sees a
+              current entry and moves to the tail.  The outer (conflict) guards
+              only appear after the inner evict-if reduces, so they need the
+              eqb rewrites then — the same destruct-substitution ordering as
+              pasid_cache_evict_gen_conflict_free. *)
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn. exact (IH d p g).
+        -- (* e is stale: the eviction clears it, so the conflict scan now
+              scans `rest` — its guards are on the tail's head, not on e, so
+              only the gen-inequality rewrite (which dropped e) is needed. *)
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+           exact (IH d p g).
+      * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn.
+        exact (IH d p g).
+    + cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g).
+Qed.
+
+(* The eviction preserves the gen-g view: entries at generation g (or other
+   tags) survive, so a gen-g lookup is unchanged. *)
+Lemma iotlb_lookup_gen_after_evict_gen_same_g (iotlb : list IotlbEntry) (d p : Z)
+    (va : mword 64) (g : Z) :
+  iotlb_lookup_gen (iotlb_evict_gen iotlb (d, p) g) (d, p) va g
+  = iotlb_lookup_gen iotlb (d, p) va g.
+Proof.
+  revert d p g. induction iotlb as [| e rest IH]; cbn; intros d p g.
+  - reflexivity.
+  - destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn.
+      * destruct (Z.eqb_spec e.(IotlbEntry_gen) g) as [Hg | Hg]; cbn.
+        -- (* e is current: kept by the eviction; both lookups check the head
+              with the same (did, pasid, gen) guards — the VPN guard decides *)
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn.
+           destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Hva; cbn.
+           ++ (* VPN matches: both answer with e's translation (the gen guard
+                 comes after the VPN guard in the lookup's andb, so Hg is
+                 still present here) *)
+              rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn. reflexivity.
+           ++ (* VPN differs: the lookup skips the head on the original and
+                 recurses; the eviction kept e, so both sides recurse *)
+              exact (IH d p g).
+        -- (* e is stale: dropped by the eviction; the lookup's gen guard is
+              false on the original head — but it sits after the VPN guard in
+              the andb, so destruct the VPN guard first, then rewrite Hg *)
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+           destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Hva; cbn.
+           ++ exact (IH d p g).
+           ++ exact (IH d p g).
+      * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn.
+        exact (IH d p g).
+    + cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g).
+Qed.
+
+(* Refilling under g installs the fresh translation so the gen-g lookup answers
+   with exactly (pa, perm) — even over a stale cache (the first matching entry
+   is replaced in place, a fresh tag is prepended). *)
+Lemma iotlb_lookup_gen_after_refill_gen (iotlb : list IotlbEntry) (d p : Z) (va : mword 64)
+    (g : Z) (pa : mword 56) (perm : Perm) :
+  iotlb_lookup_gen (iotlb_refill_gen iotlb (d, p) va g pa perm) (d, p) va g = Some (pa, perm).
+Proof.
+  revert d p g. induction iotlb as [| e rest IH]; cbn; intros d p g.
+  - (* the fresh entry is prepended: the lookup's guards on it are the
+       reflexivity equalities d=?d, p=?p, g=?g, va=?va *)
+    unfold iotlb_refill_gen. cbn.
+    rewrite (proj2 (Z.eqb_eq d d) eq_refl), (proj2 (Z.eqb_eq p p) eq_refl),
+            (proj2 (Z.eqb_eq g g) eq_refl).
+    rewrite (proj2 (eq_vec_true_iff (vpn_of va) (vpn_of va)) eq_refl).
+    cbn. reflexivity.
+  - destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn.
+      * destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Hva; cbn.
+        -- (* head matches the tag + VPN: the refill replaces it in place —
+              the did/pasid/iova guards are e's (Hd, Hp, Hva), only the gen
+              guard is the fresh g, which needs the reflexivity rewrite *)
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp).
+           unfold iotlb_refill_gen. cbn. rewrite Hva. cbn.
+           rewrite (proj2 (Z.eqb_eq g g) eq_refl). cbn. reflexivity.
+        -- (* head's VPN differs: the refill recurses, the lookup skips the
+              head (VPN guard false) and finds the fresh entry in the tail *)
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp).
+           unfold iotlb_refill_gen. cbn. rewrite Hva. cbn.
+           exact (IH d p g).
+      * (* pasid differs: both recurse on the tail *)
+         cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn.
+         unfold iotlb_refill_gen. cbn. exact (IH d p g).
+    + (* did differs: both recurse on the tail *)
+      cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn.
+      unfold iotlb_refill_gen. cbn. exact (IH d p g).
+Qed.
+
+(* Refilling preserves a conflict-free cache: the refill either replaces the
+   first (did, pasid, va) entry in place (keeping its did/pasid, freshening
+   only pa/perm/gen) or prepends a fresh (d, p, va, g) entry — it never
+   introduces a stale-generation (d, p) tag, so a conflict-free cache stays
+   conflict-free. *)
+Lemma iotlb_tag_conflict_after_refill_gen (iotlb : list IotlbEntry) (d p : Z) (va : mword 64)
+    (g : Z) (pa : mword 56) (perm : Perm) :
+  iotlb_tag_conflict iotlb (d, p) g = false ->
+  iotlb_tag_conflict (iotlb_refill_gen iotlb (d, p) va g pa perm) (d, p) g = false.
+Proof.
+  revert d p g. induction iotlb as [| e rest IH]; cbn; intros d p g H.
+  - (* the fresh (d, p, va, g) entry is prepended: the conflict check sees the
+       current generation and reports no conflict *)
+    unfold iotlb_refill_gen. cbn.
+    rewrite (proj2 (Z.eqb_eq d d) eq_refl), (proj2 (Z.eqb_eq p p) eq_refl),
+            (proj2 (Z.eqb_eq g g) eq_refl). cbn. reflexivity.
+  - destruct (Z.eqb_spec e.(IotlbEntry_did) d) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec e.(IotlbEntry_pasid) p) as [Hp | Hp]; cbn in H.
+      * destruct (Z.eqb_spec e.(IotlbEntry_gen) g) as [Hg | Hg]; cbn in H.
+        -- (* e is current (gen = g): kept by the refill scan; the head is
+              replaced in place with the fresh gen, still current — the
+              conflict check recurses, and the tail was already conflict-free
+              (H) *)
+           destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Hva; cbn.
+           ++ (* head replaced in place: the conflict check recurses on the
+                 original tail, which was already conflict-free (H) *)
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp).
+              unfold iotlb_refill_gen. cbn.
+              rewrite (proj2 (Z.eqb_eq g g) eq_refl). cbn.
+              exact H.
+           ++ (* VPN differs: the refill recurses on the tail; the conflict
+                 check recurses on the (still current) head, then over the
+                 refilled tail — the IH *)
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp).
+              unfold iotlb_refill_gen. cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+              exact (IH d p g H).
+        -- (* e is stale: the original cache already had a conflict (H) *)
+           discriminate.
+      * (* pasid differs: both recurse on the tail *)
+        cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn.
+        unfold iotlb_refill_gen. cbn. exact (IH d p g H).
+    + (* did differs: both recurse on the tail *)
+      cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn.
+      unfold iotlb_refill_gen. cbn. exact (IH d p g H).
+Qed.
+
+(* The evict-then-refill cycle resolves the stale-generation conflict: after
+   evicting the stale (did, pasid) generations and refilling under g, the gen-g
+   lookup answers with the fresh translation and no conflict remains. *)
+Theorem iotlb_evict_gen_refill_cycle (iotlb : list IotlbEntry) (d p : Z) (va : mword 64)
+    (g : Z) (pa : mword 56) (perm : Perm) :
+  iotlb_lookup_gen (iotlb_refill_gen (iotlb_evict_gen iotlb (d, p) g) (d, p) va g pa perm)
+    (d, p) va g = Some (pa, perm) /\
+  iotlb_tag_conflict (iotlb_refill_gen (iotlb_evict_gen iotlb (d, p) g) (d, p) va g pa perm)
+    (d, p) g = false.
+Proof.
+  split.
+  - exact (iotlb_lookup_gen_after_refill_gen (iotlb_evict_gen iotlb (d, p) g) d p va g pa perm).
+  - (* the eviction already cleared the stale generations
+       (iotlb_evict_gen_clears_conflict), and the refill preserves the
+       conflict-free state (iotlb_tag_conflict_after_refill_gen) *)
+    eapply iotlb_tag_conflict_after_refill_gen.
+    exact (iotlb_evict_gen_clears_conflict iotlb d p g).
+Qed.
+
+(* ============================================================
+   P_IOTLB in the command queue (VT-d 5.20 §6.5.2.4): the queue form of the
+   mandatory §6.5.2.2 PASID-cache -> IOTLB pairing.  A PASID-cache
+   invalidation (the eviction half) followed by a queued P_IOTLB
+   PASID-selective command (Gran_PasidDid) clears *both* halves of the
+   (DID, PASID) tag: no PASID-cache entry and no IOTLB entry survives.
+   ============================================================ *)
+
+(* Draining [P_IOTLB (DID,PASID); Wait] completes with the PASID-selective
+   IOTLB invalidation applied — the queue drops exactly the (DID, PASID)-
+   associated entries. *)
+Lemma iommu_process_queue_piotlb_spec (iotlb : list IotlbEntry) (d p : Z) :
+  iommu_process_queue (piotlb_pair_queue d p) iotlb
+  = Some (iotlb_invalidate_pasid_did iotlb (d, p)).
+Proof. cbn. reflexivity. Qed.
+
+(* The §6.5.2.2 pairing through the queue: the PASID-cache eviction (the
+   preceding descriptor's cache half) and the queued P_IOTLB command clear
+   the (DID, PASID) tag from both caches — no usable PASID-cache entry and
+   no IOTLB entry survives. *)
+Theorem iommu_queue_piotlb_pair_clears (cache : list PasidCacheEntry)
+    (iotlb : list IotlbEntry) (d p : Z) :
+  Forall (fun e => e.(PasidCacheEntry_did) <> d \/ e.(PasidCacheEntry_pasid) <> p
+                   \/ e.(PasidCacheEntry_present) = false)
+         (pasid_cache_evict_pasid cache (d, p)) /\
+  iommu_process_queue (piotlb_pair_queue d p) iotlb
+  = Some (iotlb_invalidate_pasid_did iotlb (d, p)).
+Proof.
+  split.
+  - exact (proj1 (iotlb_pasid_cache_pair_invalidate_clears cache iotlb d p)).
+  - exact (iommu_process_queue_piotlb_spec iotlb d p).
+Qed.
+
+(* The executable pairing vector lives in `iommu_conformance.v`
+   (it needs `conf_mixed_iotlb`). *)

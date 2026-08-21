@@ -85,7 +85,8 @@ struct IotlbEntry = {
   pasid : int,
   iova  : vaddr,
   pa    : paddr,
-  perm  : Perm
+  perm  : Perm,
+  gen   : int
 }
 
 // An endpoint device's own translation cache (device-TLB), filled by an ATS
@@ -119,9 +120,23 @@ struct PriRequest = {
 // completion barrier); is_wait = false is IotlbInvalidate va (a 4KiB selective
 // IOTLB invalidation).  The circular-buffer head/tail MMIO is the weak-memory
 // lift's job (S4.2b-2); here the queue is a plain FIFO list.
+// The queued-invalidation command's granularity (VT-d 5.20 §6.5.2.3/§6.5.2.4):
+// Gran_VA is the 4KiB-selective IotlbInvalidate (the existing command),
+// Gran_PasidDid is the PASID-based-IOTLB Invalidate (P_IOTLB) PASID-selective
+// granularity — drop the IOTLB entries associated with the specified (DID,
+// PASID), the IOTLB half of the mandatory §6.5.2.2 PASID-cache -> IOTLB
+// pairing.
+enum InvalidationGran = {
+  Gran_VA,
+  Gran_PasidDid
+}
+
 struct InvalidationCmd = {
   is_wait : bool,
-  va      : vaddr
+  gran    : InvalidationGran,
+  va      : vaddr,
+  did     : int,
+  pasid   : int
 }
 
 // SMMUv3 stream table / context descriptor (SSG-4 / S4.4): the structural layer
@@ -401,7 +416,7 @@ function amdvi_translate_fill(root, iotlb, mem, iova) =
         None() => (None(), iotlb),
         Some((pa, perm)) =>
           (Some((pa, perm)),
-           struct { did = 0, pasid = 0, iova = iova, pa = pa, perm = perm } :: iotlb)
+           struct { did = 0, pasid = 0, iova = iova, pa = pa, perm = perm, gen = 0 } :: iotlb)
       }
   }
 
@@ -462,7 +477,7 @@ function smmu_translate_fill(stes, cds, sid, iotlb, mem, gva) =
         None() => (None(), iotlb),
         Some((pa, perm)) =>
           (Some((pa, perm)),
-           struct { did = sid, pasid = 0, iova = gva, pa = pa, perm = perm } :: iotlb)
+           struct { did = sid, pasid = 0, iova = gva, pa = pa, perm = perm, gen = 0 } :: iotlb)
       }
   }
 
@@ -1036,19 +1051,29 @@ function iotlb_invalidate(entries, va) = match entries {
     else e :: iotlb_invalidate(rest, va)
 }
 
-// ---- queued invalidation (SSG-4 / S4.2b) ----
+// ---- invalidation granularity validity (S4.5 cross-check, §6.5.2.2/§6.5.2.4) ----
+//
+// A descriptor whose Granularity field holds a *reserved* encoding is an
+// invalid descriptor.  For the PASID-cache Invalidate Descriptor (§6.5.2.2)
+// the G field encodes Domain-Selective = 00b, PASID-Selective-within-Domain =
+// 01b, Global = 11b, and 10b is Reserved.  For the P_IOTLB (§6.5.2.4) the G
+// field encodes PASID-selective = 10b and Page-Selective-within-PASID = 11b;
+// 00b and 01b are Reserved.  `granularity_valid` is the descriptor-acceptance
+// check: a reserved encoding is rejected (treated as an invalid descriptor,
+// the model's fault path), proved as the `granularity_valid_*` vectors.
+val pasid_cache_inv_granularity_valid : bits(2) -> bool
+function pasid_cache_inv_granularity_valid(g) = match g {
+  0b00 => true,   // 00b Domain-Selective
+  0b01 => true,   // 01b PASID-Selective-within-Domain
+  0b11 => true,   // 11b Global
+  _    => false   // 10b Reserved -> invalid descriptor
+}
 
-// The IOMMU's command-queue drain: process the FIFO in order, applying each
-// IotlbInvalidate to the IOTLB, and complete (Some iotlb) when an
-// Invalidation-Wait is reached — the Invalidation-Wait completion (VT-d
-// §6.5.2.9) that orders the prior invalidations.  A queue with no wait
-// descriptor drains to None (no completion).
-val iommu_process_queue : (list(InvalidationCmd), list(IotlbEntry)) -> option(list(IotlbEntry))
-function iommu_process_queue(queue, iotlb) = match queue {
-  [||] => None(),
-  c :: rest =>
-    if c.is_wait then Some(iotlb)
-    else iommu_process_queue(rest, iotlb_invalidate(iotlb, c.va))
+val p_iotlb_granularity_valid : bits(2) -> bool
+function p_iotlb_granularity_valid(g) = match g {
+  0b10 => true,   // 10b PASID-selective
+  0b11 => true,   // 11b Page-Selective-within-PASID
+  _    => false   // 00b/01b Reserved -> invalid descriptor
 }
 
 // ---- ATS / PRI device side (SSG-4 / S4.3) ----
@@ -1063,7 +1088,7 @@ function ats_translate(iotlb, devtlbs, root, did, iova, mem) =
   match iommu_walk(root, mem, iova) {
     None() => (iotlb, devtlbs),
     Some((pa, perm)) =>
-      (struct { did = did, pasid = 0, iova = iova, pa = pa, perm = perm } :: iotlb,
+      (struct { did = did, pasid = 0, iova = iova, pa = pa, perm = perm, gen = 0 } :: iotlb,
        struct { did = did, iova = iova, pa = pa, perm = perm } :: devtlbs)
   }
 
@@ -1142,6 +1167,115 @@ function iotlb_invalidate_pasid_did(entries, dp) = match entries {
     let (d, p) = dp in
     if e.did == d & e.pasid == p then iotlb_invalidate_pasid_did(rest, dp)
     else e :: iotlb_invalidate_pasid_did(rest, dp)
+}
+
+// ---- IOTLB generation tags (SSG-4 / S4.5, SMMU/AMD-Vi replay) ----
+//
+// The gen-tagged IOTLB view, the translation-cache twin of the PASID-cache
+// generation machinery: an IotlbEntry carries the *generation* its (did,
+// pasid) tag was filled under, so a reused tag across address-space teardown
+// (the first-stage root changed: a new SMMU CD / a new AMD-Vi PASID-table
+// root for the same (SID, ASID) / (0, PASID)) does not answer stale cached
+// translations.  `iotlb_lookup_gen` answers iff the (did, pasid, IOVA page)
+// tag matches AND the entry's generation equals the current one g;
+// `iotlb_tag_conflict` detects a reused tag holding a stale generation (any
+// (did, pasid) entry with gen != g); `iotlb_refill_gen` installs the fresh
+// translation under (did, pasid, iova) with generation g; `iotlb_evict_gen`
+// clears exactly the stale-generation entries of the reused tag.  The
+// generation-0 slice — `iotlb_lookup` / the fill loops below — is the
+// legacy view of the same cache.
+val iotlb_lookup_gen : (list(IotlbEntry), (int, int), vaddr, int) -> option((paddr, Perm))
+function iotlb_lookup_gen(entries, dp, va, g) = match entries {
+  [||] => None(),
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & vpn_of(e.iova) == vpn_of(va) & e.gen == g then Some((e.pa, e.perm))
+    else iotlb_lookup_gen(rest, dp, va, g)
+}
+
+val iotlb_tag_conflict : (list(IotlbEntry), (int, int), int) -> bool
+function iotlb_tag_conflict(entries, dp, g) = match entries {
+  [||] => false,
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p then
+      if e.gen == g then iotlb_tag_conflict(rest, dp, g)
+      else true
+    else iotlb_tag_conflict(rest, dp, g)
+}
+
+val iotlb_refill_gen : (list(IotlbEntry), (int, int), vaddr, int, paddr, Perm) -> list(IotlbEntry)
+function iotlb_refill_gen(entries, dp, va, g, pa, perm) = match entries {
+  [||] =>
+    let (d, p) = dp in
+    struct { did = d, pasid = p, iova = va, pa = pa, perm = perm, gen = g } :: [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & vpn_of(e.iova) == vpn_of(va) then
+      struct { did = e.did, pasid = e.pasid, iova = e.iova, pa = pa, perm = perm, gen = g } :: rest
+    else e :: iotlb_refill_gen(rest, dp, va, g, pa, perm)
+}
+
+val iotlb_evict_gen : (list(IotlbEntry), (int, int), int) -> list(IotlbEntry)
+function iotlb_evict_gen(entries, dp, g) = match entries {
+  [||] => [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & e.gen != g then iotlb_evict_gen(rest, dp, g)
+    else e :: iotlb_evict_gen(rest, dp, g)
+}
+
+// The generation-aware SMMU / AMD-Vi fill loops: the walker consults the
+// *gen-tagged* IOTLB (a stale-generation entry is a miss) and refills under
+// the current generation g.  After a first-stage root change software bumps
+// g (a new CD / PASID-table root epoch), so the stale cached translations
+// cannot answer — the loop re-walks and refills under g (the SMMU/AMD-Vi
+// twin of the PASID-cache tag-conflict eviction).
+val smmu_translate_fill_gen : (list(Ste), list(Cd), int, list(IotlbEntry), PageTable, vaddr, int)
+  -> (option((paddr, Perm)), list(IotlbEntry))
+function smmu_translate_fill_gen(stes, cds, sid, iotlb, mem, gva, g) =
+  match iotlb_lookup_gen(iotlb, (sid, 0), gva, g) {
+    Some(r) => (Some(r), iotlb),
+    None() =>
+      match smmu_translate(stes, cds, sid, mem, gva) {
+        None() => (None(), iotlb),
+        Some((pa, perm)) =>
+          (Some((pa, perm)), iotlb_refill_gen(iotlb, (sid, 0), gva, g, pa, perm))
+      }
+  }
+
+val amdvi_translate_fill_gen : (bits(44), list(IotlbEntry), PageTable, vaddr, int)
+  -> (option((paddr, Perm)), list(IotlbEntry))
+function amdvi_translate_fill_gen(root, iotlb, mem, iova, g) =
+  match iotlb_lookup_gen(iotlb, (0, 0), iova, g) {
+    Some(r) => (Some(r), iotlb),
+    None() =>
+      match amdvi_walk(root, mem, iova) {
+        None() => (None(), iotlb),
+        Some((pa, perm)) =>
+          (Some((pa, perm)), iotlb_refill_gen(iotlb, (0, 0), iova, g, pa, perm))
+      }
+  }
+
+// ---- queued invalidation (SSG-4 / S4.2b + S4.5 P_IOTLB) ----
+//
+// The IOMMU's command-queue drain: process the FIFO in order, applying each
+// command to the IOTLB, and complete (Some iotlb) when an Invalidation-Wait
+// is reached — the Invalidation-Wait completion (VT-d §6.5.2.9) that orders
+// the prior invalidations.  A queue with no wait descriptor drains to None
+// (no completion).  The Gran_VA command is the 4KiB IotlbInvalidate
+// (§6.5.2.3); the Gran_PasidDid command is the P_IOTLB PASID-selective
+// (§6.5.2.4) — drop the (DID, PASID)-associated IOTLB entries, the IOTLB
+// half of the mandatory §6.5.2.2 PASID-cache -> IOTLB pairing.
+val iommu_process_queue : (list(InvalidationCmd), list(IotlbEntry)) -> option(list(IotlbEntry))
+function iommu_process_queue(queue, iotlb) = match queue {
+  [||] => None(),
+  c :: rest =>
+    if c.is_wait then Some(iotlb)
+    else match c.gran {
+      Gran_VA => iommu_process_queue(rest, iotlb_invalidate(iotlb, c.va)),
+      Gran_PasidDid => iommu_process_queue(rest, iotlb_invalidate_pasid_did(iotlb, (c.did, c.pasid)))
+    }
 }
 
 // PRI page request: enqueue a request to map the page, tagged by

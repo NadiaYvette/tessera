@@ -330,47 +330,52 @@ Record IotlbEntry := {
   IotlbEntry_iova : vaddr_typ;
   IotlbEntry_pa : paddr;
   IotlbEntry_perm : Perm;
+  IotlbEntry_gen : Z;
 }.
 Arguments IotlbEntry : clear implicits.
 #[export]
 Instance Decidable_eq_IotlbEntry : EqDecision IotlbEntry.
-   intros [x0 x1 x2 x3 x4].
-   intros [y0 y1 y2 y3 y4].
+   intros [x0 x1 x2 x3 x4 x5].
+   intros [y0 y1 y2 y3 y4 y5].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
   cmp_record_field x3 y3.
   cmp_record_field x4 y4.
+  cmp_record_field x5 y5.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_IotlbEntry : Countable IotlbEntry.
 refine {|
-  encode x := encode (IotlbEntry_did x, IotlbEntry_pasid x, IotlbEntry_iova x, IotlbEntry_pa x, IotlbEntry_perm x);
-  decode x := '(x0, x1, x2, x3, x4) ← decode x;
-              mret (Build_IotlbEntry x0 x1 x2 x3 x4)
+  encode x := encode (IotlbEntry_did x, IotlbEntry_pasid x, IotlbEntry_iova x, IotlbEntry_pa x, IotlbEntry_perm x, IotlbEntry_gen x);
+  decode x := '(x0, x1, x2, x3, x4, x5) ← decode x;
+              mret (Build_IotlbEntry x0 x1 x2 x3 x4 x5)
 |}.
 abstract (
-  intros [x0 x1 x2 x3 x4];
+  intros [x0 x1 x2 x3 x4 x5];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'IotlbEntry_did' := e ]}" :=
-  match r with Build_IotlbEntry _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) =>
-    Build_IotlbEntry e f1 f2 f3 f4 end (at level 0).
+  match r with Build_IotlbEntry _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) (_ as f5) =>
+    Build_IotlbEntry e f1 f2 f3 f4 f5 end (at level 0).
 Notation "{[ r 'with' 'IotlbEntry_pasid' := e ]}" :=
-  match r with Build_IotlbEntry (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) =>
-    Build_IotlbEntry f0 e f2 f3 f4 end (at level 0).
+  match r with Build_IotlbEntry (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) (_ as f5) =>
+    Build_IotlbEntry f0 e f2 f3 f4 f5 end (at level 0).
 Notation "{[ r 'with' 'IotlbEntry_iova' := e ]}" :=
-  match r with Build_IotlbEntry (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) =>
-    Build_IotlbEntry f0 f1 e f3 f4 end (at level 0).
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) (_ as f5) =>
+    Build_IotlbEntry f0 f1 e f3 f4 f5 end (at level 0).
 Notation "{[ r 'with' 'IotlbEntry_pa' := e ]}" :=
-  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) =>
-    Build_IotlbEntry f0 f1 f2 e f4 end (at level 0).
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) (_ as f5) =>
+    Build_IotlbEntry f0 f1 f2 e f4 f5 end (at level 0).
 Notation "{[ r 'with' 'IotlbEntry_perm' := e ]}" :=
-  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ =>
-    Build_IotlbEntry f0 f1 f2 f3 e end (at level 0).
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ (_ as f5) =>
+    Build_IotlbEntry f0 f1 f2 f3 e f5 end (at level 0).
+Notation "{[ r 'with' 'IotlbEntry_gen' := e ]}" :=
+  match r with Build_IotlbEntry (_ as f0) (_ as f1) (_ as f2) (_ as f3) (_ as f4) _ =>
+    Build_IotlbEntry f0 f1 f2 f3 f4 e end (at level 0).
 #[export]
 Instance dummy_IotlbEntry : Inhabited (IotlbEntry) := {
   inhabitant := {|
@@ -378,7 +383,8 @@ Instance dummy_IotlbEntry : Inhabited (IotlbEntry) := {
     IotlbEntry_pasid := inhabitant;
     IotlbEntry_iova := inhabitant;
     IotlbEntry_pa := inhabitant;
-    IotlbEntry_perm := inhabitant
+    IotlbEntry_perm := inhabitant;
+    IotlbEntry_gen := inhabitant
 |} }.
 
 
@@ -486,39 +492,114 @@ Instance dummy_PriRequest : Inhabited (PriRequest) := {
 |} }.
 
 
+Inductive InvalidationGran := Gran_VA | Gran_PasidDid.
+Definition num_of_InvalidationGran (arg_ : InvalidationGran) : Z :=
+   match arg_ with | Gran_VA => 0 | Gran_PasidDid => 1 end.
+
+Definition InvalidationGran_of_num (arg_ : Z) (*(0 <=? arg_) && (arg_ <=? 1)*) : InvalidationGran :=
+   let l__0 := arg_ in
+   if Z.eqb (l__0) (0) then Gran_VA
+   else Gran_PasidDid.
+
+Lemma InvalidationGran_num_of_roundtrip (x : InvalidationGran) : InvalidationGran_of_num (num_of_InvalidationGran x) = x.
+  destruct x; reflexivity.
+Qed.
+Lemma num_of_InvalidationGran_injective (x y : InvalidationGran) : num_of_InvalidationGran x = num_of_InvalidationGran y -> x = y.
+  intro.
+  rewrite <- (InvalidationGran_num_of_roundtrip x).
+  rewrite <- (InvalidationGran_num_of_roundtrip y).
+  congruence.
+Qed.
+Definition InvalidationGran_eq_dec (x y : InvalidationGran) : {x = y} + {x <> y}.
+  refine (match Z.eq_dec (num_of_InvalidationGran x) (num_of_InvalidationGran y) with
+  | left e => left (num_of_InvalidationGran_injective x y e)
+  | right ne => right _
+  end).
+  congruence.
+Defined.
+Definition InvalidationGran_beq (x y : InvalidationGran) : bool :=
+  Z.eqb (num_of_InvalidationGran x) (num_of_InvalidationGran y).
+Lemma InvalidationGran_beq_iff x y : InvalidationGran_beq x y = true <-> x = y.
+  unfold InvalidationGran_beq.
+  rewrite Z.eqb_eq.
+  split; [apply num_of_InvalidationGran_injective | congruence].
+Qed.
+Lemma InvalidationGran_beq_refl x : InvalidationGran_beq x x = true.
+apply InvalidationGran_beq_iff; reflexivity.
+Qed.
+#[export]
+Instance Decidable_eq_InvalidationGran : EqDecision InvalidationGran := InvalidationGran_eq_dec.
+#[export]
+Instance Countable_InvalidationGran : Countable InvalidationGran.
+refine {|
+  encode x := encode (num_of_InvalidationGran x);
+  decode x := z ← decode x; mret (InvalidationGran_of_num z);
+|}.
+abstract (
+  intro s; rewrite decode_encode;
+  simpl;
+  rewrite InvalidationGran_num_of_roundtrip;
+  reflexivity).
+Defined.
+#[export]
+Instance dummy_InvalidationGran : Inhabited InvalidationGran := { inhabitant := Gran_VA }.
+
+
 Record InvalidationCmd := {
   InvalidationCmd_is_wait : bool;
+  InvalidationCmd_gran : InvalidationGran;
   InvalidationCmd_va : vaddr_typ;
+  InvalidationCmd_did : Z;
+  InvalidationCmd_pasid : Z;
 }.
 Arguments InvalidationCmd : clear implicits.
 #[export]
 Instance Decidable_eq_InvalidationCmd : EqDecision InvalidationCmd.
-   intros [x0 x1].
-   intros [y0 y1].
+   intros [x0 x1 x2 x3 x4].
+   intros [y0 y1 y2 y3 y4].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
+  cmp_record_field x4 y4.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_InvalidationCmd : Countable InvalidationCmd.
 refine {|
-  encode x := encode (InvalidationCmd_is_wait x, InvalidationCmd_va x);
-  decode x := '(x0, x1) ← decode x;
-              mret (Build_InvalidationCmd x0 x1)
+  encode x := encode (InvalidationCmd_is_wait x, InvalidationCmd_gran x, InvalidationCmd_va x, InvalidationCmd_did x, InvalidationCmd_pasid x);
+  decode x := '(x0, x1, x2, x3, x4) ← decode x;
+              mret (Build_InvalidationCmd x0 x1 x2 x3 x4)
 |}.
 abstract (
-  intros [x0 x1];
+  intros [x0 x1 x2 x3 x4];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'InvalidationCmd_is_wait' := e ]}" :=
-  match r with Build_InvalidationCmd _ (_ as f1) => Build_InvalidationCmd e f1 end (at level 0).
+  match r with Build_InvalidationCmd _ (_ as f1) (_ as f2) (_ as f3) (_ as f4) =>
+    Build_InvalidationCmd e f1 f2 f3 f4 end (at level 0).
+Notation "{[ r 'with' 'InvalidationCmd_gran' := e ]}" :=
+  match r with Build_InvalidationCmd (_ as f0) _ (_ as f2) (_ as f3) (_ as f4) =>
+    Build_InvalidationCmd f0 e f2 f3 f4 end (at level 0).
 Notation "{[ r 'with' 'InvalidationCmd_va' := e ]}" :=
-  match r with Build_InvalidationCmd (_ as f0) _ => Build_InvalidationCmd f0 e end (at level 0).
+  match r with Build_InvalidationCmd (_ as f0) (_ as f1) _ (_ as f3) (_ as f4) =>
+    Build_InvalidationCmd f0 f1 e f3 f4 end (at level 0).
+Notation "{[ r 'with' 'InvalidationCmd_did' := e ]}" :=
+  match r with Build_InvalidationCmd (_ as f0) (_ as f1) (_ as f2) _ (_ as f4) =>
+    Build_InvalidationCmd f0 f1 f2 e f4 end (at level 0).
+Notation "{[ r 'with' 'InvalidationCmd_pasid' := e ]}" :=
+  match r with Build_InvalidationCmd (_ as f0) (_ as f1) (_ as f2) (_ as f3) _ =>
+    Build_InvalidationCmd f0 f1 f2 f3 e end (at level 0).
 #[export]
 Instance dummy_InvalidationCmd : Inhabited (InvalidationCmd) := {
-  inhabitant := {| InvalidationCmd_is_wait := inhabitant; InvalidationCmd_va := inhabitant
+  inhabitant := {|
+    InvalidationCmd_is_wait := inhabitant;
+    InvalidationCmd_gran := inhabitant;
+    InvalidationCmd_va := inhabitant;
+    InvalidationCmd_did := inhabitant;
+    InvalidationCmd_pasid := inhabitant
 |} }.
 
 
