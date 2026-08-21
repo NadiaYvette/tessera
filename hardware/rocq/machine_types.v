@@ -769,6 +769,42 @@ Defined.
 Instance dummy_Region : Inhabited Region := { inhabitant := RAM }.
 
 
+Record VtdPasid := {
+  VtdPasid_present : bool;
+  VtdPasid_s1_root : bits 44;
+}.
+Arguments VtdPasid : clear implicits.
+#[export]
+Instance Decidable_eq_VtdPasid : EqDecision VtdPasid.
+   intros [x0 x1].
+   intros [y0 y1].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_VtdPasid : Countable VtdPasid.
+refine {|
+  encode x := encode (VtdPasid_present x, VtdPasid_s1_root x);
+  decode x := '(x0, x1) ← decode x;
+              mret (Build_VtdPasid x0 x1)
+|}.
+abstract (
+  intros [x0 x1];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'VtdPasid_present' := e ]}" :=
+  match r with Build_VtdPasid _ (_ as f1) => Build_VtdPasid e f1 end (at level 0).
+Notation "{[ r 'with' 'VtdPasid_s1_root' := e ]}" :=
+  match r with Build_VtdPasid (_ as f0) _ => Build_VtdPasid f0 e end (at level 0).
+#[export]
+Instance dummy_VtdPasid : Inhabited (VtdPasid) := {
+  inhabitant := {| VtdPasid_present := inhabitant; VtdPasid_s1_root := inhabitant
+|} }.
+
+
 
 
 

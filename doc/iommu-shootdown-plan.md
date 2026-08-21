@@ -256,9 +256,15 @@ of being pushed invalidations.
     - **S4.5 VT-d first slice** — landed in `vtd_proofs.v`: Requester-ID-indexed
       context selection, present/non-present/missing faults, second-level walk
       refinement, oracle replay, and executable HIT/fault vectors.
-    Still open: PASID/SVM first-stage (GVA→GPA) tagging, VT-d scalable-mode
-    device/PASID tables and fault recording, and the final machine-ghost threading
-    of the weak-memory IOMMU program described in S4.2b-2 above.
+    - **S4.5 VT-d PASID slice** — landed in `vtd_proofs.v` (`VtdPasid` +
+      `vtd_pasid_lookup` + `vtd_walk_pasid`): the first-stage (guest) GVA→GPA walk
+      re-rooted at a PASID-indexed PASID table, composed with the second-level
+      GPA→SPA walk (VT-d 5.20 §3 / §15).  Per-stage fault/hit specs, structural
+      faults, the conformance oracle replay, and executable vectors all landed
+      axiom-free.
+    Still open: VT-d scalable-mode device/PASID-cache lookup and fault recording,
+    and the final machine-ghost threading of the weak-memory IOMMU program
+    described in S4.2b-2 above.
 
 ## What is replayed vs. new
 
@@ -273,7 +279,7 @@ of being pushed invalidations.
 | ATS translation request/completion | — | **yes** (device pulls the cache fill) |
 | ATS device-TLB invalidation (endpoint tier) | N-core broadcast | **yes** (a second, per-device tier) |
 | PRI page-request servicing | — | **yes** (device pulls the mapping) |
-| first/second-stage PASID/SVM translation | — | **yes** (deferred to a later increment) |
+| first/second-stage PASID/SVM translation | the two-stage IOMMU walk (GVA→GPA→SPA) | **yes** (first stage: re-rooted Sv39 walk + zero-extend) |
 
 ## Trust line
 

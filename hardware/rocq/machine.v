@@ -302,15 +302,15 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
 
 Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
    match (stes, sid) with
-   | (s :: g__4, l__0) =>
-      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__4) ((Z.sub (l__0) (1)))
+   | (s :: g__5, l__0) =>
+      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__5) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
 Fixpoint cd_lookup (cds : list Cd) (idx : Z) : option Cd :=
    match (cds, idx) with
-   | (c :: g__3, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__3) ((Z.sub (l__0) (1)))
+   | (c :: g__4, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__4) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -331,8 +331,8 @@ Definition smmu_translate
 
 Fixpoint vtd_context_lookup (contexts : list VtdContext) (rid : Z) : option VtdContext :=
    match (contexts, rid) with
-   | (c :: g__2, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__2) ((Z.sub (l__0) (1)))
+   | (c :: g__3, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__3) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -342,6 +342,39 @@ Definition vtd_walk (contexts : list VtdContext) (rid : Z) (mem : list MemEntry)
    | None => None
    | Some c =>
       if c.(VtdContext_present) then iommu_walk (c.(VtdContext_sl_root)) (mem) (iova) else None
+   end.
+
+Definition undefined_VtdPasid '(tt : unit) : M (VtdPasid) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_bitvector (44)) >>= fun (w__1 : mword 44) =>
+   returnM (({| VtdPasid_present := w__0;  VtdPasid_s1_root := w__1 |})).
+
+Fixpoint vtd_pasid_lookup (ptes : list VtdPasid) (pasid : Z) : option VtdPasid :=
+   match (ptes, pasid) with
+   | (e :: g__2, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__2) ((Z.sub (l__0) (1)))
+   | ([], _) => None
+   end.
+
+Definition vtd_walk_pasid
+(contexts : list VtdContext) (rid : Z) (ptes : list VtdPasid) (pasid : Z) (mem : list MemEntry)
+(iova : mword 64)
+: option ((mword 56 * Perm)) :=
+   match vtd_context_lookup (contexts) (rid) with
+   | None => None
+   | Some c =>
+      if c.(VtdContext_present) then
+        match vtd_pasid_lookup (ptes) (pasid) with
+        | None => None
+        | Some e =>
+           if e.(VtdPasid_present) then
+             match iommu_walk (e.(VtdPasid_s1_root)) (mem) (iova) with
+             | None => None
+             | Some (gpa, _) => iommu_walk (c.(VtdContext_sl_root)) (mem) ((zero_extend (gpa) (64)))
+             end
+           else None
+        end
+      else None
    end.
 
 Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=

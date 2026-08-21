@@ -431,6 +431,49 @@ function vtd_walk(contexts, rid, mem, iova) =
       else None()
   }
 
+// ---- Intel VT-d first-stage / PASID translation (SSG-4 / S4.5) ----
+//
+// VT-d scalable mode's distinctive feature over the CPU MMU (and over the S4.5
+// second-level slice) is a two-stage walk.  The guest (first) stage GVA -> GPA
+// is re-rooted at a first-stage table selected by a PASID-indexed PASID table
+// (VT-d 5.20 §15.2, the PASID-table lookup), and the host (second) stage
+// GPA -> SPA is the context's second-level walk.  Both stages reuse the Sv39
+// walk; the first-stage GPA is zero-extended to a VA for the second-stage
+// input (VT-d 5.20 §15.6, first-stage/second-stage composition).  A PASID table
+// entry is minimal here (present + first-stage root); scalable-mode device
+// tables, PASID-cache lookup, and per-PASID coherency are later increments.
+struct VtdPasid = {
+  present : bool,
+  s1_root : bits(44)
+}
+
+val vtd_pasid_lookup : (list(VtdPasid), int) -> option(VtdPasid)
+function vtd_pasid_lookup(ptes, pasid) = match (ptes, pasid) {
+  (e :: _, 0) => Some(e),
+  (_ :: rest, n) => vtd_pasid_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+val vtd_walk_pasid : (list(VtdContext), int, list(VtdPasid), int, PageTable, vaddr) -> option((paddr, Perm))
+function vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova) =
+  match vtd_context_lookup(contexts, rid) {
+    None() => None(),
+    Some(c) =>
+      if c.present then
+        match vtd_pasid_lookup(ptes, pasid) {
+          None() => None(),
+          Some(e) =>
+            if e.present then
+              match iommu_walk(e.s1_root, mem, iova) {
+                None() => None(),
+                Some((gpa, _)) =>
+                  iommu_walk(c.sl_root, mem, sail_zero_extend(gpa, 64))
+              }
+            else None()
+        }
+      else None()
+  }
+
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
 // IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI
 // (4.4) / AMD-Vi INVALIDATE_IOMMU_PAGES (2.4.3).  4KiB granularity for now;

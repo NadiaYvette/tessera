@@ -300,6 +300,23 @@ axiom_free vtd_proofs test_vector_vtd_context_hit
 axiom_free vtd_proofs test_vector_vtd_nonpresent_fault
 axiom_free vtd_proofs test_vector_vtd_missing_context_fault
 axiom_free vtd_proofs test_vector_vtd_context_walk_fault
+# S4.5 first-stage / PASID slice: the two-stage (GVA->GPA->SPA) walk and its
+# per-stage fault/hit specs, the structural faults, and the conformance oracle
+# (VT-d 5.20 §3 / §15).
+axiom_free vtd_proofs vtd_walk_pasid_two_stage
+axiom_free vtd_proofs vtd_walk_pasid_missing_context
+axiom_free vtd_proofs vtd_walk_pasid_nonpresent_context
+axiom_free vtd_proofs vtd_walk_pasid_missing_pasid_entry
+axiom_free vtd_proofs vtd_walk_pasid_nonpresent_pasid_entry
+axiom_free vtd_proofs vtd_walk_pasid_stage1_faults
+axiom_free vtd_proofs vtd_walk_pasid_stage2_faults
+axiom_free vtd_proofs vtd_walk_pasid_spec
+axiom_free vtd_proofs vtd_walk_pasid_conforms
+axiom_free vtd_proofs test_vector_vtd_pasid_two_stage_hit
+axiom_free vtd_proofs test_vector_vtd_pasid_missing_fault
+axiom_free vtd_proofs test_vector_vtd_pasid_nonpresent_fault
+axiom_free vtd_proofs test_vector_vtd_pasid_nonpresent_context_fault
+axiom_free vtd_proofs test_vector_vtd_pasid_empty_fault
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
