@@ -47,15 +47,20 @@ carved out of.
 - **Integrity.** No core observes a stale translation or a freed/remapped frame;
   every happens-before edge the protocol relies on is actually established by a
   release/acquire pair (or a barrier).
-- **Modeled today.** *In progress — the frontier.* Route A (litmus/herd VMSA) done
-  (P2.1/P2.2); Route B weak-memory done over the *abstract boolean* model (P2.4:
-  `property2/coq/weak/{mp_weak,tlb_shootdown_weak}.v`, iRC11/gpfsl in the `wm`
-  switch). The **concrete-machine lift (S2.2)** — the generated Sv39 walk + N-core
-  broadcast under gpfsl/ORC11 — is the next step. See `property2-kickoff.md`,
-  `stage2-shootdown.md`.
-- **Proof needed.** S2.2: port `shootdown_correct`'s target onto the ORC11 model;
-  then per-arch instantiation of the parameterized memory model
-  (`arch-coverage.md`).
+- **Modeled today.** *Done (the concrete-machine lift landed).* The generated
+  Sv39 walk + N-core broadcast is now proved under genuine weak memory
+  (gpfsl/ORC11) over the *concrete* `machine.v`, not just an abstract boolean
+  model. S2.2a–S2.2c (`shootdown_weak.v` → `shootdown_weak_broadcast.v`) prove the
+  leader→remote PTE-invalidation ordering, the remote→leader ack, and their
+  N-core composition; S2.4 threads the `Machine_ipi` mailbox through the
+  weak-memory broadcast so the ghost step is `receive_ipi (deliver_ipi _ i)`;
+  S2.5 composes the interrupt controller (`intc.sail`) into the program so the
+  per-step ghost is the controller's send+ack. The toolchain blocker (separate
+  `wm` switch) is resolved — gpfsl is vendored into `third_party/gpfsl` and built
+  in the rocq-9.2 switch. See `stage2-shootdown.md`.
+- **Proof needed.** Per-architecture instantiation of the parameterized memory
+  model (`arch-coverage.md`); the VIVT/VIPT/PIPT distinction when cache models
+  are added. The core weak-memory shootdown proof is complete.
 
 ### SSG-3 — Interrupt controller
 
@@ -103,11 +108,27 @@ carved out of.
 - **Objective.** Device translations (IOTLB) stay coherent with the CPU page table;
   DMA cannot reach a freed or remapped frame.
 - **Integrity.** `IOTLB ⊆ mapping`, maintained by an IOMMU shootdown on every unmap.
-- **Modeled today.** *No.*
-- **Proof needed.** A second walker + IOTLB shootdown — the CPU-TLB problem replayed,
-  reusing the whole Stage 1/2 machinery (coherence + concurrent shootdown).
-  Scoped in `doc/iommu-shootdown-plan.md` (S4.1 coherence → S4.2 concurrent
-  shootdown → S4.3 ATS/PRI device side); launchable now.
+- **Modeled today.** *Done.* `Machine_iotlb` + `IotlbEntry` + `iommu_walk` +
+  `iotlb_invalidate` + `iommu_shootdown_correct` + `iommu_coherent` invariant +
+  queued-invalidation command queue (`InvalidationCmd` / `iommu_process_queue` /
+  `iommu_shootdown_via_queue`) + ATS device-TLB tier (`ats_invalidate` /
+  `iommu_shootdown_ats_correct`) + ATS translation request/completion + PRI page
+  request/servicing + VT-d context/PASID/scalable-device-table walks +
+  PASID-cache coherence/eviction/refill + generation tags + FRCD fault recording
+  + FRCDR drain + interrupt delivery of PRI faults + SMMUv3 two-stage walk +
+  AMD-Vi 4-level walk + per-platform granularity/invalidation vectors — all
+  modeled in `machine.sail` / `intc.sail`, proved in `iommu_proofs.v` /
+  `vtd_proofs.v` / `smmu_proofs.v` / `amdvi_proofs.v`, and lifted to genuine weak
+  memory (gpfsl) in `iommu_broadcast_weak.v` / `pasid_translate_weak.v` /
+  `smmu_translate_weak.v` / `amdvi_translate_weak.v` / `ats_devtlb_weak.v` /
+  `pri_fault_weak.v` / `pri_fault_intc_weak.v`.
+- **Proof needed.** The `IOTLB ⊆ mapping` replay is *done* — every functional
+  theorem and every weak-memory ghost lift is axiom-free and wired into
+  `build.sh`. The model is cross-checked against VT-d 5.20 / SMMUv3 H.a /
+  AMD-Vi 3.11 / PCIe 6.0 via conformance vectors (not full refinement). Remaining:
+  a full derivation from upstream Sail IOMMU models (which do not yet exist as
+  upstream artifacts), and the full command-queue/MMIO circular-wrap increment.
+  Scoped in `doc/iommu-shootdown-plan.md` (S4.1–S4.5, all landed).
 - **Primary source available.** `~/Dokumente/PCI-Express-6_0-Specification-PCIE_SIG.pdf`
   (PCIe Base Spec **Rev 6.0** — the user notes it is *only* 6.0, not 6.1/7.0).
   It is the device↔IOMMU *interface*: **ATS** (Address Translation Services —
@@ -249,13 +270,30 @@ limit where there is no shared memory at all, so *every* cross-node interaction 
 already message passing. The domain boundary is thus what carries the reasoning from
 SMT threads cleanly up to distributed clusters.
 
-## Sequencing
+## Sequencing (updated 2026-08-21)
 
-1. **SSG-2 (weak memory), concrete lift — in progress.** S2.2: the generated Sv39
-   machine under gpfsl/ORC11.
-2. **SSG-3 (IPI delivery)** — makes the shootdown proof real; follows SSG-2.
+1. ~~**SSG-2 (weak memory), concrete lift — in progress.**~~ **Done.** S2.2a–S2.2c +
+   S2.4 + S2.5: the generated Sv39 machine under gpfsl/ORC11, the IPI mailbox,
+   and the interrupt controller, all proved axiom-free.
+2. ~~**SSG-3 (IPI delivery)** — makes the shootdown proof real; follows SSG-2.~~
+   **Done.** `ipi.v` + `intc.sail` + `intc_proofs.v` + `intc_weak_broadcast.v` +
+   `shootdown_weak_broadcast_intc.v`: the full controller-in-the-loop weak-memory
+   shootdown is proved, including masking, interrupt context, and priority selection.
 3. **SSG-1 (topology)** — `hart`/`node` fields are now on `Core` (the plumbing);
    remaining: topology-aware placement/affinity theorems, the first consumers.
-4. **SSG-4 (IOMMU)** — self-contained replay of Stage 1/2.
+4. ~~**SSG-4 (IOMMU)** — self-contained replay of Stage 1/2.~~ **Done.** S4.1–S4.5:
+   coherence, concurrent shootdown, ATS/PRI device side, three-platform port
+   (VT-d / SMMUv3 / AMD-Vi), generation tags, and weak-memory lifts — all
+   axiom-free.
 5. **SSG-5–8 (devices)** — a scope expansion into I/O correctness, only if taken on.
-6. **SSG-9 (grouping hierarchy: nodes → SSI → NORMA)** — only with multi-node reasoning; couples to the domain remark.
+   The IOMMU/DMA translation-safety foundation (SSG-4) is complete; timer,
+   UART/console, NIC, and disk device models are not yet started.
+6. **SSG-9 (grouping hierarchy: nodes → SSI → NORMA)** — only with multi-node
+   reasoning; couples to the domain remark.
+
+**Current frontier:** the translation/coherence wedge (SSG-2/3/4) is complete.
+Natural next steps are (a) the trust-line work — deriving the Tessera walk from
+upstream `sail-riscv` / `sail-arm` rather than the hand-written conformance oracle
+(see `rigor-trust-line.md` §5 G1), and (b) the first device track beyond the IOMMU
+(SSG-5 timer or SSG-6 UART) or SSG-1 topology-aware theorems, depending on which
+property next demands hardware-state reasoning.

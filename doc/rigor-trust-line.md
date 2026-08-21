@@ -4,11 +4,16 @@ A living register of **what rigour each artifact actually carries**, so a future
 session (or reviewer) can answer the question: *"does this have the same kind of
 rigour as, say, the CHERI-MIPS / RISC-V Sail models?"*
 
-The short answer is **no for the hardware model, yes for the proof logic**. The
-Rocq proofs in `hardware/rocq/` are genuine machine-checked proofs, but they are
-proofs **about a hand-written, ~180-line simplified Sail model of an Sv39 walk**.
-That model is *not* derived from, and has *not* been validated against, the
-upstream ISA models. This file pins down exactly where that line is.
+The short answer is: **the proof logic is upstream-grade (Iris/stdpp, machine-checked,
+axiom-free); the hardware *model* is hand-written and conformance-tested, but not
+derived from upstream Sail.** The Rocq proofs in `hardware/rocq/` are genuine
+machine-checked proofs over a hand-written Sail model that has grown from a
+~180-line Sv39 walk into a ~1200-line multi-architecture model covering Sv39,
+Svnapot, MIPS/LoongArch software-refill, AArch64 VMSAv8-64, the interrupt
+controller, the IOMMU (VT-d/SMMUv3/AMD-Vi), ATS/PRI, and PASID/SVM. That model is
+*not* derived from, and has *not* been fully validated against, the upstream ISA
+models — though a leaf-level conformance oracle exists (`conformance.v`). This
+file pins down exactly where that line is.
 
 See also: `end-to-end-proving-pass.md` (the pipeline), `formalization-status.md`
 (Lean/M1–M3 status), `system-state-goals.md` (SSG-1..9, the state the kernel must
@@ -63,43 +68,67 @@ model, never silicon.
 ## 2. The trust stack (top = most trusted)
 
 ```
-Iris / stdpp / SailStdpp / Sail→Rocq backend   ← REMS + MPI-SWS (upstream-maintained, conformance-tested)
+Iris / stdpp / SailStdpp / Sail→Rocq backend     ← REMS + MPI-SWS (upstream-maintained, conformance-tested)
         ▲
-Rocq proofs (coherence.v, coherence_leaf.v,     ← machine-checked (Qed), axiom-free
- shootdown.v, shootdown_iris.v)
+Rocq proofs (coherence.v, coherence_leaf.v,         ← machine-checked (Qed), axiom-free
+ shootdown.v, shootdown_iris.v, shootdown_weak*.v,
+ ipi.v, intc_*.v, iommu_*.v, vtd_proofs.v,
+ smmu_proofs.v, amdvi_proofs.v, pasid_translate_weak.v,
+ ats_devtlb_weak.v, pri_fault_*.v, conformance.v, …)
         ▲
-machine.v / machine_types.v                     ← generated from OUR Sail source
+machine.v / machine_types.v / intc.v / …           ← generated from OUR Sail source
         ▲
-machine.sail                                    ← OURS: hand-written Sv39-walk subset;
-                                                   typechecked, NOT spec-validated
+machine.sail + intc.sail + mips_tlb.sail + …       ← OURS: hand-written multi-arch
+   loongarch_tlb.sail + aarch64_tlb.sail +             translation/coherence/IOMMU model;
+   sail_arm_tlb.sail                                    typechecked, leaf-level
+                                                        conformance-tested, NOT
+                                                        upstream-derived
 ```
 
-What the proofs establish is **sound reasoning about our model**. What they do
-**not** establish is that *our model is the hardware*. That last step is an
-assumption, and it is the single largest rigour gap in this development.
+What the proofs establish is **sound reasoning about our model** — and the model
+has grown to cover the full translation/coherence/IOMMU wedge (53 Rocq files, 646
+non-weak + 76 weak axiom-free checks). What they do **not** establish is that
+*our model is the hardware*. That last step is the single largest rigour gap in
+this development, and the trust-line work below targets it.
 
 ## 3. What `machine.sail` is and is not
 
-**Is** (the deliberate "translation-coherence wedge"):
+**Is** (the "translation/coherence/IOMMU wedge" — grown from the initial Sv39 fragment):
 
 - Sv39 three-level page-table walk (`translate`), per-core TLB (`Core.tlb`),
-  `sfence_vma_all` / `sfence_vma_va`, PTE leaf interpretation (`V/R/W/X/U` + PPN).
-- Memory as a **sparse association list of PTEs** (`PageTable = list MemEntry`).
+  `sfence_vma_all` / `sfence_vma_va`, PTE leaf interpretation (`V/R/W/X/U` + PPN),
+  Svnapot (N bit, 64KiB NAPOT pages, TLB superpage matching).
+- MIPS software-refill TLB (ESP, VPN2X, 1 KiB PageGrain), LoongArch software-refill
+  (odd/even pair), AArch64 VMSAv8-64 (block descriptors, contpte, LPA2).
+- Memory as a sparse association list of PTEs (`PageTable = list MemEntry`) +
+  byte-addressable data RAM (`Ram = list Byte`, `read_byte`/`write_byte`) +
+  address decode (`Region = RAM | MMIO`, decode-routed load/store).
+- N-core broadcast shootdown (`shootdown.v`), Iris HeapLang concurrent protocol
+  (`shootdown_iris.v`), gpfsl/ORC11 weak-memory lift (`shootdown_weak.v` →
+  `shootdown_weak_broadcast.v`), IPI mailbox + delivery/receive transitions
+  (`ipi.v`), interrupt controller device (`intc.sail` + `intc_proofs.v` +
+  `intc_priority.v`), controller-in-the-loop weak-memory program
+  (`shootdown_weak_broadcast_intc.v`), masking + interrupt context + priority.
+- IOMMU: `Machine_iotlb` + `iommu_walk` + `iotlb_invalidate` + `iommu_coherent`,
+  queued-invalidation command queue (`iommu_process_queue`), ATS device-TLB tier
+  (`ats_invalidate`), ATS translation request/completion, PRI page faults,
+  VT-d context/PASID/scalable-device-table, PASID-cache coherence/eviction/refill,
+  generation tags, FRCD fault recording + drain, interrupt delivery of PRI faults,
+  SMMUv3 two-stage walk, AMD-Vi 4-level walk, weak-memory ghost lifts for all.
+- Leaf-level conformance oracle (`conformance.v`: `translate_conforms` against a
+  transcription of the upstream `sail-riscv` `pt_walk`).
 
 **Is not** (each a gap, see §5):
 
-- No register file (the plan mentions one; the model has none).
-- No instruction/ISA execution semantics — only the address-translation fragment.
-- **Data RAM now modeled** (byte-addressable `Ram = list Byte` + `read_byte`/`write_byte`,
-  and `data_ram.v`'s `load_virtual` + `invalidate_shootdown_load_faults`); **address
-  decode now modeled** (`Region = RAM | MMIO` + `decode_addr`, decode-routed
-  `load_byte`/`store_byte`/`store_virtual`, with `load_byte_mmio_faults` /
-  `store_byte_mmio_noop` / `load_byte_after_store_byte`); still no device (MMIO)
-  model, bus, or cache model.
-- No weak/relaxed memory ordering (deferred to S2.2 / gpfsl).
-- No devices: interrupt controller, timer, UART, DMA/IOMMU, disk, NIC
-  (see `system-state-goals.md` SSG-1..9).
-- No SMT/NUMA topology (cores are a flat list).
+- No register file or instruction/ISA execution semantics — only the
+  address-translation + device-protocol fragment.
+- No cache model (no VIVT/VIPT/PIPT, no cache-coherence protocol).
+- No weak/relaxed memory ordering *in the data-RAM model itself* — the weak-memory
+  reasoning is at the protocol/ghost level (gpfsl), not a relaxed RAM.
+- No devices beyond the IOMMU/interrupt-controller subset: no timer, UART,
+  NIC, or disk device model (see `system-state-goals.md` SSG-5–8).
+- No SMT/NUMA *grouping* (`Core` carries `hart`/`node` fields but `Machine` is
+  still a flat `list Core`; no topology-sensitive theorems yet).
 
 ## 4. Proof artifacts and their validation
 
@@ -108,7 +137,13 @@ assumption, and it is the single largest rigour gap in this development.
 | `hardware/rocq/coherence.v` | Rocq | `unmap_correct`, `unmap_without_flush_breaks_coherence` | `rocq compile` | closed (enforced by `build.sh`) |
 | `hardware/rocq/coherence_leaf.v` | Rocq | `unmap_leaf_correct`, `unmap_leaf_without_flush_breaks_coherence` | `rocq compile` | closed |
 | `hardware/rocq/shootdown.v` | Rocq | `shootdown_correct` | `rocq compile` | closed |
-| `hardware/rocq/shootdown_iris.v` | Rocq + Iris | `wait_spec`, `auth_frag_gset_to_gmap`, `pending_tokens_split`, `pending_token_delete` (S2.1 **in progress** — `remote_spec`/`wait_cnt_spec`/`broadcast_spec`/reification still open) | `rocq compile` | closed |
+| `hardware/rocq/shootdown_iris.v` | Rocq + Iris | `wait_spec`, `auth_frag_gset_to_gmap`, `pending_tokens_split`, `pending_token_delete`, `remote_spec`, `wait_cnt_spec`, `broadcast_spec` (S2.1 **done**) | `rocq compile` | closed |
+| `hardware/rocq/shootdown_weak.v` / `shootdown_weak_broadcast.v` | Rocq + gpfsl | S2.2a–c: `shootdown_weak_gen_inv`, `shootdown_weak_ack_gen_inv`, `bc_remote_spec`, `bc_wait_all_spec`, `bc_broadcast_spec` (N-core weak-memory broadcast) | `rocq compile` | closed |
+| `hardware/rocq/ipi.v` / `intc_proofs.v` / `intc_priority.v` | Rocq | S2.3: `ipi_broadcast_correct`, `intc_send_ack_refines_deliver_ipi`; S2.5: priority selection | `rocq compile` | closed |
+| `hardware/rocq/shootdown_weak_broadcast_intc.v` | Rocq + gpfsl | S2.5: `bc_send_all_spec`, `bc_broadcast_intc_spec`, delivery gate, drain | `rocq compile` | closed |
+| `hardware/rocq/iommu_proofs.v` / `vtd_proofs.v` / `smmu_proofs.v` / `amdvi_proofs.v` | Rocq | S4.1–S4.5: `iommu_coherent`, `iommu_shootdown_correct`, `iommu_shootdown_via_queue_correct`, `iommu_shootdown_ats_correct`, VT-d/SMMU/AMD-Vi walkers, PASID cache, generation tags, FRCD, PRI | `rocq compile` | closed |
+| `hardware/rocq/iommu_broadcast_weak.v` / `pasid_translate_weak.v` / `smmu_translate_weak.v` / `amdvi_translate_weak.v` / `ats_devtlb_weak.v` / `pri_fault_weak.v` / `pri_fault_intc_weak.v` | Rocq + gpfsl | S4.2b-2 / S4.5: weak-memory ghost lifts of IOMMU/ATS/PRI/PASID translation loops | `rocq compile` | closed |
+| `hardware/rocq/conformance.v` | Rocq | `translate_conforms` (leaf-level conformance vs upstream `sail-riscv` walk) | `rocq compile` | closed (conformance-test, not full refinement) |
 | `proof/Tessera/*.lean` | Lean 4 | M1–M3 (split/unmap/COW/refinement) | `lake build` + `#print axioms` | depends only on `propext`, `Quot.sound` |
 | `property2/coq/*.v` | Coq 8.20 + Iris | boolean-level MP/shootdown/reclaim (P2.4) | `property2/coq/build.sh` (`surd` switch) | closed |
 | `property2/cbmc/*.c` | CBMC | refcount-floor regressions | `property2/cbmc/run.sh` | **bounded** (testing, not proof) |
@@ -118,23 +153,24 @@ assumption, and it is the single largest rigour gap in this development.
 
 | # | Gap | Why it matters | To close it |
 |---|---|---|---|
-| G1 | `machine.sail` is **not validated** against `sail-riscv`/`sail-cheri-mips`/etc. | The whole hardware layer rests on an unverified hand-written walk | **Conformance test done + write-only fixed** (`hardware/rocq/conformance.v`): `translate_conforms` proves exact agreement (same PA/perm/fault) with **no precondition**, after `translate` was fixed to fault on the reserved write-only encoding (R=0,W=1); 7 executable test vectors pin the walk. Remaining: the full refinement/derivation from upstream Sail (a `pt_walk`-level derivation, not just the leaf-only transcription). The target shape is the **Armstrong et al. (POPL 2019)** proforma conformance proof obligations (see §1) — Tessera's `conformance.v` is the leaf-only first instalment of exactly that discipline |
+| G1 | `machine.sail` is **not derived from** upstream `sail-riscv`/`sail-arm`/etc. | The whole hardware layer rests on a hand-written model, not a mechanically-linked upstream model | **Leaf-level conformance done** (`hardware/rocq/conformance.v`): `translate_conforms` proves exact agreement (same PA/perm/fault) with a transcription of the upstream `sail-riscv` `pt_walk` (ll. 101–208 of `vmem.sail` + `pte_is_invalid`/`pte_is_non_leaf` from `vmem_pte.sail`), with **no precondition**, after `translate` was fixed to fault on the reserved write-only encoding (R=0,W=1); 7 executable test vectors pin the walk. **Remaining: the full walk-level derivation** — linking `machine.sail`'s `translate` to the *actual* `sail-riscv` `pt_walk` function (the upstream `PTW_Result` type, the `read_pte` memory interface, `check_PTE_permission`, A/D bit updates) rather than a hand-transcribed oracle. The AArch64 variant cross-checks `ContiguousSize`/`TGxGranuleBits`/`TranslationSize` verbatim from `sail-arm`'s `v8_base.sail` + the Arm ARM DDI 0487. The target shape is the **Armstrong et al. (POPL 2019)** proforma conformance proof obligations (see §1) — Tessera's `conformance.v` is the leaf-only first instalment of exactly that discipline. **This is the trust-line work now being scoped** (see below) |
 | G2 | No register file / ISA semantics | The model cannot express *any* code execution, only translation | Add a register/ISA fragment once a property needs execution |
 | G3 | Memory = PTE association list | **Data RAM added** (`Machine.ram`, `read_byte`/`write_byte`) **+ address decode added** (`Region`/`decode_addr`, decode-routed `load_byte`/`store_byte` in `data_ram.v`); still no device (MMIO) model, bus, or cache | device model / bus / cache, later increment |
-| G4 | No weak-memory ordering | TLB-shootdown soundness under relaxed memory (Property 2) is un-modeled | S2.2: gpfsl/ORC11 lift (toolchain reconciliation pending — see below) |
-| G5 | No devices | IPI/interrupt delivery, DMA, timers, I/O are outside the model | Per `system-state-goals.md` SSG-1..9, add as properties demand them |
+| G4 | ~~No weak-memory ordering~~ | ~~TLB-shootdown soundness under relaxed memory (Property 2) is un-modeled~~ | **Closed**: S2.2a–c proved the N-core weak-memory broadcast over the concrete machine; S2.4/S2.5 composed the IPI mailbox + interrupt controller into the gpfsl program. All axiom-free. The toolchain blocker (§6) is resolved — gpfsl is vendored into `third_party/gpfsl` on the rocq-9.2 switch |
+| G5 | ~~No devices~~ → **partial** | ~~IPI/interrupt delivery, DMA, timers, I/O are outside the model~~ | **Partially closed**: the interrupt controller (SSG-3) and IOMMU/DMA translation safety (SSG-4) are fully modeled and proved — `intc.sail` + `intc_proofs.v` + `intc_priority.v`, `iommu_proofs.v` + `vtd_proofs.v` + `smmu_proofs.v` + `amdvi_proofs.v` + all weak lifts. **Still open**: timer (SSG-5), UART/console (SSG-6), NIC (SSG-7), disk (SSG-8) — see `system-state-goals.md` |
 | G6 | ~~Axiom hygiene was manual~~ | — | **Closed 2026-08-13**: `build.sh` now enforces `Print Assumptions` |
 | G7 | ~~`shootdown_iris.v` not in the build~~ | — | **Closed 2026-08-13**: wired into `build.sh` |
 | G8 | No cross-prover refinement (Lean ↔ Rocq ↔ Sail) | Each tower proves in its own semantic domain; nothing links them mechanically | A shared semantic domain / refinement statement (Stage 3) |
 
-## 6. Toolchain reality (the S2.2 blocker)
+## 6. Toolchain reality (resolved)
 
-The concrete generated machine (`machine.v`) and weak memory (gpfsl) live in
-**incompatible opam switches**: the machine needs `SailStdpp` (rocq-9.2), while
-gpfsl lives in the `wm` switch (coq 8.20.1). Until they are reconciled (gpfsl onto
-rocq-9.2, or the machine onto coq 8.20), S2.2 cannot use the literal generated
-model. This is a *toolchain* gap, not a *modelling* gap, but it caps how far the
-"single refinement spine in a single prover" can currently reach.
+~~The concrete generated machine (`machine.v`) and weak memory (gpfsl) live in
+**incompatible opam switches**~~. **Resolved 2026-08-16**: gpfsl is vendored into
+`third_party/gpfsl` and built on the rocq-9.2 switch alongside stdpp, Iris, and
+SailStdpp (`third_party/build.sh` is the single source of truth). The full spine —
+Sail → generated Rocq → pure proofs → gpfsl weak-memory proofs — is now in one
+prover/switch, and `build.sh` compiles and axiom-checks all 53 Rocq files in one
+pass (646 non-weak + 76 weak checks).
 
 ## 7. How each milestone is validated (the mechanics)
 
@@ -146,7 +182,9 @@ model. This is a *toolchain* gap, not a *modelling* gap, but it caps how far the
 - **All tracks**: aggregated by `ci.sh` at the repo root (run it before merging;
   it is wirable into GitHub Actions / SourceHut builds).
 
-**Bottom line:** the proofs are honest; the *model* is the assumption. Everything
-proven over `machine.sail` should be read as "proved, conditional on this
-simplified hardware model being faithful" until G1 (and, for concurrency, G4) are
-closed.
+**Bottom line:** the proofs are honest and now cover the full translation/coherence/
+IOMMU wedge (not just the initial Sv39 fragment); the *model* is the assumption.
+Everything proven over `machine.sail` should be read as "proved, conditional on
+this hand-written hardware model being faithful." G4 (weak memory) and the
+device halves of G5 (IPI + IOMMU) are now closed; G1 (upstream Sail derivation)
+remains the primary trust-line gap.
