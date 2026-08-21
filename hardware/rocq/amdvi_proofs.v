@@ -184,3 +184,61 @@ Proof.
     cbn [Core_satp_ppn]. reflexivity.
   - reflexivity.
 Qed.
+
+(* ============================================================
+   S4.5 AMD-Vi walker replay of the fill-on-miss loop: the AMD-Vi translation
+   service loop (`amdvi_translate_fill`, machine.sail) consults its IOTLB
+   (keyed by (device_id, IOVA); device_id 0 with no SVM) before the 4-level
+   walk.  A miss re-walks the 4-level I/O page table and refills the IOTLB;
+   after an INVALIDATE_IOMMU_PAGES of the page no cached entry survives, so
+   the loop re-walks and recovers — the invalidate-then-retranslate cycle
+   (AMD-Vi §2.4.3 / PCIe ATS §4.3, the replay of the VT-d PASID-cache loop
+   from S4.5).
+   ============================================================ *)
+
+(* A miss re-walks the 4-level I/O page table and refills the IOTLB under
+   (0, iova): the loop returns the table result and the refilled cache. *)
+Lemma amdvi_translate_fill_miss_refills (root : mword 44) (iotlb : list IotlbEntry)
+    (mem : list MemEntry) (iova : mword 64) (pa : mword 56) (perm : Perm) :
+  iotlb_lookup iotlb 0 iova = None ->
+  amdvi_walk root mem iova = Some (pa, perm) ->
+  amdvi_translate_fill root iotlb mem iova
+  = (Some (pa, perm),
+     {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := iova;
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb).
+Proof.
+  intros Hmiss H. unfold amdvi_translate_fill.
+  rewrite Hmiss. cbn. rewrite H. cbn. reflexivity.
+Qed.
+
+(* After an INVALIDATE_IOMMU_PAGES of the page the cached entry is gone, so
+   the loop is forced onto the miss path and recovers by re-walking the
+   4-level tables and refilling. *)
+Lemma amdvi_translate_fill_after_invalidate (root : mword 44) (iotlb : list IotlbEntry)
+    (mem : list MemEntry) (iova : mword 64) (pa : mword 56) (perm : Perm) :
+  amdvi_walk root mem iova = Some (pa, perm) ->
+  amdvi_translate_fill root (iotlb_invalidate iotlb iova) mem iova
+  = (Some (pa, perm),
+     {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := iova;
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb_invalidate iotlb iova).
+Proof.
+  intros H. unfold amdvi_translate_fill.
+  rewrite (iotlb_lookup_after_invalidate iotlb 0 iova). cbn.
+  rewrite H. cbn. reflexivity.
+Qed.
+
+(* Executable vectors over the S4.4 4-level hit table: the miss -> 4-level
+   walk -> refill, and the invalidate-then-retranslate cycle. *)
+Definition amdvi_iotlb_hit : IotlbEntry :=
+  {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
+     IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read |}.
+
+Lemma test_vector_amdvi_translate_fill_miss :
+  amdvi_translate_fill amd_root [] table_amd_hit va0
+  = (Some (expected_pa, Read), [amdvi_iotlb_hit]).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_amdvi_translate_fill_after_invalidate :
+  amdvi_translate_fill amd_root (iotlb_invalidate [amdvi_iotlb_hit] va0) table_amd_hit va0
+  = (Some (expected_pa, Read), [amdvi_iotlb_hit]).
+Proof. vm_compute. reflexivity. Qed.

@@ -434,6 +434,19 @@ axiom_free vtd_proofs pasid_cache_evict_all_clears
 axiom_free vtd_proofs pasid_cache_evict_pasid_preserves_other
 axiom_free vtd_proofs pasid_cache_evict_pasid_refill_cycle
 axiom_free vtd_proofs test_vector_vtd_pasid_cache_granularity
+# S4.5 PASID-cache generation tags (VT-d 5.20 §15.4): the (DID, PASID,
+# generation) tag — a stale generation never answers the current-generation
+# lookup, the reuse is detected as a tag conflict, evicted, and refilled
+# under the current generation, after which no conflict remains.
+axiom_free vtd_proofs pasid_cache_lookup_gen_installs
+axiom_free vtd_proofs pasid_cache_lookup_gen_stale_singleton
+axiom_free vtd_proofs pasid_cache_evict_gen_clears_present
+axiom_free vtd_proofs pasid_cache_evict_gen_preserves_fresh
+axiom_free vtd_proofs pasid_cache_evict_gen_preserves_other_did
+axiom_free vtd_proofs pasid_cache_evict_gen_conflict_free
+axiom_free vtd_proofs pasid_cache_refill_gen_conflict_free
+axiom_free vtd_proofs pasid_cache_evict_gen_refill_cycle
+axiom_free vtd_proofs test_vector_pasid_cache_generation
 # S4.5 device-table fill-on-miss: the translation service loop *over the
 # device table* — hit walks the cached root (keyed by the DTE's DID), miss
 # re-walks the device's PASID table, refills under (d.did, pasid), and after
@@ -612,6 +625,14 @@ axiom_free smmu_proofs        smmu_shootdown_stage1_correct
 axiom_free smmu_proofs        smmu_shootdown_stage2_correct
 axiom_free smmu_proofs        smmu_walk_conforms
 axiom_free smmu_proofs        smmu_translate_conforms
+# S4.5 SMMU walker replay of the fill-on-miss loop (IOTLB hit / miss-refill /
+# invalidate-then-retranslate).
+axiom_free smmu_proofs        smmu_translate_fill_hit
+axiom_free smmu_proofs        smmu_translate_fill_miss_refills
+axiom_free smmu_proofs        smmu_translate_fill_after_invalidate
+axiom_free smmu_proofs        test_vector_smmu_translate_fill_hit
+axiom_free smmu_proofs        test_vector_smmu_translate_fill_miss
+axiom_free smmu_proofs        test_vector_smmu_translate_fill_after_invalidate
 # AMD-Vi 4-level I/O page-table walk (SSG-4 / S4.4): level-3 resolves to a
 # non-leaf PTE, then the bottom 3 levels are translate re-rooted there — the
 # 4-level walk subsumes the 3-level walk.
@@ -625,9 +646,16 @@ axiom_free amdvi_proofs        test_vector_amdvi_4level_napot_l3
 axiom_free amdvi_proofs        amdvi_unmap_faults
 axiom_free amdvi_proofs        amdvi_unmap_correct
 axiom_free amdvi_proofs        amdvi_walk_conforms
+# S4.5 AMD-Vi walker replay of the fill-on-miss loop (miss-refill /
+# INVALIDATE_IOMMU_PAGES invalidate-then-retranslate).
+axiom_free amdvi_proofs        amdvi_translate_fill_miss_refills
+axiom_free amdvi_proofs        amdvi_translate_fill_after_invalidate
+axiom_free amdvi_proofs        test_vector_amdvi_translate_fill_miss
+axiom_free amdvi_proofs        test_vector_amdvi_translate_fill_after_invalidate
 # IOMMU (SSG-4 / S4.2b-2 groundwork): the queue drain reifies the functional
 # broadcast — iommu_shootdown_via_queue and iommu_shootdown agree on mem and
 # IOTLB (the pure precondition the weak-memory lift must satisfy).
+axiom_free iommu_proofs      iotlb_lookup_after_invalidate
 axiom_free iommu_proofs      iommu_shootdown_mem
 axiom_free iommu_proofs      iommu_shootdown_via_queue_refines_iommu_shootdown
 axiom_free tlb_tags         flush_tlb_entry_leaf
@@ -874,6 +902,15 @@ if [ -d "$GP" ]; then
   axiom_free vtd_device_translate_weak vtd_device_translate_dc_lift "$WFLAGS"
   axiom_free vtd_device_translate_weak vtd_device_translate_dc_machine "$WFLAGS"
   axiom_free vtd_device_translate_weak dc_ctx_update "$WFLAGS"
+  # S4.5 weak-memory PRI fault-delivery lift: the FRCD ghost steps from the
+  # empty fault queue to the queue with the delivered record at the leader's
+  # final read (alone, or alongside the machine ghost); the resolved path is
+  # the identity lift (no record delivered).
+  rocq compile $WFLAGS pri_fault_weak.v
+  axiom_free pri_fault_weak pri_fault_fr_lift "$WFLAGS"
+  axiom_free pri_fault_weak pri_fault_fr_silent_lift "$WFLAGS"
+  axiom_free pri_fault_weak pri_fault_fr_machine "$WFLAGS"
+  axiom_free pri_fault_weak fr_ctx_update "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"

@@ -1424,3 +1424,29 @@ Proof.
       * intros Hvpn. apply Z.eqb_neq in E. apply E. apply (Honly e Hvpn).
       * exact IH.
 Qed.
+
+(* ============================================================
+   S4.5 IOTLB lookup after invalidation: the fill-on-miss translation loops
+   (`smmu_translate_fill`, `amdvi_translate_fill`) consult the IOTLB before
+   walking; after a 4KiB `iotlb_invalidate` of the page, no cached entry for
+   that (did, va) survives, so the loop is forced onto the miss (re-walk)
+   path — the invalidate-then-retranslate cycle (SMMU TLBI / AMD-Vi
+   INVALIDATE_IOMMU_PAGES / PCIe ATS invalidation).
+   ============================================================ *)
+
+(* After invalidating the page of `va`, the (did, va) IOTLB lookup misses: the
+   invalidation dropped every entry whose VPN matched, and the lookup matches
+   on the VPN. *)
+Lemma iotlb_lookup_after_invalidate (iotlb : list IotlbEntry) (did : Z) (va : mword 64) :
+  iotlb_lookup (iotlb_invalidate iotlb va) did va = None.
+Proof.
+  induction iotlb as [| e rest IH]; cbn.
+  - reflexivity.
+  - destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:E.
+    + (* same VPN: the entry is dropped by the invalidation *)
+      exact IH.
+    + (* different VPN: the entry survives, but the lookup's VPN guard is
+         false, so it skips the head (the did guard stays symbolic; the
+         conjunction reduces once either side is decided) *)
+      cbn. rewrite E. destruct (Z.eqb_spec e.(IotlbEntry_did) did); cbn; exact IH.
+Qed.

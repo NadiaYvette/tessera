@@ -410,10 +410,55 @@ of being pushed invalidations.
       (`ats_invalidate_domain_removes`,
       `find_devtlb_after_ats_invalidate_domain`), with three executable
       vectors (TLBI_VA_ASID, pages-by-(domain,VA), devtbl-domain + find).
-    Still open: PASID-cache *hardware tags* beyond the (DID, PASID) key (e.g.
-    generation/ASID bits), and the SMMU two-stage / AMD-Vi *second-platform*
-    walker replay of the fill-on-miss loop (the device-side lift currently
-    steps the ghost at the leader's read, in the S4.2b-2 trust model).
+    - **S4.5 SMMU/AMD-Vi walker replay of the fill-on-miss loop** — landed:
+      `iotlb_lookup` (the IOTLB consulted before the walk) + the SMMU's
+      `smmu_translate_fill` (STE -> CD -> two-stage on a miss, refill under
+      (sid, gva)) and AMD-Vi's `amdvi_translate_fill` (4-level walk on a
+      miss, refill under (0, iova)) — the second-platform twins of the VT-d
+      PASID-cache loop.  `smmu_translate_fill_hit` (a hit answers from the
+      cache, no walk), `smmu_translate_fill_miss_refills` /
+      `amdvi_translate_fill_miss_refills` (a miss re-walks and refills), and
+      `smmu_translate_fill_after_invalidate` /
+      `amdvi_translate_fill_after_invalidate` (after a 4KiB
+      `iotlb_invalidate` no cached entry survives — `iotlb_lookup_after_invalidate`
+      — so the loop is forced onto the re-walk path and recovers: the
+      invalidate-then-retranslate cycle of SMMU TLBI / AMD-Vi
+      INVALIDATE_IOMMU_PAGES / PCIe ATS), plus five executable vectors.
+    - **S4.5 PASID-cache generation tags** — landed (VT-d 5.20 §15.4): the
+      PASID cache tag is (DID, PASID, *generation*).  `PasidCacheEntry` now
+      carries a `gen` field; the gen-tagged view is
+      `pasid_cache_lookup_gen` (an entry answers iff its generation equals
+      the current one — a stale generation is a miss,
+      `pasid_cache_lookup_gen_stale_singleton`), `pasid_cache_tag_conflict`
+      (a *present* entry for a reused tag whose generation is stale),
+      `pasid_cache_refill_gen` (install under the current generation), and
+      `pasid_cache_evict_gen` (the tag-conflict eviction: clear exactly the
+      stale-generation entries of the reused tag, leaving a fresh-generation
+      entry and other tags alone).  Proven: the conflict is detected,
+      evicted, and refilled (`pasid_cache_evict_gen_refill_cycle`), the
+      eviction preserves the fresh generation
+      (`pasid_cache_evict_gen_preserves_fresh`) and other DIDs
+      (`pasid_cache_evict_gen_preserves_other_did`), and after evict +
+      refill no conflict remains (`pasid_cache_refill_gen_conflict_free`,
+      via `pasid_cache_evict_gen_conflict_free`), plus a two-generation
+      executable vector.  The (DID, PASID)-keyed walks and fill loops are the
+      generation-0 slice of the same cache.
+    - **S4.5 weak-memory PRI fault-delivery lift** — landed
+      (`pri_fault_weak.v`): the weak-memory program over the PRI fault
+      delivery path, mirroring the cache lifts — the leader RELEASES the
+      invalidation doorbell and the device ACQUIREs it, and at the leader's
+      final read the FRCD ghost (`fr_ctx`, a `ghost_var` over
+      `list FrcdEntry`) steps from the *empty* fault queue to the queue with
+      the delivered record (`pri_fault_fr_lift`), justified by the pure
+      `pri_fault_frcd_records`; `pri_fault_fr_machine` threads it alongside
+      the machine ghost (post-state carries both the IOTLB queue shootdown
+      and the recorded fault); the resolved path is the identity lift
+      (`pri_fault_fr_silent_lift` — no record delivered).
+
+    Still open on the device side: the ATS/PRQ *interrupt delivery* into the
+    core INTC lifted as a first-class program with the delivery gate in the
+    loop (the current lift steps the FRCD ghost at the leader's read, in the
+    S4.2b-2 trust model).
 
 ## What is replayed vs. new
 

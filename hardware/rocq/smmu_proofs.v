@@ -324,3 +324,83 @@ Proof.
   rewrite (smmu_translate_spec stes cds sid mem gva s c Hs Hsv Hc Hcv).
   apply (smmu_walk_conforms c.(Cd_s1_root) s.(Ste_s2_root) mem gva).
 Qed.
+
+(* ============================================================
+   S4.5 SMMU walker replay of the fill-on-miss loop: the SMMU's translation
+   service loop (`smmu_translate_fill`, machine.sail) consults its IOTLB
+   (keyed by (SID, VA) — the ASID is the pasid tag, 0 without SVM) before the
+   two-stage walk.  A hit answers from the cache without touching the page
+   tables; a miss re-walks STE -> CD -> stage-1/stage-2 and refills the IOTLB
+   under (sid, gva); after a 4KiB TLBI of the page no cached entry survives,
+   so the loop re-walks and recovers — the invalidate-then-retranslate cycle
+   (SMMUv3 §4.4, the replay of the VT-d PASID-cache loop from S4.5).
+   ============================================================ *)
+
+(* A hit answers from the cache: the loop returns the cached translation and
+   leaves the IOTLB untouched — no table walk is performed. *)
+Lemma smmu_translate_fill_hit (stes : list Ste) (cds : list Cd) (sid : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64)
+    (pa : mword 56) (perm : Perm) :
+  iotlb_lookup iotlb sid gva = Some (pa, perm) ->
+  smmu_translate_fill stes cds sid iotlb mem gva = (Some (pa, perm), iotlb).
+Proof.
+  intros H. unfold smmu_translate_fill. rewrite H. reflexivity.
+Qed.
+
+(* A miss re-walks the two-stage tables and refills the IOTLB under (sid, gva):
+   the loop returns the table result and the refilled cache. *)
+Lemma smmu_translate_fill_miss_refills (stes : list Ste) (cds : list Cd) (sid : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64)
+    (pa : mword 56) (perm : Perm) :
+  iotlb_lookup iotlb sid gva = None ->
+  smmu_translate stes cds sid mem gva = Some (pa, perm) ->
+  smmu_translate_fill stes cds sid iotlb mem gva
+  = (Some (pa, perm),
+     {| IotlbEntry_did := sid; IotlbEntry_pasid := 0; IotlbEntry_iova := gva;
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb).
+Proof.
+  intros Hmiss H. unfold smmu_translate_fill.
+  rewrite Hmiss. cbn. rewrite H. cbn. reflexivity.
+Qed.
+
+(* After a 4KiB TLBI of the page the cached entry is gone, so the loop is
+   forced onto the miss path and recovers by re-walking the tables and
+   refilling — the invalidate-then-retranslate cycle. *)
+Lemma smmu_translate_fill_after_invalidate (stes : list Ste) (cds : list Cd) (sid : Z)
+    (iotlb : list IotlbEntry) (mem : list MemEntry) (gva : mword 64)
+    (pa : mword 56) (perm : Perm) :
+  smmu_translate stes cds sid mem gva = Some (pa, perm) ->
+  smmu_translate_fill stes cds sid (iotlb_invalidate iotlb gva) mem gva
+  = (Some (pa, perm),
+     {| IotlbEntry_did := sid; IotlbEntry_pasid := 0; IotlbEntry_iova := gva;
+        IotlbEntry_pa := pa; IotlbEntry_perm := perm |} :: iotlb_invalidate iotlb gva).
+Proof.
+  intros H. unfold smmu_translate_fill.
+  rewrite (iotlb_lookup_after_invalidate iotlb sid gva). cbn.
+  rewrite H. cbn. reflexivity.
+Qed.
+
+(* Executable vectors over the S4.4 two-stage hit table: the cached hit, the
+   miss -> table walk -> refill, and the invalidate-then-retranslate cycle
+   (the invalidation drops the cached entry; the loop re-walks and refills it
+   back). *)
+Definition smmu_iotlb_hit : IotlbEntry :=
+  {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
+     IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read |}.
+
+Lemma test_vector_smmu_translate_fill_hit :
+  smmu_translate_fill [st_hit] [cd_hit] 0 [smmu_iotlb_hit] mem_smmu_hit va0
+  = (Some (expected_pa, Read), [smmu_iotlb_hit]).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_smmu_translate_fill_miss :
+  smmu_translate_fill [st_hit] [cd_hit] 0 [] mem_smmu_hit va0
+  = (Some (expected_pa, Read),
+     [{| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := va0;
+        IotlbEntry_pa := expected_pa; IotlbEntry_perm := Read |}]).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_smmu_translate_fill_after_invalidate :
+  smmu_translate_fill [st_hit] [cd_hit] 0 (iotlb_invalidate [smmu_iotlb_hit] va0) mem_smmu_hit va0
+  = (Some (expected_pa, Read), [smmu_iotlb_hit]).
+Proof. vm_compute. reflexivity. Qed.

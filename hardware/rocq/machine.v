@@ -305,6 +305,35 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
       else None
    end.
 
+Fixpoint iotlb_lookup (entries : list IotlbEntry) (did : Z) (va : mword 64)
+: option ((mword 56 * Perm)) :=
+   match entries with
+   | [] => None
+   | e :: rest =>
+      if andb ((Z.eqb (e.(IotlbEntry_did)) (did)))
+           ((eq_vec ((vpn_of (e.(IotlbEntry_iova)))) ((vpn_of (va))))) then
+        Some ((e.(IotlbEntry_pa), e.(IotlbEntry_perm)))
+      else iotlb_lookup (rest) (did) (va)
+   end.
+
+Definition amdvi_translate_fill
+(root : mword 44) (iotlb : list IotlbEntry) (mem : list MemEntry) (iova : mword 64)
+: (option ((mword 56 * Perm)) * list IotlbEntry) :=
+   match iotlb_lookup (iotlb) (0) (iova) with
+   | Some r => ((Some (r), iotlb))
+   | None =>
+      match amdvi_walk (root) (mem) (iova) with
+      | None => ((None, iotlb))
+      | Some (pa, perm) =>
+         ((Some ((pa, perm)), ({| IotlbEntry_did := 0;
+                                  IotlbEntry_pasid := 0;
+                                  IotlbEntry_iova := iova;
+                                  IotlbEntry_pa := pa;
+                                  IotlbEntry_perm := perm |}) ::
+           iotlb))
+      end
+   end.
+
 Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
    match (stes, sid) with
    | (s :: g__7, l__0) =>
@@ -332,6 +361,25 @@ Definition smmu_translate
            if c.(Cd_valid) then smmu_walk (c.(Cd_s1_root)) (s.(Ste_s2_root)) (mem) (gva) else None
         end
       else None
+   end.
+
+Definition smmu_translate_fill
+(stes : list Ste) (cds : list Cd) (sid : Z) (iotlb : list IotlbEntry) (mem : list MemEntry)
+(gva : mword 64)
+: (option ((mword 56 * Perm)) * list IotlbEntry) :=
+   match iotlb_lookup (iotlb) (sid) (gva) with
+   | Some r => ((Some (r), iotlb))
+   | None =>
+      match smmu_translate (stes) (cds) (sid) (mem) (gva) with
+      | None => ((None, iotlb))
+      | Some (pa, perm) =>
+         ((Some ((pa, perm)), ({| IotlbEntry_did := sid;
+                                  IotlbEntry_pasid := 0;
+                                  IotlbEntry_iova := gva;
+                                  IotlbEntry_pa := pa;
+                                  IotlbEntry_perm := perm |}) ::
+           iotlb))
+      end
    end.
 
 Fixpoint vtd_context_lookup (contexts : list VtdContext) (rid : Z) : option VtdContext :=
@@ -386,11 +434,13 @@ Definition undefined_PasidCacheEntry '(tt : unit) : M (PasidCacheEntry) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
    (undefined_int (tt)) >>= fun (w__1 : Z) =>
    (undefined_int (tt)) >>= fun (w__2 : Z) =>
-   (undefined_bitvector (44)) >>= fun (w__3 : mword 44) =>
+   (undefined_int (tt)) >>= fun (w__3 : Z) =>
+   (undefined_bitvector (44)) >>= fun (w__4 : mword 44) =>
    returnM (({| PasidCacheEntry_present := w__0;
                 PasidCacheEntry_did := w__1;
                 PasidCacheEntry_pasid := w__2;
-                PasidCacheEntry_s1_root := w__3 |})).
+                PasidCacheEntry_gen := w__3;
+                PasidCacheEntry_s1_root := w__4 |})).
 
 Fixpoint pasid_cache_lookup (cache : list PasidCacheEntry) (dp : (Z * Z)) : option PasidCacheEntry :=
    match cache with
@@ -505,6 +555,7 @@ Fixpoint pasid_cache_evict_pasid (cache : list PasidCacheEntry) (dp : (Z * Z))
         ({| PasidCacheEntry_present := false;
             PasidCacheEntry_did := e.(PasidCacheEntry_did);
             PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+            PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
             PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
           (pasid_cache_evict_pasid (rest) (dp))
       else e :: (pasid_cache_evict_pasid (rest) (dp))
@@ -517,6 +568,7 @@ Fixpoint pasid_cache_evict_all (cache : list PasidCacheEntry) : list PasidCacheE
       ({| PasidCacheEntry_present := false;
           PasidCacheEntry_did := e.(PasidCacheEntry_did);
           PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+          PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
           PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
         (pasid_cache_evict_all (rest))
    end.
@@ -529,6 +581,7 @@ Fixpoint pasid_cache_evict (cache : list PasidCacheEntry) (did : Z) : list Pasid
         ({| PasidCacheEntry_present := false;
             PasidCacheEntry_did := e.(PasidCacheEntry_did);
             PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+            PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
             PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
           (pasid_cache_evict (rest) (did))
       else e :: (pasid_cache_evict (rest) (did))
@@ -542,6 +595,7 @@ Fixpoint pasid_cache_refill (cache : list PasidCacheEntry) (dp : (Z * Z)) (root 
       ({| PasidCacheEntry_present := true;
           PasidCacheEntry_did := d;
           PasidCacheEntry_pasid := p;
+          PasidCacheEntry_gen := 0;
           PasidCacheEntry_s1_root := root |}) ::
         []
    | e :: rest =>
@@ -550,9 +604,77 @@ Fixpoint pasid_cache_refill (cache : list PasidCacheEntry) (dp : (Z * Z)) (root 
         ({| PasidCacheEntry_present := true;
             PasidCacheEntry_did := e.(PasidCacheEntry_did);
             PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+            PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
             PasidCacheEntry_s1_root := root |}) ::
           rest
       else e :: (pasid_cache_refill (rest) (dp) (root))
+   end.
+
+Fixpoint pasid_cache_lookup_gen (cache : list PasidCacheEntry) (dp : (Z * Z)) (g : Z)
+: option PasidCacheEntry :=
+   match cache with
+   | [] => None
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d)))
+           ((andb ((Z.eqb (e.(PasidCacheEntry_pasid)) (p))) ((Z.eqb (e.(PasidCacheEntry_gen)) (g)))))
+      then
+        Some (e)
+      else pasid_cache_lookup_gen (rest) (dp) (g)
+   end.
+
+Fixpoint pasid_cache_tag_conflict (cache : list PasidCacheEntry) (dp : (Z * Z)) (g : Z) : bool :=
+   match cache with
+   | [] => false
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d)))
+           ((andb ((Z.eqb (e.(PasidCacheEntry_pasid)) (p))) (e.(PasidCacheEntry_present)))) then
+        if Z.eqb (e.(PasidCacheEntry_gen)) (g) then pasid_cache_tag_conflict (rest) (dp) (g)
+        else true
+      else pasid_cache_tag_conflict (rest) (dp) (g)
+   end.
+
+Fixpoint pasid_cache_refill_gen
+(cache : list PasidCacheEntry) (dp : (Z * Z)) (g : Z) (root : mword 44)
+: list PasidCacheEntry :=
+   match cache with
+   | [] =>
+      let '((d, p)) := dp in
+      ({| PasidCacheEntry_present := true;
+          PasidCacheEntry_did := d;
+          PasidCacheEntry_pasid := p;
+          PasidCacheEntry_gen := g;
+          PasidCacheEntry_s1_root := root |}) ::
+        []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d))) ((Z.eqb (e.(PasidCacheEntry_pasid)) (p))) then
+        ({| PasidCacheEntry_present := true;
+            PasidCacheEntry_did := e.(PasidCacheEntry_did);
+            PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+            PasidCacheEntry_gen := g;
+            PasidCacheEntry_s1_root := root |}) ::
+          rest
+      else e :: (pasid_cache_refill_gen (rest) (dp) (g) (root))
+   end.
+
+Fixpoint pasid_cache_evict_gen (cache : list PasidCacheEntry) (dp : (Z * Z)) (g : Z)
+: list PasidCacheEntry :=
+   match cache with
+   | [] => []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d)))
+           ((andb ((Z.eqb (e.(PasidCacheEntry_pasid)) (p)))
+               ((neq_int (e.(PasidCacheEntry_gen)) (g))))) then
+        ({| PasidCacheEntry_present := false;
+            PasidCacheEntry_did := e.(PasidCacheEntry_did);
+            PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+            PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
+            PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
+          (pasid_cache_evict_gen (rest) (dp) (g))
+      else e :: (pasid_cache_evict_gen (rest) (dp) (g))
    end.
 
 Definition pasid_translate_fill

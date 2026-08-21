@@ -428,7 +428,7 @@ Qed.
 (* Executable vector: a coherent cache entry makes the cached walk resolve to
    the same SPA as the table-driven two-stage walk. *)
 Definition vtd_coherent_cache_entry : PasidCacheEntry :=
-  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0; PasidCacheEntry_gen := 0;
      PasidCacheEntry_s1_root := vtd_s1_root |}.
 
 Lemma test_vector_vtd_pasid_cache_coherent :
@@ -641,7 +641,7 @@ Proof.
     + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
       * injection H as <-.
         exists {| PasidCacheEntry_present := false; PasidCacheEntry_did := e.(PasidCacheEntry_did);
-                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid); PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
                  PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}.
         cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn. split; reflexivity.
       * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH did pasid H).
@@ -700,7 +700,7 @@ Proof.
     + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
       * injection H as <-.
         exists {| PasidCacheEntry_present := true; PasidCacheEntry_did := e.(PasidCacheEntry_did);
-                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid); PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
                  PasidCacheEntry_s1_root := root |}.
         cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn. repeat split; reflexivity.
       * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH did pasid H).
@@ -713,7 +713,7 @@ Lemma pasid_cache_refill_fresh (cache : list PasidCacheEntry) (did pasid : Z) (r
   pasid_cache_lookup cache (did, pasid) = None ->
   pasid_cache_lookup (pasid_cache_refill cache (did, pasid) root) (did, pasid)
   = Some {| PasidCacheEntry_present := true; PasidCacheEntry_did := did;
-           PasidCacheEntry_pasid := pasid; PasidCacheEntry_s1_root := root |}.
+           PasidCacheEntry_pasid := pasid; PasidCacheEntry_gen := 0; PasidCacheEntry_s1_root := root |}.
 Proof.
   revert did pasid. induction cache as [| e rest IH]; cbn; intros did pasid H.
   - rewrite (proj2 (Z.eqb_eq did did) eq_refl), (proj2 (Z.eqb_eq pasid pasid) eq_refl). cbn. reflexivity.
@@ -777,7 +777,7 @@ Proof. vm_compute. reflexivity. Qed.
    other device's (1, 0) entry present and findable, while the (0, 0) entry
    is cleared (non-present, still tagged). *)
 Definition vtd_coherent_cache_entry_did1 : PasidCacheEntry :=
-  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 1; PasidCacheEntry_pasid := 0;
+  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 1; PasidCacheEntry_pasid := 0; PasidCacheEntry_gen := 0;
      PasidCacheEntry_s1_root := vtd_s1_root |}.
 
 Lemma test_vector_vtd_pasid_cache_tags :
@@ -786,7 +786,7 @@ Lemma test_vector_vtd_pasid_cache_tags :
   pasid_cache_lookup (pasid_cache_evict [vtd_coherent_cache_entry; vtd_coherent_cache_entry_did1] 0) (1, 0)
   = Some vtd_coherent_cache_entry_did1 /\
   pasid_cache_lookup (pasid_cache_evict [vtd_coherent_cache_entry; vtd_coherent_cache_entry_did1] 0) (0, 0)
-  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0; PasidCacheEntry_gen := 0;
            PasidCacheEntry_s1_root := vtd_s1_root |}.
 Proof. vm_compute. repeat split; reflexivity. Qed.
 
@@ -811,7 +811,7 @@ Proof.
     + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
       * injection H as <-.
         exists {| PasidCacheEntry_present := false; PasidCacheEntry_did := e.(PasidCacheEntry_did);
-                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid); PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
                  PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}.
         cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn. split; reflexivity.
       * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH did pasid H).
@@ -831,7 +831,7 @@ Proof.
     + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
       * injection H as <-.
         exists {| PasidCacheEntry_present := false; PasidCacheEntry_did := e.(PasidCacheEntry_did);
-                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid); PasidCacheEntry_gen := e.(PasidCacheEntry_gen);
                  PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}.
         (* Global eviction has no guard — the destructs already made the
            lookup's tag guards concrete, so cbn reduces straight to the
@@ -915,17 +915,17 @@ Qed.
    tag — the same DID's other PASID (0, 1) survives; global invalidation
    clears everything (entries stay tagged, present cleared). *)
 Definition vtd_coherent_cache_entry_pasid1 : PasidCacheEntry :=
-  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 1;
+  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 1; PasidCacheEntry_gen := 0;
      PasidCacheEntry_s1_root := vtd_s1_root |}.
 
 Lemma test_vector_vtd_pasid_cache_granularity :
   pasid_cache_lookup (pasid_cache_evict_pasid [vtd_coherent_cache_entry; vtd_coherent_cache_entry_pasid1] (0, 0)) (0, 1)
   = Some vtd_coherent_cache_entry_pasid1 /\
   pasid_cache_lookup (pasid_cache_evict_pasid [vtd_coherent_cache_entry; vtd_coherent_cache_entry_pasid1] (0, 0)) (0, 0)
-  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0; PasidCacheEntry_gen := 0;
            PasidCacheEntry_s1_root := vtd_s1_root |} /\
   pasid_cache_lookup (pasid_cache_evict_all [vtd_coherent_cache_entry; vtd_coherent_cache_entry_pasid1]) (0, 1)
-  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 1;
+  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 1; PasidCacheEntry_gen := 0;
            PasidCacheEntry_s1_root := vtd_s1_root |}.
 Proof. vm_compute. repeat split; reflexivity. Qed.
 
@@ -1635,7 +1635,7 @@ Qed.
    DTE's DID 7) resolves the two-stage walk; after an eviction of DID 7 the
    loop recovers via the PASID-table walk + refill under (7, 0). *)
 Definition vtd_dev_coherent_cache_entry : PasidCacheEntry :=
-  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 7; PasidCacheEntry_pasid := 0;
+  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 7; PasidCacheEntry_pasid := 0; PasidCacheEntry_gen := 0;
      PasidCacheEntry_s1_root := vtd_s1_root |}.
 
 Lemma test_vector_vtd_device_translate_fill_hit :
@@ -1843,4 +1843,242 @@ Lemma test_vector_pri_fault_frcd_delivers_intc :
                                                      FaultRecord_reason := FR_Stage2Fault |} [])
                                       vtd_intc0 0) 0)
   = [true].
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
+   S4.5 PASID-cache generation tags (VT-d 5.20 §15.4): the PASID cache tag is
+   (DID, PASID, generation).  The generation distinguishes reuses of a
+   (DID, PASID) tag across address-space teardown: a transaction issued under
+   the *current* generation g must not hit a stale-generation entry
+   (`pasid_cache_lookup_gen` misses it), the hardware detects the reuse as a
+   *tag conflict* (`pasid_cache_tag_conflict` — a present entry for the tag
+   whose generation is stale), software evicts the conflict
+   (`pasid_cache_evict_gen` — clear exactly the stale-generation entries of
+   the reused tag, leaving a fresh-generation entry and other tags alone),
+   and refill re-installs the root under the *current* generation
+   (`pasid_cache_refill_gen`), after which no conflict remains.
+   ============================================================ *)
+
+(* Refill under the current generation g makes the gen-tagged lookup hit: the
+   entry is present, carries g, and the fresh root. *)
+Lemma pasid_cache_lookup_gen_installs (cache : list PasidCacheEntry) (d p g : Z) (root : mword 44) :
+  pasid_cache_lookup_gen (pasid_cache_refill_gen cache (d, p) g root) (d, p) g
+  = Some {| PasidCacheEntry_present := true; PasidCacheEntry_did := d; PasidCacheEntry_pasid := p;
+           PasidCacheEntry_gen := g; PasidCacheEntry_s1_root := root |}.
+Proof.
+  revert d p g. induction cache as [| e rest IH]; cbn; intros d p g.
+  - rewrite (proj2 (Z.eqb_eq _ _) eq_refl), (proj2 (Z.eqb_eq _ _) eq_refl),
+            (proj2 (Z.eqb_eq _ _) eq_refl). cbn. reflexivity.
+  - destruct (Z.eqb_spec e.(PasidCacheEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) p) as [Hp | Hp]; cbn.
+      * rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp), (proj2 (Z.eqb_eq _ _) eq_refl). cbn.
+        rewrite Hd, Hp. reflexivity.
+      * rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH d p g).
+    + rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g).
+Qed.
+
+(* A stale-generation entry never answers the current-generation lookup: the
+   full tag (DID, PASID, gen) no longer matches, so the access misses. *)
+Lemma pasid_cache_lookup_gen_stale_singleton (e : PasidCacheEntry) (g : Z) :
+  e.(PasidCacheEntry_gen) <> g ->
+  pasid_cache_lookup_gen [e] (e.(PasidCacheEntry_did), e.(PasidCacheEntry_pasid)) g = None.
+Proof.
+  intros Hgen. cbn.
+  rewrite (proj2 (Z.eqb_eq _ _) eq_refl), (proj2 (Z.eqb_eq _ _) eq_refl).
+  rewrite (proj2 (Z.eqb_neq _ _) Hgen). cbn. reflexivity.
+Qed.
+
+(* Tag-conflict eviction turns the stale-generation entries of the reused tag
+   non-present: the (DID, PASID) lookup under the *old* generation finds the
+   slot, but it no longer holds a usable root. *)
+Lemma pasid_cache_evict_gen_clears_present (cache : list PasidCacheEntry) (d p g g0 : Z) (e : PasidCacheEntry) :
+  g0 <> g ->
+  pasid_cache_lookup_gen cache (d, p) g0 = Some e ->
+  exists e', pasid_cache_lookup_gen (pasid_cache_evict_gen cache (d, p) g) (d, p) g0 = Some e' /\
+             e'.(PasidCacheEntry_present) = false.
+Proof.
+  revert d p g g0. induction cache as [| h rest IH]; cbn; intros d p g g0 Hneq H.
+  - discriminate.
+  - destruct (Z.eqb_spec h.(PasidCacheEntry_did) d) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) p) as [Hp | Hp]; cbn in H.
+      * destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g0) as [Hg0 | Hg0]; cbn in H.
+        -- (* the lookup found h at the old generation; h.gen = g0 <> g, so the
+              eviction clears it. *)
+           injection H as <-.
+           assert (Hhg : h.(PasidCacheEntry_gen) <> g) by congruence.
+           exists {| PasidCacheEntry_present := false; PasidCacheEntry_did := h.(PasidCacheEntry_did);
+                    PasidCacheEntry_pasid := h.(PasidCacheEntry_pasid);
+                    PasidCacheEntry_gen := h.(PasidCacheEntry_gen);
+                    PasidCacheEntry_s1_root := h.(PasidCacheEntry_s1_root) |}.
+           cbn. unfold machine.neq_int.
+           rewrite (proj2 (Z.eqb_neq _ _) Hhg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                   (proj2 (Z.eqb_eq _ _) Hg0). cbn. split; reflexivity.
+        -- (* h.gen <> g0: the lookup skips the head; the eviction either
+              clears it (h.gen <> g) or keeps it (h.gen = g) — either way the
+              (d, p) @ g0 lookup moves to the tail. *)
+           destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g) as [Hg | Hg]; cbn.
+           ++ cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                      (proj2 (Z.eqb_neq _ _) Hg0). cbn. exact (IH d p g g0 Hneq H).
+           ++ cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                      (proj2 (Z.eqb_neq _ _) Hg0). cbn. exact (IH d p g g0 Hneq H).
+      * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH d p g g0 Hneq H).
+    + cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g g0 Hneq H).
+Qed.
+
+(* A fresh-generation entry (gen = g) survives the tag-conflict eviction:
+   only stale generations of the reused tag are cleared. *)
+Lemma pasid_cache_evict_gen_preserves_fresh (cache : list PasidCacheEntry) (d p g : Z) (e : PasidCacheEntry) :
+  pasid_cache_lookup_gen cache (d, p) g = Some e ->
+  pasid_cache_lookup_gen (pasid_cache_evict_gen cache (d, p) g) (d, p) g = Some e.
+Proof.
+  revert d p g. induction cache as [| h rest IH]; cbn; intros d p g H.
+  - discriminate.
+  - destruct (Z.eqb_spec h.(PasidCacheEntry_did) d) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) p) as [Hp | Hp]; cbn in H.
+      * destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g) as [Hg | Hg]; cbn in H.
+        -- (* h is the fresh entry itself: eviction keeps it (gen = g), and the
+              lookup still finds it. *)
+           injection H as <-.
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                   (proj2 (Z.eqb_eq _ _) Hg). cbn. reflexivity.
+        -- (* h matches (d,p) with gen <> g: the current-generation lookup skips
+              it, eviction clears it, and the lookup still skips it. *)
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                   (proj2 (Z.eqb_neq _ _) Hg). cbn. exact (IH d p g H).
+      * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH d p g H).
+    + cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g H).
+Qed.
+
+(* Tag-conflict eviction is selective per tag: entries under any other DID (or
+   any other PASID) survive untouched, findable at their own generation. *)
+Lemma pasid_cache_evict_gen_preserves_other_did (cache : list PasidCacheEntry) (d d' p p' g g' : Z) :
+  d <> d' ->
+  forall e, pasid_cache_lookup_gen cache (d', p') g' = Some e ->
+         pasid_cache_lookup_gen (pasid_cache_evict_gen cache (d, p) g) (d', p') g' = Some e.
+Proof.
+  revert d p g d' p' g'. induction cache as [| h rest IH]; cbn; intros d p g d' p' g' Hneq e H.
+  - discriminate.
+  - destruct (Z.eqb_spec h.(PasidCacheEntry_did) d) as [Hd | Hd]; cbn in H.
+    + (* h.did = d — the eviction may clear h, but the target tag is (d', p')
+         with d <> d', so the gen-tagged lookup skips h either way. *)
+      assert (Hhead : Z.eqb h.(PasidCacheEntry_did) d' = false).
+      { apply Z.eqb_neq. intros Hsub. apply Hneq. congruence. }
+      destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) p) as [Hp | Hp]; cbn in H.
+      * destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g) as [Hg | Hg]; cbn in H.
+        -- rewrite Hhead in H. cbn in H.
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+           rewrite Hhead. cbn. exact (IH d p g d' p' g' Hneq e H).
+        -- rewrite Hhead in H. cbn in H.
+           cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+           rewrite Hhead. cbn. exact (IH d p g d' p' g' Hneq e H).
+      * rewrite Hhead in H. cbn in H.
+        cbn. rewrite Hhead. cbn. exact (IH d p g d' p' g' Hneq e H).
+    + (* h.did <> d — the eviction keeps h untouched. *)
+      destruct (Z.eqb_spec h.(PasidCacheEntry_did) d') as [Hd' | Hd']; cbn in H.
+      * destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) p') as [Hp' | Hp']; cbn in H.
+        -- destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g') as [Hg' | Hg']; cbn in H.
+           ++ cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd'), (proj2 (Z.eqb_eq _ _) Hp'),
+                           (proj2 (Z.eqb_eq _ _) Hg'). cbn. exact H.
+           ++ cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd'), (proj2 (Z.eqb_eq _ _) Hp'),
+                           (proj2 (Z.eqb_neq _ _) Hg'). cbn. exact (IH d p g d' p' g' Hneq e H).
+        -- cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd'), (proj2 (Z.eqb_neq _ _) Hp'). cbn. exact (IH d p g d' p' g' Hneq e H).
+      * cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd'). cbn. exact (IH d p g d' p' g' Hneq e H).
+Qed.
+
+(* After the tag-conflict eviction no conflict remains at the current
+   generation: every *present* (DID, PASID) entry carries the current gen. *)
+Lemma pasid_cache_evict_gen_conflict_free (cache : list PasidCacheEntry) (d p g : Z) :
+  pasid_cache_tag_conflict (pasid_cache_evict_gen cache (d, p) g) (d, p) g = false.
+Proof.
+  revert d p g. induction cache as [| h rest IH]; cbn; intros d p g.
+  - reflexivity.
+  - destruct (Z.eqb_spec h.(PasidCacheEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) p) as [Hp | Hp]; cbn.
+      * destruct h.(PasidCacheEntry_present) eqn:Hp0; cbn.
+        -- destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g) as [Hg | Hg]; cbn.
+           ++ (* h is present and current: eviction keeps it; the conflict scan
+                sees a present entry at the current gen and moves to the tail. *)
+              cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp), Hp0. cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn. exact (IH d p g).
+           ++ (* h is present but stale: the eviction clears it; the conflict
+                scan skips the non-present head and moves to the tail. *)
+              cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn. exact (IH d p g).
+        -- destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g) as [Hg | Hg]; cbn.
+           ++ cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp), Hp0. cbn. exact (IH d p g).
+           ++ cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+              rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn. exact (IH d p g).
+      * rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH d p g).
+    + rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g).
+Qed.
+
+(* Evicting the conflict and refilling under the current generation leaves no
+   conflict: the reused tag is present with the current gen, and every other
+   entry for the tag was cleared (non-present) by the eviction. *)
+Lemma pasid_cache_refill_gen_conflict_free (cache : list PasidCacheEntry) (d p g : Z) (root : mword 44) :
+  pasid_cache_tag_conflict
+    (pasid_cache_refill_gen (pasid_cache_evict_gen cache (d, p) g) (d, p) g root) (d, p) g = false.
+Proof.
+  revert d p g. induction cache as [| h rest IH]; cbn; intros d p g.
+  - rewrite (proj2 (Z.eqb_eq _ _) eq_refl), (proj2 (Z.eqb_eq _ _) eq_refl),
+            (proj2 (Z.eqb_eq _ _) eq_refl). cbn. reflexivity.
+  - destruct (Z.eqb_spec h.(PasidCacheEntry_did) d) as [Hd | Hd]; cbn.
+    + destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) p) as [Hp | Hp]; cbn.
+      * (* the head is the reused tag: after evict + refill it carries the
+           current gen, and the tail is just the evicted rest — conflict-free
+           by pasid_cache_evict_gen_conflict_free. *)
+        destruct (Z.eqb_spec h.(PasidCacheEntry_gen) g) as [Hg | Hg]; cbn.
+        -- cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_eq _ _) Hg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                   (proj2 (Z.eqb_eq _ _) eq_refl). cbn.
+           exact (pasid_cache_evict_gen_conflict_free rest d p g).
+        -- cbn. unfold machine.neq_int. rewrite (proj2 (Z.eqb_neq _ _) Hg). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn.
+           rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp),
+                   (proj2 (Z.eqb_eq _ _) eq_refl). cbn.
+           exact (pasid_cache_evict_gen_conflict_free rest d p g).
+      * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn.
+        rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH d p g).
+    + cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn.
+      rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH d p g).
+Qed.
+
+(* The tag-conflict recovery cycle: evict the stale generation, refill under
+   the current one — the current-generation lookup hits the fresh root and no
+   conflict remains. *)
+Lemma pasid_cache_evict_gen_refill_cycle (cache : list PasidCacheEntry) (d p g : Z) (root : mword 44) :
+  pasid_cache_lookup_gen (pasid_cache_refill_gen (pasid_cache_evict_gen cache (d, p) g) (d, p) g root) (d, p) g
+  = Some {| PasidCacheEntry_present := true; PasidCacheEntry_did := d; PasidCacheEntry_pasid := p;
+           PasidCacheEntry_gen := g; PasidCacheEntry_s1_root := root |} /\
+  pasid_cache_tag_conflict (pasid_cache_refill_gen (pasid_cache_evict_gen cache (d, p) g) (d, p) g root) (d, p) g = false.
+Proof.
+  split.
+  - apply pasid_cache_lookup_gen_installs.
+  - apply pasid_cache_refill_gen_conflict_free.
+Qed.
+
+(* Executable vector: the two-generation tag-conflict cycle — a gen-0 entry is
+   stale under the current gen 1, the conflict is detected, evicted, and
+   refilled under gen 1, after which the current-generation lookup hits the
+   fresh root and no conflict remains. *)
+Lemma test_vector_pasid_cache_generation :
+  let cache := [{| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+                  PasidCacheEntry_gen := 0; PasidCacheEntry_s1_root := vtd_s1_root |}] in
+  pasid_cache_lookup_gen cache (0, 0) 1 = None /\
+  pasid_cache_tag_conflict cache (0, 0) 1 = true /\
+  pasid_cache_lookup_gen (pasid_cache_evict_gen cache (0, 0) 1) (0, 0) 0
+  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+           PasidCacheEntry_gen := 0; PasidCacheEntry_s1_root := vtd_s1_root |} /\
+  pasid_cache_lookup_gen (pasid_cache_refill_gen (pasid_cache_evict_gen cache (0, 0) 1) (0, 0) 1 vtd_s1_root) (0, 0) 1
+  = Some {| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+           PasidCacheEntry_gen := 1; PasidCacheEntry_s1_root := vtd_s1_root |} /\
+  pasid_cache_tag_conflict (pasid_cache_refill_gen (pasid_cache_evict_gen cache (0, 0) 1) (0, 0) 1 vtd_s1_root) (0, 0) 1 = false.
 Proof. vm_compute. repeat split; reflexivity. Qed.

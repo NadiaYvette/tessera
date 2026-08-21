@@ -371,6 +371,40 @@ function amdvi_walk(root, mem, iova) =
       else None()
   }
 
+// ---- IOTLB lookup + the walkers' fill-on-miss translation loops (S4.4/S4.5) ----
+//
+// The IOMMU caches completed translations in its IOTLB (keyed by
+// (did, iova) — the SMMU keys by (SID, ASID, VA), AMD-Vi by (device_id,
+// VA); the ASID is the IotlbEntry's pasid tag, 0 with no SVM).  The
+// translation service loop replays the VT-d PASID-cache fill-on-miss shape
+// (S4.5) for each walker: a hit answers from the cache without touching the
+// page tables; a miss re-walks the tables, refills the IOTLB, and answers.
+// The loop returns the translation and the resulting IOTLB, so after an
+// invalidation the *loop* recovers — it re-walks and refills, unlike the raw
+// evicted cache which misses (proved in smmu_proofs.v / amdvi_proofs.v).
+
+val iotlb_lookup : (list(IotlbEntry), int, vaddr) -> option((paddr, Perm))
+function iotlb_lookup(entries, did, va) = match entries {
+  [||] => None(),
+  e :: rest =>
+    if e.did == did & vpn_of(e.iova) == vpn_of(va) then Some((e.pa, e.perm))
+    else iotlb_lookup(rest, did, va)
+}
+
+val amdvi_translate_fill : (bits(44), list(IotlbEntry), PageTable, vaddr)
+                        -> (option((paddr, Perm)), list(IotlbEntry))
+function amdvi_translate_fill(root, iotlb, mem, iova) =
+  match iotlb_lookup(iotlb, 0, iova) {
+    Some(r) => (Some(r), iotlb),
+    None() =>
+      match amdvi_walk(root, mem, iova) {
+        None() => (None(), iotlb),
+        Some((pa, perm)) =>
+          (Some((pa, perm)),
+           struct { did = 0, pasid = 0, iova = iova, pa = pa, perm = perm } :: iotlb)
+      }
+  }
+
 // ---- SMMUv3 stream table / context descriptor (SSG-4 / S4.4) ----
 //
 // The two-stage walk's roots are resolved by the stream-table walk: the Stream
@@ -413,6 +447,23 @@ function smmu_translate(stes, cds, sid, mem, gva) =
             else None()
         }
       else None()
+  }
+
+// The SMMU's fill-on-miss translation service loop: a hit answers from the
+// IOTLB (keyed by the SID), a miss re-walks the STE -> CD -> two-stage
+// tables and refills the IOTLB under (sid, gva).
+val smmu_translate_fill : (list(Ste), list(Cd), int, list(IotlbEntry), PageTable, vaddr)
+                       -> (option((paddr, Perm)), list(IotlbEntry))
+function smmu_translate_fill(stes, cds, sid, iotlb, mem, gva) =
+  match iotlb_lookup(iotlb, sid, gva) {
+    Some(r) => (Some(r), iotlb),
+    None() =>
+      match smmu_translate(stes, cds, sid, mem, gva) {
+        None() => (None(), iotlb),
+        Some((pa, perm)) =>
+          (Some((pa, perm)),
+           struct { did = sid, pasid = 0, iova = gva, pa = pa, perm = perm } :: iotlb)
+      }
   }
 
 // ---- Intel VT-d context-table / second-level walk (SSG-4 / S4.5) ----
@@ -494,10 +545,20 @@ function vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova) =
 // coherence invariant (`pasid_cache ⊆ pasid-table`) says a present cached
 // root for (rid, pasid) matches the table, so `pasid_cached_walk =
 // vtd_walk_pasid` (proved in vtd_proofs.v).
+//
+// The entry also carries a *generation* number (VT-d 5.20 §15.4: the PASID
+// cache tag is (DID, PASID, generation)) so the hardware can detect a reused
+// tag: when the kernel tears an address space down and a (DID, PASID) is
+// reused with a fresh generation, the stale-generation entry must not answer
+// (`pasid_cache_lookup_gen` misses it) until software evicts the tag conflict
+// (`pasid_cache_evict_gen`) and refills under the new generation
+// (`pasid_cache_refill_gen`).  The (DID, PASID)-keyed view — the walks and
+// the fill-on-miss loops — is the generation-0 slice of the same cache.
 struct PasidCacheEntry = {
   present : bool,
   did     : int,
   pasid   : int,
+  gen     : int,
   s1_root : bits(44)
 }
 
@@ -631,7 +692,7 @@ function pasid_cache_evict_pasid(cache, dp) = match cache {
   e :: rest =>
     let (d, p) = dp in
     if e.did == d & e.pasid == p then
-      struct { present = false, did = e.did, pasid = e.pasid, s1_root = e.s1_root } :: pasid_cache_evict_pasid(rest, dp)
+      struct { present = false, did = e.did, pasid = e.pasid, gen = e.gen, s1_root = e.s1_root } :: pasid_cache_evict_pasid(rest, dp)
     else e :: pasid_cache_evict_pasid(rest, dp)
 }
 
@@ -641,7 +702,7 @@ val pasid_cache_evict_all : list(PasidCacheEntry) -> list(PasidCacheEntry)
 function pasid_cache_evict_all(cache) = match cache {
   [||] => [||],
   e :: rest =>
-    struct { present = false, did = e.did, pasid = e.pasid, s1_root = e.s1_root } :: pasid_cache_evict_all(rest)
+    struct { present = false, did = e.did, pasid = e.pasid, gen = e.gen, s1_root = e.s1_root } :: pasid_cache_evict_all(rest)
 }
 
 val pasid_cache_evict : (list(PasidCacheEntry), int) -> list(PasidCacheEntry)
@@ -649,7 +710,7 @@ function pasid_cache_evict(cache, did) = match cache {
   [||] => [||],
   e :: rest =>
     if e.did == did then
-      struct { present = false, did = e.did, pasid = e.pasid, s1_root = e.s1_root } :: pasid_cache_evict(rest, did)
+      struct { present = false, did = e.did, pasid = e.pasid, gen = e.gen, s1_root = e.s1_root } :: pasid_cache_evict(rest, did)
     else e :: pasid_cache_evict(rest, did)
 }
 
@@ -657,12 +718,83 @@ val pasid_cache_refill : (list(PasidCacheEntry), (int, int), bits(44)) -> list(P
 function pasid_cache_refill(cache, dp, root) = match cache {
   [||] =>
     let (d, p) = dp in
-    struct { present = true, did = d, pasid = p, s1_root = root } :: [||],
+    struct { present = true, did = d, pasid = p, gen = 0, s1_root = root } :: [||],
   e :: rest =>
     let (d, p) = dp in
     if e.did == d & e.pasid == p then
-      struct { present = true, did = e.did, pasid = e.pasid, s1_root = root } :: rest
+      struct { present = true, did = e.did, pasid = e.pasid, gen = e.gen, s1_root = root } :: rest
     else e :: pasid_cache_refill(rest, dp, root)
+}
+
+// ---- PASID-cache generation tags (SSG-4 / S4.5) ----
+//
+// The PASID cache tag is (DID, PASID, generation) (VT-d 5.20 §15.4): the
+// generation distinguishes reuses of a (DID, PASID) tag across address-space
+// teardown, so a transaction issued under the *current* generation must not
+// hit a stale-generation entry.  The (DID, PASID)-keyed view above is the
+// generation-0 slice; the gen-tagged view below is the full tag.
+// `pasid_cache_lookup_gen` answers only entries whose generation equals the
+// current one; `pasid_cache_tag_conflict` detects a reused tag holding a
+// stale generation (the hardware must not serve it); `pasid_cache_refill_gen`
+// installs the root under the *current* generation (replacing the stale tag);
+// and `pasid_cache_evict_gen` is the tag-conflict eviction — clear exactly
+// the stale-generation entries of a reused tag, leaving a fresh-generation
+// entry (and other tags) alone.
+
+// Generation-tagged lookup: an entry answers iff its (did, pasid) matches AND
+// its generation equals the current one g.
+val pasid_cache_lookup_gen : (list(PasidCacheEntry), (int, int), int) -> option(PasidCacheEntry)
+function pasid_cache_lookup_gen(cache, dp, g) = match cache {
+  [||] => None(),
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & e.gen == g then Some(e)
+    else pasid_cache_lookup_gen(rest, dp, g)
+}
+
+// Tag conflict: a *present* entry for (did, pasid) whose generation differs
+// from g — the tag was reused, so the old generation's usable (valid) cached
+// root is stale and must not be served.  Non-present entries are already
+// misses (the walks check `present`), so they are not conflicts.
+val pasid_cache_tag_conflict : (list(PasidCacheEntry), (int, int), int) -> bool
+function pasid_cache_tag_conflict(cache, dp, g) = match cache {
+  [||] => false,
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & e.present then
+      if e.gen == g then pasid_cache_tag_conflict(rest, dp, g)
+      else true
+    else pasid_cache_tag_conflict(rest, dp, g)
+}
+
+// Generation-tagged refill: install the root under (did, pasid) with the
+// *current* generation g.  A matching entry is updated in place (its tag now
+// carries g, so the conflict it would have caused is gone); a fresh tag is
+// prepended with generation g.
+val pasid_cache_refill_gen : (list(PasidCacheEntry), (int, int), int, bits(44)) -> list(PasidCacheEntry)
+function pasid_cache_refill_gen(cache, dp, g, root) = match cache {
+  [||] =>
+    let (d, p) = dp in
+    struct { present = true, did = d, pasid = p, gen = g, s1_root = root } :: [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p then
+      struct { present = true, did = e.did, pasid = e.pasid, gen = g, s1_root = root } :: rest
+    else e :: pasid_cache_refill_gen(rest, dp, g, root)
+}
+
+// Tag-conflict eviction: clear exactly the stale-generation entries of a
+// reused (did, pasid) — an entry whose tag matches but whose generation
+// differs from g.  A fresh-generation entry (gen = g) and all other tags
+// survive.
+val pasid_cache_evict_gen : (list(PasidCacheEntry), (int, int), int) -> list(PasidCacheEntry)
+function pasid_cache_evict_gen(cache, dp, g) = match cache {
+  [||] => [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p & e.gen != g then
+      struct { present = false, did = e.did, pasid = e.pasid, gen = e.gen, s1_root = e.s1_root } :: pasid_cache_evict_gen(rest, dp, g)
+    else e :: pasid_cache_evict_gen(rest, dp, g)
 }
 
 // ---- PASID in-loop translation with fill-on-miss (SSG-4 / S4.5) ----
