@@ -302,10 +302,31 @@ of being pushed invalidations.
       *two-stage PASID walk* fault and records the fault — the S4.5 analogue of
       `iommu_broadcast_reifies_correct`, giving the weak-memory program's ghost
       post-state its VT-d two-stage meaning.
-    Still open: FRCDR drain-by-software, fault-message (DID/PASID) *interrupt
-    delivery* into the core interrupt controller, PASID-table pointers inside
-    the scalable-mode DTE, PASID-cache tags (DID+PASID) with hardware
-    fill-on-miss, and the in-loop weak-memory lift of the PASID walker.
+    - **S4.5 PASID in-loop translation (fill-on-miss)** — landed
+      (`pasid_translate_fill`): the translation service loop consults the PASID
+      cache; a hit walks the cached root, a miss re-walks the PASID table,
+      refills the cache with the table's root, and walks.  After an eviction
+      the *loop* recovers (`pasid_translate_fill_after_evict`): it answers
+      with the table result — unlike the raw evicted `pasid_cached_walk`,
+      which misses — and leaves a refilled, coherent-again cache.
+    - **S4.5 FRCD interrupt delivery** — landed
+      (`frcd_signal_intc` + `vtd_shootdown_frcd_delivers` + `vtd_fault_ack_rings`):
+      a pending FRCD raises the fault line on the target core through the
+      INTC's send (edge-triggered, latched regardless of mask/delivery), and
+      the kernel's unmasked, delivery-enabled ack rings the doorbell — the
+      S4.5 tie into SSG-3's intc model.
+    - **S4.5 DTE PASID-table pointers** — landed (`VtdDeviceEntry.pasid_tbl` +
+      `pasid_table_lookup` + `vtd_walk_device_pasid`): the scalable-mode
+      two-stage walk goes DTE → PASID table → first stage, then the selected
+      context's second level, and agrees with the flat `vtd_walk_pasid`
+      exactly when the DTE's PASID-table pointer selects the shared table and
+      its ctx_index the context the flat lookup would find
+      (`vtd_walk_device_pasid_of_flat`), with the five structural faults
+      covered.
+    Still open: FRCDR drain-by-software, PASID-cache tags (DID+PASID) with
+    hardware fill-on-miss, and the *weak-memory (gpfsl) program* lift of the
+    in-loop PASID translation (the functional fill-on-miss loop above is the
+    S4.2b-1-style base for it).
 
 ## What is replayed vs. new
 

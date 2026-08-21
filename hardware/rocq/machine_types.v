@@ -855,45 +855,51 @@ Record VtdDeviceEntry := {
   VtdDeviceEntry_present : bool;
   VtdDeviceEntry_did : Z;
   VtdDeviceEntry_ctx_index : Z;
+  VtdDeviceEntry_pasid_tbl : Z;
 }.
 Arguments VtdDeviceEntry : clear implicits.
 #[export]
 Instance Decidable_eq_VtdDeviceEntry : EqDecision VtdDeviceEntry.
-   intros [x0 x1 x2].
-   intros [y0 y1 y2].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_VtdDeviceEntry : Countable VtdDeviceEntry.
 refine {|
-  encode x := encode (VtdDeviceEntry_present x, VtdDeviceEntry_did x, VtdDeviceEntry_ctx_index x);
-  decode x := '(x0, x1, x2) ← decode x;
-              mret (Build_VtdDeviceEntry x0 x1 x2)
+  encode x := encode (VtdDeviceEntry_present x, VtdDeviceEntry_did x, VtdDeviceEntry_ctx_index x, VtdDeviceEntry_pasid_tbl x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_VtdDeviceEntry x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1 x2];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'VtdDeviceEntry_present' := e ]}" :=
-  match r with Build_VtdDeviceEntry _ (_ as f1) (_ as f2) =>
-    Build_VtdDeviceEntry e f1 f2 end (at level 0).
+  match r with Build_VtdDeviceEntry _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_VtdDeviceEntry e f1 f2 f3 end (at level 0).
 Notation "{[ r 'with' 'VtdDeviceEntry_did' := e ]}" :=
-  match r with Build_VtdDeviceEntry (_ as f0) _ (_ as f2) =>
-    Build_VtdDeviceEntry f0 e f2 end (at level 0).
+  match r with Build_VtdDeviceEntry (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_VtdDeviceEntry f0 e f2 f3 end (at level 0).
 Notation "{[ r 'with' 'VtdDeviceEntry_ctx_index' := e ]}" :=
-  match r with Build_VtdDeviceEntry (_ as f0) (_ as f1) _ =>
-    Build_VtdDeviceEntry f0 f1 e end (at level 0).
+  match r with Build_VtdDeviceEntry (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_VtdDeviceEntry f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'VtdDeviceEntry_pasid_tbl' := e ]}" :=
+  match r with Build_VtdDeviceEntry (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_VtdDeviceEntry f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_VtdDeviceEntry : Inhabited (VtdDeviceEntry) := {
   inhabitant := {|
     VtdDeviceEntry_present := inhabitant;
     VtdDeviceEntry_did := inhabitant;
-    VtdDeviceEntry_ctx_index := inhabitant
+    VtdDeviceEntry_ctx_index := inhabitant;
+    VtdDeviceEntry_pasid_tbl := inhabitant
 |} }.
 
 

@@ -302,15 +302,15 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
 
 Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
    match (stes, sid) with
-   | (s :: g__7, l__0) =>
-      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__7) ((Z.sub (l__0) (1)))
+   | (s :: g__8, l__0) =>
+      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__8) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
 Fixpoint cd_lookup (cds : list Cd) (idx : Z) : option Cd :=
    match (cds, idx) with
-   | (c :: g__6, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__6) ((Z.sub (l__0) (1)))
+   | (c :: g__7, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__7) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -331,8 +331,8 @@ Definition smmu_translate
 
 Fixpoint vtd_context_lookup (contexts : list VtdContext) (rid : Z) : option VtdContext :=
    match (contexts, rid) with
-   | (c :: g__5, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__5) ((Z.sub (l__0) (1)))
+   | (c :: g__6, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__6) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -351,8 +351,8 @@ Definition undefined_VtdPasid '(tt : unit) : M (VtdPasid) :=
 
 Fixpoint vtd_pasid_lookup (ptes : list VtdPasid) (pasid : Z) : option VtdPasid :=
    match (ptes, pasid) with
-   | (e :: g__4, l__0) =>
-      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__4) ((Z.sub (l__0) (1)))
+   | (e :: g__5, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__5) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -387,8 +387,8 @@ Definition undefined_PasidCacheEntry '(tt : unit) : M (PasidCacheEntry) :=
 
 Fixpoint pasid_cache_lookup (cache : list PasidCacheEntry) (pasid : Z) : option PasidCacheEntry :=
    match (cache, pasid) with
-   | (e :: g__3, l__0) =>
-      if Z.eqb (l__0) (0) then Some (e) else pasid_cache_lookup (g__3) ((Z.sub (l__0) (1)))
+   | (e :: g__4, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else pasid_cache_lookup (g__4) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -417,14 +417,16 @@ Definition undefined_VtdDeviceEntry '(tt : unit) : M (VtdDeviceEntry) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
    (undefined_int (tt)) >>= fun (w__1 : Z) =>
    (undefined_int (tt)) >>= fun (w__2 : Z) =>
+   (undefined_int (tt)) >>= fun (w__3 : Z) =>
    returnM (({| VtdDeviceEntry_present := w__0;
                 VtdDeviceEntry_did := w__1;
-                VtdDeviceEntry_ctx_index := w__2 |})).
+                VtdDeviceEntry_ctx_index := w__2;
+                VtdDeviceEntry_pasid_tbl := w__3 |})).
 
 Fixpoint vtd_device_lookup (devtbl : list VtdDeviceEntry) (rid : Z) : option VtdDeviceEntry :=
    match (devtbl, rid) with
-   | (e :: g__2, l__0) =>
-      if Z.eqb (l__0) (0) then Some (e) else vtd_device_lookup (g__2) ((Z.sub (l__0) (1)))
+   | (e :: g__3, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else vtd_device_lookup (g__3) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -440,6 +442,45 @@ Definition vtd_walk_device
         | None => None
         | Some c =>
            if c.(VtdContext_present) then iommu_walk (c.(VtdContext_sl_root)) (mem) (iova) else None
+        end
+      else None
+   end.
+
+Fixpoint pasid_table_lookup (tbls : list (list VtdPasid)) (idx : Z) : option (list VtdPasid) :=
+   match (tbls, idx) with
+   | (t :: g__2, l__0) =>
+      if Z.eqb (l__0) (0) then Some (t) else pasid_table_lookup (g__2) ((Z.sub (l__0) (1)))
+   | ([], _) => None
+   end.
+
+Definition vtd_walk_device_pasid
+(devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid)) (contexts : list VtdContext) (rid : Z)
+(pasid : Z) (mem : list MemEntry) (iova : mword 64)
+: option ((mword 56 * Perm)) :=
+   match vtd_device_lookup (devtbl) (rid) with
+   | None => None
+   | Some d =>
+      if d.(VtdDeviceEntry_present) then
+        match pasid_table_lookup (tbls) (d.(VtdDeviceEntry_pasid_tbl)) with
+        | None => None
+        | Some ptes =>
+           match vtd_pasid_lookup (ptes) (pasid) with
+           | None => None
+           | Some e =>
+              if e.(VtdPasid_present) then
+                match iommu_walk (e.(VtdPasid_s1_root)) (mem) (iova) with
+                | None => None
+                | Some (gpa, _) =>
+                   match vtd_context_lookup (contexts) (d.(VtdDeviceEntry_ctx_index)) with
+                   | None => None
+                   | Some c =>
+                      if c.(VtdContext_present) then
+                        iommu_walk (c.(VtdContext_sl_root)) (mem) ((zero_extend (gpa) (64)))
+                      else None
+                   end
+                end
+              else None
+           end
         end
       else None
    end.
@@ -467,6 +508,27 @@ Fixpoint pasid_cache_refill (cache : list PasidCacheEntry) (pasid : Z) (root : m
           rest
       else e :: (pasid_cache_refill (rest) ((Z.sub (l__0) (1))) (root))
    | ([], _) => []
+   end.
+
+Definition pasid_translate_fill
+(contexts : list VtdContext) (rid : Z) (ptes : list VtdPasid) (cache : list PasidCacheEntry)
+(pasid : Z) (mem : list MemEntry) (iova : mword 64)
+: (option ((mword 56 * Perm)) * list PasidCacheEntry) :=
+   match pasid_cache_lookup (cache) (pasid) with
+   | None => ((None, cache))
+   | Some e =>
+      if e.(PasidCacheEntry_present) then
+        ((pasid_cached_walk (contexts) (rid) (cache) (pasid) (mem) (iova), cache))
+      else
+        match vtd_pasid_lookup (ptes) (pasid) with
+        | None => ((None, cache))
+        | Some te =>
+           if te.(VtdPasid_present) then
+             ((vtd_walk_pasid (contexts) (rid) (ptes) (pasid) (mem) (iova), pasid_cache_refill
+                                                                              (cache) (pasid)
+                                                                              (te.(VtdPasid_s1_root))))
+           else ((None, cache))
+        end
    end.
 
 Definition undefined_FaultReason '(tt : unit) : M (FaultReason) :=

@@ -522,16 +522,19 @@ function pasid_cached_walk(contexts, rid, cache, pasid, mem, iova) =
 // VT-d scalable mode indexes the *device table* by requester ID (BDF); each
 // device-table entry (DTE) selects a context table (and, with SVM, the PASID
 // table) rather than the legacy flat context table (VT-d 5.20 §3.4).  Here a
-// DTE selects a context by index into the shared contexts list, so the
-// device-table walk is the context's second-level walk re-rooted at the
-// selected entry: `vtd_walk_device` reduces to `vtd_walk` exactly when the
-// selected context is the one the flat lookup would find (proved in
-// vtd_proofs.v).  PASID-table pointers in the DTE (scalable-mode SVM) remain
-// a later increment.
+// DTE selects a context by index into the shared contexts list (whose SL root
+// is the second-level root) and a PASID table by index into the device's
+// PASID-table list (the DTE's PASID-table pointer / PTP):
+// `vtd_walk_device` is the non-SVM walk (DTE -> context -> SL walk), and
+// `vtd_walk_device_pasid` is the scalable-mode two-stage walk (DTE -> PASID
+// table -> first-stage, then the selected context's second level).  Both
+// reduce to the flat view exactly when the DTE points at the context/table
+// the flat lookup would find (proved in vtd_proofs.v).
 struct VtdDeviceEntry = {
   present   : bool,
   did       : int,
-  ctx_index : int
+  ctx_index : int,
+  pasid_tbl : int
 }
 
 val vtd_device_lookup : (list(VtdDeviceEntry), int) -> option(VtdDeviceEntry)
@@ -550,6 +553,48 @@ function vtd_walk_device(devtbl, contexts, rid, mem, iova) =
         match vtd_context_lookup(contexts, d.ctx_index) {
           None() => None(),
           Some(c) => if c.present then iommu_walk(c.sl_root, mem, iova) else None()
+        }
+      else None()
+  }
+
+// The device's PASID-table pointer: `tbls` is the device table's set of PASID
+// tables, indexed by the DTE's `pasid_tbl` (VT-d 5.20 §3.4, PTP).
+val pasid_table_lookup : (list(list(VtdPasid)), int) -> option(list(VtdPasid))
+function pasid_table_lookup(tbls, idx) = match (tbls, idx) {
+  (t :: _, 0) => Some(t),
+  (_ :: rest, n) => pasid_table_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+// The scalable-mode two-stage walk: DTE -> PASID table -> first stage
+// (guest, re-rooted at the PASID entry's s1_root), then the selected
+// context's second level (GPA zero-extended for the stage-2 input).
+val vtd_walk_device_pasid : (list(VtdDeviceEntry), list(list(VtdPasid)), list(VtdContext), int, int, PageTable, vaddr)
+                         -> option((paddr, Perm))
+function vtd_walk_device_pasid(devtbl, tbls, contexts, rid, pasid, mem, iova) =
+  match vtd_device_lookup(devtbl, rid) {
+    None() => None(),
+    Some(d) =>
+      if d.present then
+        match pasid_table_lookup(tbls, d.pasid_tbl) {
+          None() => None(),
+          Some(ptes) =>
+            match vtd_pasid_lookup(ptes, pasid) {
+              None() => None(),
+              Some(e) =>
+                if e.present then
+                  match iommu_walk(e.s1_root, mem, iova) {
+                    None() => None(),
+                    Some((gpa, _)) =>
+                      match vtd_context_lookup(contexts, d.ctx_index) {
+                        None() => None(),
+                        Some(c) =>
+                          if c.present then iommu_walk(c.sl_root, mem, sail_zero_extend(gpa, 64))
+                          else None()
+                      }
+                  }
+                else None()
+            }
         }
       else None()
   }
@@ -576,6 +621,37 @@ function pasid_cache_refill(cache, pasid, root) = match (cache, pasid) {
   (e :: rest, n) => e :: pasid_cache_refill(rest, n - 1, root),
   ([||], _) => [||]
 }
+
+// ---- PASID in-loop translation with fill-on-miss (SSG-4 / S4.5) ----
+//
+// The IOMMU's translation service loop: each request consults the PASID
+// cache; a hit walks the cached first-stage root (the cache is untouched), a
+// miss (an evicted or never-filled slot) re-walks the PASID table, refills
+// the cache with the table's first-stage root, and walks.  The loop returns
+// the translation and the resulting cache: after an eviction the *loop*
+// recovers (it re-walks the table and refills, so it answers with the table
+// result — unlike the raw evicted `pasid_cached_walk`, which misses) and the
+// refilled cache is coherent again (`pasid_cache_refill_coherent`).  This is
+// the functional in-loop lift; the weak-memory (gpfsl) program over the same
+// loop is the next increment (see doc/iommu-shootdown-plan.md, S4.5).
+val pasid_translate_fill : (list(VtdContext), int, list(VtdPasid), list(PasidCacheEntry), int, PageTable, vaddr)
+                        -> (option((paddr, Perm)), list(PasidCacheEntry))
+function pasid_translate_fill(contexts, rid, ptes, cache, pasid, mem, iova) =
+  match pasid_cache_lookup(cache, pasid) {
+    None() => (None(), cache),
+    Some(e) =>
+      if e.present then
+        (pasid_cached_walk(contexts, rid, cache, pasid, mem, iova), cache)
+      else
+        match vtd_pasid_lookup(ptes, pasid) {
+          None() => (None(), cache),
+          Some(te) =>
+            if te.present then
+              (vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova),
+               pasid_cache_refill(cache, pasid, te.s1_root))
+            else (None(), cache)
+        }
+  }
 
 // ---- Intel VT-d fault recording (SSG-4 / S4.5) ----
 //

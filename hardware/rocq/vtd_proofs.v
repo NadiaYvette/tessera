@@ -22,6 +22,9 @@ Require Import coherence_leaf.   (* invalidate_leaf_mem *)
 Require Import conformance.
 Require Import iommu_conformance.
 Require Import iommu_proofs.     (* iommu_shootdown_via_queue (+_mem), iommu_invalidate_faults *)
+Require Import intc_types.       (* Intc (SSG-3) for FRCD interrupt delivery *)
+Require Import intc.             (* intc_send / intc_ack *)
+Require Import intc_proofs.      (* intc_send_sets_pending, intc_ack_unmasked_rings, preserves *)
 Import ListNotations.
 
 (* A present context selects exactly the IOMMU walk rooted at its SL root. *)
@@ -800,7 +803,8 @@ Proof. intros Hd Hdp Hc Hcp. unfold vtd_walk_device. rewrite Hd, Hdp, Hc, Hcp. c
 (* Executable vector: a present DTE for rid 0 selecting the hit context
    resolves the second-level walk to the same SPA as the direct walk. *)
 Definition vtd_dev_hit_entry : VtdDeviceEntry :=
-  {| VtdDeviceEntry_present := true; VtdDeviceEntry_did := 7; VtdDeviceEntry_ctx_index := 0 |}.
+  {| VtdDeviceEntry_present := true; VtdDeviceEntry_did := 7; VtdDeviceEntry_ctx_index := 0;
+     VtdDeviceEntry_pasid_tbl := 0 |}.
 
 Lemma test_vector_vtd_walk_device_hit :
   vtd_walk_device [vtd_dev_hit_entry] [vtd_pasid_hit_context] 0 mem_vtd_pasid_hit va0 = Some (expected_pa, Read).
@@ -908,3 +912,322 @@ Lemma test_vector_vtd_frcd_pending :
   fault_msg_did_pasid (frcd_of {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
                                  FaultRecord_reason := FR_Stage2Fault |}) = (0, 0).
 Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
+   S4.5 PASID in-loop translation with fill-on-miss: the IOMMU's translation
+   service loop consults the PASID cache; a hit walks the cached root, a miss
+   re-walks the PASID table, refills the cache with the table's root, and
+   walks.  After an eviction the *loop* recovers — it answers with the table
+   result (unlike the raw evicted `pasid_cached_walk`, which misses) and
+   leaves a refilled cache that is coherent again.
+   ============================================================ *)
+
+(* A cache hit walks the cached first-stage root and leaves the cache alone. *)
+Lemma pasid_translate_fill_hit (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (ec : PasidCacheEntry) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  ec.(PasidCacheEntry_present) = true ->
+  pasid_translate_fill contexts rid ptes cache pasid mem iova
+  = (pasid_cached_walk contexts rid cache pasid mem iova, cache).
+Proof.
+  intros Hcl Hcp.
+  unfold pasid_translate_fill. rewrite Hcl. cbn. rewrite Hcp. cbn. reflexivity.
+Qed.
+
+(* A miss (non-present slot) with a present table entry re-walks the table and
+   refills the cache with the table's first-stage root. *)
+Lemma pasid_translate_fill_miss_refills (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (ec : PasidCacheEntry) (te : VtdPasid) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = true ->
+  pasid_translate_fill contexts rid ptes cache pasid mem iova
+  = (vtd_walk_pasid contexts rid ptes pasid mem iova,
+     pasid_cache_refill cache pasid te.(VtdPasid_s1_root)).
+Proof.
+  intros Hcl Hcp Hp Htp.
+  unfold pasid_translate_fill. rewrite Hcl. cbn. rewrite Hcp. cbn. rewrite Hp. cbn. rewrite Htp. cbn. reflexivity.
+Qed.
+
+(* A miss with no table entry faults and leaves the cache alone (no refill on
+   a fault). *)
+Lemma pasid_translate_fill_miss_missing_table (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (ec : PasidCacheEntry) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  vtd_pasid_lookup ptes pasid = None ->
+  pasid_translate_fill contexts rid ptes cache pasid mem iova = (None, cache).
+Proof.
+  intros Hcl Hcp Hp.
+  unfold pasid_translate_fill. rewrite Hcl. cbn. rewrite Hcp. cbn. rewrite Hp. cbn. reflexivity.
+Qed.
+
+(* A miss with a non-present table entry faults and leaves the cache alone. *)
+Lemma pasid_translate_fill_miss_nonpresent_table (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (ec : PasidCacheEntry) (te : VtdPasid) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = false ->
+  pasid_translate_fill contexts rid ptes cache pasid mem iova = (None, cache).
+Proof.
+  intros Hcl Hcp Hp Htp.
+  unfold pasid_translate_fill. rewrite Hcl. cbn. rewrite Hcp. cbn. rewrite Hp. cbn. rewrite Htp. cbn. reflexivity.
+Qed.
+
+(* After an eviction the in-loop translation recovers: it re-walks the table
+   and refills, so it answers with the table result (not a miss) and leaves a
+   refilled cache — the invalidation-then-retranslate cycle inside the loop. *)
+Theorem pasid_translate_fill_after_evict (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (ec : PasidCacheEntry) (te : VtdPasid) :
+  pasid_cache_lookup cache pasid = Some ec ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = true ->
+  pasid_translate_fill contexts rid ptes (pasid_cache_evict cache pasid) pasid mem iova
+  = (vtd_walk_pasid contexts rid ptes pasid mem iova,
+     pasid_cache_refill (pasid_cache_evict cache pasid) pasid te.(VtdPasid_s1_root)).
+Proof.
+  intros Hcl Hp Htp.
+  destruct (pasid_cache_evict_lookup cache pasid ec Hcl) as [ec' [Hev Hpev]].
+  apply (pasid_translate_fill_miss_refills contexts rid ptes (pasid_cache_evict cache pasid)
+            pasid mem iova ec' te Hev Hpev Hp Htp).
+Qed.
+
+(* Executable vector: evicting PASID 0 then translating through the loop
+   answers with the table hit and refills the cache. *)
+Lemma test_vector_pasid_translate_fill_after_evict :
+  pasid_translate_fill [vtd_pasid_hit_context] 0 [vtd_pasid_hit_entry]
+    (pasid_cache_evict [vtd_coherent_cache_entry] 0) 0 mem_vtd_pasid_hit va0
+  = (Some (expected_pa, Read),
+     pasid_cache_refill (pasid_cache_evict [vtd_coherent_cache_entry] 0) 0 vtd_s1_root).
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 FRCD interrupt delivery into the core interrupt controller: a pending
+   FRCD raises the fault line on the target core through the INTC's send
+   (edge-triggered, latched regardless of mask/delivery, IHI0069 4.4), and the
+   kernel's unmasked, delivery-enabled ack rings the doorbell — the S4.5 tie
+   into SSG-3's intc model.
+   ============================================================ *)
+
+(* The IOMMU's fault signal: raise the INTC line for the target core iff the
+   FRCD holds a fault; a drained FRCD signals nothing. *)
+Definition frcd_signal_intc (frcd : list FrcdEntry) (ic : intc_types.Intc) (core : Z) : intc_types.Intc :=
+  if frcd_pending frcd then intc.intc_send ic core else ic.
+
+(* A pending FRCD raises the fault line on the target core — latched even if
+   the core is masked or in interrupt context. *)
+Lemma frcd_signal_raises (frcd : list FrcdEntry) (ic : intc_types.Intc) (core : nat)
+    (Hlen : Nat.lt core (length (intc_types.Intc_pending ic))) :
+  frcd_pending frcd = true ->
+  intc.intc_get_bit (intc_types.Intc_pending (frcd_signal_intc frcd ic (Z.of_nat core)))
+    (Z.of_nat core) false = true.
+Proof.
+  intros Hfr. unfold frcd_signal_intc. rewrite Hfr.
+  apply (intc_send_sets_pending ic core Hlen).
+Qed.
+
+(* A drained FRCD signals nothing: the controller is untouched. *)
+Lemma frcd_signal_drained_noop (frcd : list FrcdEntry) (ic : intc_types.Intc) (core : Z) :
+  frcd_pending frcd = false -> frcd_signal_intc frcd ic core = ic.
+Proof. intros Hfr. unfold frcd_signal_intc. rewrite Hfr. reflexivity. Qed.
+
+(* The full chain: after the queue shootdown of the freed frame, the fault is
+   recorded, the FRCD is pending, and the IOMMU raises the fault line on the
+   target core. *)
+Theorem vtd_shootdown_frcd_delivers (m : Machine) (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (pasid : Z) (c : VtdContext) (e : VtdPasid)
+    (root : mword 44) (va : mword 64) (p : Pte) (gpa : mword 56) (perm1 : Perm)
+    (fr : FaultRecord) (ic : intc_types.Intc) (core : nat) :
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  c.(VtdContext_sl_root) = root ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  e.(VtdPasid_s1_root) <> root ->
+  p.(Pte_valid) = false ->
+  iommu_walk e.(VtdPasid_s1_root) (Machine_mem (iommu_shootdown_via_queue m root va p)) va = Some (gpa, perm1) ->
+  zero_extend gpa 64 = va ->
+  vtd_record_fault contexts rid ptes pasid (Machine_mem (iommu_shootdown_via_queue m root va p)) va = Some fr ->
+  Nat.lt core (length (intc_types.Intc_pending ic)) ->
+  intc.intc_get_bit (intc_types.Intc_pending
+                       (frcd_signal_intc (frcd_record fr []) ic (Z.of_nat core)))
+    (Z.of_nat core) false = true.
+Proof.
+  intros Hc Hcp Hroot Hp Hpp Hdiff Hinv Hs1 Hze Hrec Hlen.
+  apply (frcd_signal_raises (frcd_record fr []) ic core Hlen).
+  apply (proj1 (vtd_shootdown_frcd_pending m contexts rid ptes pasid c e root va p gpa perm1 fr
+                  Hc Hcp Hroot Hp Hpp Hdiff Hinv Hs1 Hze Hrec)).
+Qed.
+
+(* The kernel's unmasked, delivery-enabled ack of the fault rings the
+   doorbell — the delivered bit that Machine.ipi consumes. *)
+Lemma vtd_fault_ack_rings (frcd : list FrcdEntry) (ic : intc_types.Intc) (core : nat)
+    (Hfr : frcd_pending frcd = true)
+    (Hm : intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat core) false = false)
+    (Hd : intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat core) false = true)
+    (Hlen : Nat.lt core (length (intc_types.Intc_pending ic))) :
+  intc_types.Intc_ipi (intc.intc_ack (frcd_signal_intc frcd ic (Z.of_nat core)) (Z.of_nat core))
+  = intc.intc_set_bit (intc_types.Intc_ipi ic) (Z.of_nat core) true.
+Proof.
+  unfold frcd_signal_intc. rewrite Hfr.
+  assert (Hsend : intc.intc_get_bit (intc_types.Intc_pending (intc.intc_send ic (Z.of_nat core)))
+                    (Z.of_nat core) false = true)
+    by (apply (intc_send_sets_pending ic core Hlen)).
+  assert (Hm' : intc.intc_get_bit (intc_types.Intc_masked (intc.intc_send ic (Z.of_nat core)))
+                  (Z.of_nat core) false = false).
+  { rewrite (intc_send_preserves_masked ic (Z.of_nat core)). exact Hm. }
+  assert (Hd' : intc.intc_get_bit (intc_types.Intc_delivery (intc.intc_send ic (Z.of_nat core)))
+                  (Z.of_nat core) false = true).
+  { rewrite (intc_send_preserves_delivery ic (Z.of_nat core)). exact Hd. }
+  rewrite (intc_ack_unmasked_rings (intc.intc_send ic (Z.of_nat core)) core Hsend Hm' Hd').
+  rewrite (intc_send_preserves_ipi ic (Z.of_nat core)). reflexivity.
+Qed.
+
+(* Executable vectors: a recorded stage-2 fault raises the INTC line for core
+   0, and the kernel's ack (unmasked, delivery enabled) rings the doorbell. *)
+Definition vtd_intc0 : intc_types.Intc :=
+  {| intc_types.Intc_pending := [false]; intc_types.Intc_masked := [false];
+     intc_types.Intc_delivery := [true]; intc_types.Intc_ipi := [false] |}.
+
+Lemma test_vector_vtd_frcd_delivers :
+  intc.intc_get_bit (intc_types.Intc_pending
+                       (frcd_signal_intc (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 0;
+                                                         FaultRecord_iova := va0;
+                                                         FaultRecord_reason := FR_Stage2Fault |} [])
+                                         vtd_intc0 0))
+    0 false = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_vtd_frcd_ack_rings :
+  intc_types.Intc_ipi
+    (intc.intc_ack (frcd_signal_intc (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 0;
+                                                     FaultRecord_iova := va0;
+                                                     FaultRecord_reason := FR_Stage2Fault |} [])
+                                      vtd_intc0 0) 0)
+  = [true].
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   S4.5 DTE PASID-table pointers: the scalable-mode two-stage walk goes
+   DTE -> PASID table -> first stage, then the selected context's second
+   level; it agrees with the flat `vtd_walk_pasid` exactly when the DTE's
+   PASID-table pointer selects the shared table and its ctx_index selects the
+   context the flat lookup would find.
+   ============================================================ *)
+
+(* The scalable-mode walk reduces to the two-stage composition given the
+   DTE, PASID-table, PASID-entry, and context resolutions. *)
+Lemma vtd_walk_device_pasid_two_stage (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (ptes : list VtdPasid) (e : VtdPasid) (c : VtdContext) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  vtd_context_lookup contexts d.(VtdDeviceEntry_ctx_index) = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova
+  = match iommu_walk e.(VtdPasid_s1_root) mem iova with
+    | None => None
+    | Some (gpa, _) => iommu_walk c.(VtdContext_sl_root) mem (zero_extend gpa 64)
+    end.
+Proof.
+  intros Hd Hdp Ht Hp Hpp Hc Hcp.
+  unfold vtd_walk_device_pasid. rewrite Hd, Hdp, Ht, Hp, Hpp, Hc, Hcp. cbn. reflexivity.
+Qed.
+
+(* The DTE's PASID table + context selection aliasing the flat view: when the
+   DTE's PASID-table pointer selects the shared table and its ctx_index the
+   context the flat lookup would find, the scalable-mode walk equals
+   `vtd_walk_pasid`. *)
+Lemma vtd_walk_device_pasid_of_flat (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (ptes : list VtdPasid) (e : VtdPasid) (c : VtdContext) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  d.(VtdDeviceEntry_ctx_index) = rid ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova
+  = vtd_walk_pasid contexts rid ptes pasid mem iova.
+Proof.
+  intros Hd Hdp Hidx Ht Hp Hpp Hc Hcp.
+  assert (Hc' : vtd_context_lookup contexts (VtdDeviceEntry_ctx_index d) = Some c)
+    by (rewrite Hidx; exact Hc).
+  rewrite (vtd_walk_device_pasid_two_stage devtbl tbls contexts rid pasid mem iova
+            d ptes e c Hd Hdp Ht Hp Hpp Hc' Hcp).
+  rewrite (vtd_walk_pasid_two_stage contexts rid ptes pasid mem iova c e Hc Hcp Hp Hpp).
+  reflexivity.
+Qed.
+
+(* Faults: missing DTE, non-present DTE, missing PASID table, missing PASID
+   entry, and non-present PASID entry each fault the scalable-mode walk. *)
+Lemma vtd_walk_device_pasid_missing_fault (tbls : list (list VtdPasid)) (contexts : list VtdContext)
+    (rid pasid : Z) (mem : list MemEntry) (iova : mword 64) :
+  vtd_walk_device_pasid [] tbls contexts rid pasid mem iova = None.
+Proof. unfold vtd_walk_device_pasid. cbn. reflexivity. Qed.
+
+Lemma vtd_walk_device_pasid_nonpresent_fault (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = false ->
+  vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova = None.
+Proof. intros Hd Hdp. unfold vtd_walk_device_pasid. rewrite Hd, Hdp. cbn. reflexivity. Qed.
+
+Lemma vtd_walk_device_pasid_missing_table_fault (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = None ->
+  vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova = None.
+Proof. intros Hd Hdp Ht. unfold vtd_walk_device_pasid. rewrite Hd, Hdp, Ht. cbn. reflexivity. Qed.
+
+Lemma vtd_walk_device_pasid_missing_entry_fault (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (ptes : list VtdPasid) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = None ->
+  vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova = None.
+Proof.
+  intros Hd Hdp Ht Hp. unfold vtd_walk_device_pasid. rewrite Hd, Hdp, Ht, Hp. cbn. reflexivity.
+Qed.
+
+Lemma vtd_walk_device_pasid_nonpresent_entry_fault (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (ptes : list VtdPasid) (e : VtdPasid) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = false ->
+  vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova = None.
+Proof.
+  intros Hd Hdp Ht Hp Hpp. unfold vtd_walk_device_pasid. rewrite Hd, Hdp, Ht, Hp, Hpp. cbn. reflexivity.
+Qed.
+
+(* Executable vector: a present DTE for rid 0 whose PASID-table pointer
+   selects the hit table resolves the two-stage walk to the same SPA as the
+   flat walk. *)
+Definition vtd_dev_pasid_hit_entry : VtdDeviceEntry :=
+  {| VtdDeviceEntry_present := true; VtdDeviceEntry_did := 7; VtdDeviceEntry_ctx_index := 0;
+     VtdDeviceEntry_pasid_tbl := 0 |}.
+
+Lemma test_vector_vtd_walk_device_pasid_hit :
+  vtd_walk_device_pasid [vtd_dev_pasid_hit_entry] [ [vtd_pasid_hit_entry] ] [vtd_pasid_hit_context]
+    0 0 mem_vtd_pasid_hit va0 = Some (expected_pa, Read).
+Proof. vm_compute. reflexivity. Qed.

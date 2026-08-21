@@ -367,6 +367,33 @@ axiom_free vtd_proofs frcd_record_signals
 axiom_free vtd_proofs fault_msg_of_record
 axiom_free vtd_proofs vtd_shootdown_frcd_pending
 axiom_free vtd_proofs test_vector_vtd_frcd_pending
+# S4.5 PASID in-loop translation with fill-on-miss: the loop recovers from an
+# eviction by re-walking the table and refilling (the translate-then-refill cycle).
+axiom_free vtd_proofs pasid_translate_fill_hit
+axiom_free vtd_proofs pasid_translate_fill_miss_refills
+axiom_free vtd_proofs pasid_translate_fill_miss_missing_table
+axiom_free vtd_proofs pasid_translate_fill_miss_nonpresent_table
+axiom_free vtd_proofs pasid_translate_fill_after_evict
+axiom_free vtd_proofs test_vector_pasid_translate_fill_after_evict
+# S4.5 FRCD interrupt delivery into the core INTC: a pending FRCD raises the
+# fault line (latched), the ack rings the doorbell — the SSG-3 tie-in.
+axiom_free vtd_proofs frcd_signal_raises
+axiom_free vtd_proofs frcd_signal_drained_noop
+axiom_free vtd_proofs vtd_shootdown_frcd_delivers
+axiom_free vtd_proofs vtd_fault_ack_rings
+axiom_free vtd_proofs test_vector_vtd_frcd_delivers
+axiom_free vtd_proofs test_vector_vtd_frcd_ack_rings
+# S4.5 DTE PASID-table pointers: the scalable-mode two-stage walk (DTE ->
+# PASID table -> first stage, then the selected context's second level) and
+# its agreement with the flat vtd_walk_pasid.
+axiom_free vtd_proofs vtd_walk_device_pasid_two_stage
+axiom_free vtd_proofs vtd_walk_device_pasid_of_flat
+axiom_free vtd_proofs vtd_walk_device_pasid_missing_fault
+axiom_free vtd_proofs vtd_walk_device_pasid_nonpresent_fault
+axiom_free vtd_proofs vtd_walk_device_pasid_missing_table_fault
+axiom_free vtd_proofs vtd_walk_device_pasid_missing_entry_fault
+axiom_free vtd_proofs vtd_walk_device_pasid_nonpresent_entry_fault
+axiom_free vtd_proofs test_vector_vtd_walk_device_pasid_hit
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
