@@ -478,23 +478,29 @@ function vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova) =
 //
 // VT-d scalable mode caches the PASID-table / first-stage lookup (the PASID
 // cache, VT-d 5.20 §15.4) so an access need not re-walk the guest tables.  A
-// cache entry is minimal here: present + the resolved first-stage root.
-// `pasid_cached_walk` is the two-stage walk with the cache standing in for the
-// PASID table; the coherence invariant (`pasid_cache ⊆ pasid-table`) says a
-// present cached root matches the table, so `pasid_cached_walk =
-// vtd_walk_pasid` (proved in vtd_proofs.v).  Cache eviction on invalidation
-// and the PASID-cache tag (DID+PASID) are later increments.
+// cache entry is tagged by (DID, PASID) — the device plus process — and holds
+// present + the resolved first-stage root: `pasid_cache_lookup` scans by tag
+// equality (not by position), so the tag is part of the entry, eviction
+// addresses entries by DID (device-selective invalidation), and refill
+// re-installs the root under the full tag.  `pasid_cached_walk` is the
+// two-stage walk with the cache standing in for the PASID table; the
+// coherence invariant (`pasid_cache ⊆ pasid-table`) says a present cached
+// root for (rid, pasid) matches the table, so `pasid_cached_walk =
+// vtd_walk_pasid` (proved in vtd_proofs.v).
 struct PasidCacheEntry = {
   present : bool,
+  did     : int,
   pasid   : int,
   s1_root : bits(44)
 }
 
-val pasid_cache_lookup : (list(PasidCacheEntry), int) -> option(PasidCacheEntry)
-function pasid_cache_lookup(cache, pasid) = match (cache, pasid) {
-  (e :: _, 0) => Some(e),
-  (_ :: rest, n) => pasid_cache_lookup(rest, n - 1),
-  ([||], _) => None()
+val pasid_cache_lookup : (list(PasidCacheEntry), (int, int)) -> option(PasidCacheEntry)
+function pasid_cache_lookup(cache, dp) = match cache {
+  [||] => None(),
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p then Some(e)
+    else pasid_cache_lookup(rest, dp)
 }
 
 val pasid_cached_walk : (list(VtdContext), int, list(PasidCacheEntry), int, PageTable, vaddr) -> option((paddr, Perm))
@@ -503,7 +509,7 @@ function pasid_cached_walk(contexts, rid, cache, pasid, mem, iova) =
     None() => None(),
     Some(c) =>
       if c.present then
-        match pasid_cache_lookup(cache, pasid) {
+        match pasid_cache_lookup(cache, (rid, pasid)) {
           None() => None(),
           Some(e) =>
             if e.present then
@@ -601,25 +607,33 @@ function vtd_walk_device_pasid(devtbl, tbls, contexts, rid, pasid, mem, iova) =
 
 // ---- PASID-cache eviction / refill (SSG-4 / S4.5) ----
 //
-// The PASID cache (VT-d 5.20 §15.4) is indexed by PASID: invalidation clears
-// the cached first-stage root for a PASID — the entry turns non-present, so
-// the cached two-stage walk misses and the IOMMU must re-walk the PASID
-// table; refill re-installs the table's root.  Together with
-// `pasid_cache_coherent` (the cache ⊆ table invariant), eviction is what
+// The PASID cache (VT-d 5.20 §15.4) is tagged by (DID, PASID): invalidation
+// clears the cached first-stage root for a *device* — every entry whose DID
+// matches turns non-present (device-selective invalidation), so the cached
+// two-stage walk misses and the IOMMU must re-walk the PASID table; refill
+// re-installs the table's root under the full (DID, PASID) tag.  Together
+// with `pasid_cache_coherent` (the cache ⊆ table invariant), eviction is what
 // *breaks* coherence and refill what *restores* it: the miss/refill cycle a
 // translation after invalidation must go through.
 val pasid_cache_evict : (list(PasidCacheEntry), int) -> list(PasidCacheEntry)
-function pasid_cache_evict(cache, pasid) = match (cache, pasid) {
-  (e :: rest, 0) => struct { present = false, pasid = e.pasid, s1_root = e.s1_root } :: rest,
-  (e :: rest, n) => e :: pasid_cache_evict(rest, n - 1),
-  ([||], _) => [||]
+function pasid_cache_evict(cache, did) = match cache {
+  [||] => [||],
+  e :: rest =>
+    if e.did == did then
+      struct { present = false, did = e.did, pasid = e.pasid, s1_root = e.s1_root } :: pasid_cache_evict(rest, did)
+    else e :: pasid_cache_evict(rest, did)
 }
 
-val pasid_cache_refill : (list(PasidCacheEntry), int, bits(44)) -> list(PasidCacheEntry)
-function pasid_cache_refill(cache, pasid, root) = match (cache, pasid) {
-  (e :: rest, 0) => struct { present = true, pasid = 0, s1_root = root } :: rest,
-  (e :: rest, n) => e :: pasid_cache_refill(rest, n - 1, root),
-  ([||], _) => [||]
+val pasid_cache_refill : (list(PasidCacheEntry), (int, int), bits(44)) -> list(PasidCacheEntry)
+function pasid_cache_refill(cache, dp, root) = match cache {
+  [||] =>
+    let (d, p) = dp in
+    struct { present = true, did = d, pasid = p, s1_root = root } :: [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p then
+      struct { present = true, did = e.did, pasid = e.pasid, s1_root = root } :: rest
+    else e :: pasid_cache_refill(rest, dp, root)
 }
 
 // ---- PASID in-loop translation with fill-on-miss (SSG-4 / S4.5) ----
@@ -637,7 +651,7 @@ function pasid_cache_refill(cache, pasid, root) = match (cache, pasid) {
 val pasid_translate_fill : (list(VtdContext), int, list(VtdPasid), list(PasidCacheEntry), int, PageTable, vaddr)
                         -> (option((paddr, Perm)), list(PasidCacheEntry))
 function pasid_translate_fill(contexts, rid, ptes, cache, pasid, mem, iova) =
-  match pasid_cache_lookup(cache, pasid) {
+  match pasid_cache_lookup(cache, (rid, pasid)) {
     None() => (None(), cache),
     Some(e) =>
       if e.present then
@@ -648,7 +662,7 @@ function pasid_translate_fill(contexts, rid, ptes, cache, pasid, mem, iova) =
           Some(te) =>
             if te.present then
               (vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova),
-               pasid_cache_refill(cache, pasid, te.s1_root))
+               pasid_cache_refill(cache, (rid, pasid), te.s1_root))
             else (None(), cache)
         }
   }
@@ -744,6 +758,31 @@ function frcd_pending(cache) = match cache {
 
 val fault_msg_did_pasid : FrcdEntry -> (int, int)
 function fault_msg_did_pasid(e) = (e.did, e.pasid)
+
+// ---- FRCDR drain-by-software (SSG-4 / S4.5) ----
+//
+// Software drains the FRCD queue to learn which endpoint / address faulted
+// (VT-d 5.20 §6.1): `frcd_head` reads the oldest recorded fault, `frcd_clear`
+// drops it (the head of the queue), and `frcd_drain` clears the whole queue
+// — after which the interrupt line deasserts (`frcd_pending` is false) and
+// the interrupt controller sees a no-op (proved in vtd_proofs.v).
+val frcd_head : list(FrcdEntry) -> option(FrcdEntry)
+function frcd_head(cache) = match cache {
+  [||] => None(),
+  e :: _ => Some(e)
+}
+
+val frcd_clear : list(FrcdEntry) -> list(FrcdEntry)
+function frcd_clear(cache) = match cache {
+  [||] => [||],
+  _ :: rest => rest
+}
+
+val frcd_drain : list(FrcdEntry) -> list(FrcdEntry)
+function frcd_drain(cache) = match cache {
+  [||] => [||],
+  _ :: rest => frcd_drain(rest)
+}
 
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
 // IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI

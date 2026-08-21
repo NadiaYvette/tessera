@@ -807,45 +807,51 @@ Instance dummy_VtdPasid : Inhabited (VtdPasid) := {
 
 Record PasidCacheEntry := {
   PasidCacheEntry_present : bool;
+  PasidCacheEntry_did : Z;
   PasidCacheEntry_pasid : Z;
   PasidCacheEntry_s1_root : bits 44;
 }.
 Arguments PasidCacheEntry : clear implicits.
 #[export]
 Instance Decidable_eq_PasidCacheEntry : EqDecision PasidCacheEntry.
-   intros [x0 x1 x2].
-   intros [y0 y1 y2].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
   cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_PasidCacheEntry : Countable PasidCacheEntry.
 refine {|
-  encode x := encode (PasidCacheEntry_present x, PasidCacheEntry_pasid x, PasidCacheEntry_s1_root x);
-  decode x := '(x0, x1, x2) ← decode x;
-              mret (Build_PasidCacheEntry x0 x1 x2)
+  encode x := encode (PasidCacheEntry_present x, PasidCacheEntry_did x, PasidCacheEntry_pasid x, PasidCacheEntry_s1_root x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_PasidCacheEntry x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1 x2];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'PasidCacheEntry_present' := e ]}" :=
-  match r with Build_PasidCacheEntry _ (_ as f1) (_ as f2) =>
-    Build_PasidCacheEntry e f1 f2 end (at level 0).
+  match r with Build_PasidCacheEntry _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_PasidCacheEntry e f1 f2 f3 end (at level 0).
+Notation "{[ r 'with' 'PasidCacheEntry_did' := e ]}" :=
+  match r with Build_PasidCacheEntry (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_PasidCacheEntry f0 e f2 f3 end (at level 0).
 Notation "{[ r 'with' 'PasidCacheEntry_pasid' := e ]}" :=
-  match r with Build_PasidCacheEntry (_ as f0) _ (_ as f2) =>
-    Build_PasidCacheEntry f0 e f2 end (at level 0).
+  match r with Build_PasidCacheEntry (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_PasidCacheEntry f0 f1 e f3 end (at level 0).
 Notation "{[ r 'with' 'PasidCacheEntry_s1_root' := e ]}" :=
-  match r with Build_PasidCacheEntry (_ as f0) (_ as f1) _ =>
-    Build_PasidCacheEntry f0 f1 e end (at level 0).
+  match r with Build_PasidCacheEntry (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_PasidCacheEntry f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_PasidCacheEntry : Inhabited (PasidCacheEntry) := {
   inhabitant := {|
     PasidCacheEntry_present := inhabitant;
+    PasidCacheEntry_did := inhabitant;
     PasidCacheEntry_pasid := inhabitant;
     PasidCacheEntry_s1_root := inhabitant
 |} }.

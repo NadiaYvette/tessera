@@ -342,13 +342,21 @@ axiom_free vtd_proofs test_vector_vtd_shootdown_pasid_record
 # S4.5 PASID-cache eviction / refill: eviction breaks the cached walk for a
 # PASID (a miss), refill with the table root restores coherence — the
 # invalidation-then-retranslate cycle.
+# S4.5 PASID-cache tags (DID+PASID) + eviction / refill: the cache is tagged
+# by (DID, PASID), so the lookup scans by tag equality, eviction clears every
+# entry of a DID (device-selective invalidation), and refill re-installs the
+# table's root under the full tag — the miss/refill cycle a translation after
+# invalidation must go through.
+axiom_free vtd_proofs pasid_cache_lookup_tagged
 axiom_free vtd_proofs pasid_cache_evict_lookup
 axiom_free vtd_proofs pasid_cached_walk_evict_misses
-axiom_free vtd_proofs pasid_cache_evict_preserves_other
+axiom_free vtd_proofs pasid_cache_evict_preserves_other_did
 axiom_free vtd_proofs pasid_cache_refill_lookup
+axiom_free vtd_proofs pasid_cache_refill_fresh
 axiom_free vtd_proofs pasid_cache_refill_coherent
 axiom_free vtd_proofs pasid_cache_evict_refill_cycle
 axiom_free vtd_proofs test_vector_vtd_pasid_cache_evict
+axiom_free vtd_proofs test_vector_vtd_pasid_cache_tags
 # S4.5 scalable-mode device table: the DTE-selected context walk reduces to
 # the context's SL walk and agrees with the flat vtd_walk when the DTE points
 # at the context the flat lookup finds; each structural fault is covered.
@@ -366,6 +374,15 @@ axiom_free vtd_proofs frcd_record_preserves
 axiom_free vtd_proofs frcd_record_signals
 axiom_free vtd_proofs fault_msg_of_record
 axiom_free vtd_proofs vtd_shootdown_frcd_pending
+# S4.5 FRCDR drain-by-software: read the head, clear, drain — the line
+# deasserts and the interrupt controller sees a no-op.
+axiom_free vtd_proofs frcd_head_record
+axiom_free vtd_proofs frcd_clear_deasserts
+axiom_free vtd_proofs frcd_drain_clears
+axiom_free vtd_proofs frcd_drain_deasserts
+axiom_free vtd_proofs frcd_drain_recovers
+axiom_free vtd_proofs frcd_drain_cycle
+axiom_free vtd_proofs test_vector_frcd_drain
 axiom_free vtd_proofs test_vector_vtd_frcd_pending
 # S4.5 PASID in-loop translation with fill-on-miss: the loop recovers from an
 # eviction by re-walking the table and refilling (the translate-then-refill cycle).
@@ -374,6 +391,11 @@ axiom_free vtd_proofs pasid_translate_fill_miss_refills
 axiom_free vtd_proofs pasid_translate_fill_miss_missing_table
 axiom_free vtd_proofs pasid_translate_fill_miss_nonpresent_table
 axiom_free vtd_proofs pasid_translate_fill_after_evict
+# S4.5 in-loop fill-on-miss under the full tag: the refilled entry carries the
+# (DID, PASID) tag with the table's root, and after an eviction the loop
+# recovers to a *coherent* cache answering with the table result.
+axiom_free vtd_proofs pasid_translate_fill_refill_tagged
+axiom_free vtd_proofs pasid_translate_fill_after_evict_refilled_coherent
 axiom_free vtd_proofs test_vector_pasid_translate_fill_after_evict
 # S4.5 FRCD interrupt delivery into the core INTC: a pending FRCD raises the
 # fault line (latched), the ack rings the doorbell — the SSG-3 tie-in.
@@ -778,6 +800,14 @@ if [ -d "$GP" ]; then
   # S2.2c: the N-core weak-memory broadcast shootdown over the concrete machine.
   rocq compile $WFLAGS shootdown_weak_broadcast.v
   rocq compile $WFLAGS iommu_broadcast_weak.v
+  # S4.5 PASID gpfsl lift: the weak-memory program over the in-loop PASID
+  # translation — the leader steps the PASID-cache ghost from the evicted to
+  # the refilled cache at the final read (reusing the S4.2b-2 composition),
+  # alone or alongside the machine ghost.
+  rocq compile $WFLAGS pasid_translate_weak.v
+  axiom_free pasid_translate_weak pasid_translate_pc_lift "$WFLAGS"
+  axiom_free pasid_translate_weak pasid_translate_pc_machine "$WFLAGS"
+  axiom_free pasid_translate_weak pc_ctx_update "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"

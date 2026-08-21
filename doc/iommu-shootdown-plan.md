@@ -323,10 +323,45 @@ of being pushed invalidations.
       its ctx_index the context the flat lookup would find
       (`vtd_walk_device_pasid_of_flat`), with the five structural faults
       covered.
-    Still open: FRCDR drain-by-software, PASID-cache tags (DID+PASID) with
-    hardware fill-on-miss, and the *weak-memory (gpfsl) program* lift of the
-    in-loop PASID translation (the functional fill-on-miss loop above is the
-    S4.2b-1-style base for it).
+    - **S4.5 PASID-cache tags (DID+PASID)** — landed: `PasidCacheEntry` now
+      carries the `did` tag, `pasid_cache_lookup` scans by tag equality (not
+      by position), `pasid_cache_evict` is *device-selective* (clears every
+      entry of a DID, VT-d 5.20 §6.5.2.4), and `pasid_cache_refill`
+      re-installs the root under the full tag (prepending a fresh full-tag
+      entry when the tag was never present — the hardware fill-on-miss path).
+      New theorems: `pasid_cache_lookup_tagged`, `pasid_cache_evict_lookup`,
+      `pasid_cached_walk_evict_misses`, `pasid_cache_evict_preserves_other_did`
+      (eviction is per-device), `pasid_cache_refill_lookup`,
+      `pasid_cache_refill_fresh`, the restored `pasid_cache_evict_refill_cycle`,
+      plus a two-DID vector (`test_vector_vtd_pasid_cache_tags`).
+    - **S4.5 PASID in-loop fill-on-miss under the full tag** — landed
+      (`pasid_translate_fill_refill_tagged` + `pasid_translate_fill_after_evict_refilled_coherent`):
+      the loop's refilled entry carries the (DID, PASID) tag with the table's
+      root, and after an eviction the loop recovers to a *coherent* cache
+      (`pasid_cache_coherent` holds again) answering with the table result.
+    - **S4.5 FRCDR drain-by-software** — landed (`frcd_head` + `frcd_clear` +
+      `frcd_drain`): software reads the head of the FRCD queue (the oldest
+      recorded fault), clears it, and drains the whole queue — after which the
+      interrupt line deasserts (`frcd_drain_deasserts`), the interrupt
+      controller sees a no-op (`frcd_drain_recovers`), and the full
+      record → head-learn → drain cycle is one theorem (`frcd_drain_cycle`),
+      plus an executable vector.
+    - **S4.5 PASID gpfsl lift** — landed (`pasid_translate_weak.v`): the
+      *weak-memory program* over the in-loop PASID translation, reusing the
+      S4.2b-2 composition (`iommu_broadcast_full_gen_inv_update`) with a
+      fresh `pc_ctx` ghost (`ghost_var` over `list PasidCacheEntry`).  The
+      leader RELEASES the invalidation doorbell, the IOMMU ACQUIREs it, and at
+      the leader's final read the cache ghost steps from the *evicted* cache
+      to the *refilled* cache — exactly `snd (pasid_translate_fill …
+      (pasid_cache_evict cache rid) …)` (`pasid_translate_pc_lift`), and
+      `pasid_translate_pc_machine` threads it alongside the machine ghost, so
+      the post-state carries both the IOTLB queue shootdown and the refilled
+      PASID cache.
+    Still open: PASID-cache *tags on the DTE's* PASID-table pointer with
+    hardware fill-on-miss across device tables, ATS/PRQ fault handling, and
+    the gpfsl lift of the *device-side* translate loop as a first-class
+    program (the current lift steps the ghost at the leader's read, in the
+    S4.2b-2 trust model).
 
 ## What is replayed vs. new
 

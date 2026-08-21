@@ -302,15 +302,15 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
 
 Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
    match (stes, sid) with
-   | (s :: g__8, l__0) =>
-      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__8) ((Z.sub (l__0) (1)))
+   | (s :: g__7, l__0) =>
+      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__7) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
 Fixpoint cd_lookup (cds : list Cd) (idx : Z) : option Cd :=
    match (cds, idx) with
-   | (c :: g__7, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__7) ((Z.sub (l__0) (1)))
+   | (c :: g__6, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__6) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -331,8 +331,8 @@ Definition smmu_translate
 
 Fixpoint vtd_context_lookup (contexts : list VtdContext) (rid : Z) : option VtdContext :=
    match (contexts, rid) with
-   | (c :: g__6, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__6) ((Z.sub (l__0) (1)))
+   | (c :: g__5, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__5) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -351,8 +351,8 @@ Definition undefined_VtdPasid '(tt : unit) : M (VtdPasid) :=
 
 Fixpoint vtd_pasid_lookup (ptes : list VtdPasid) (pasid : Z) : option VtdPasid :=
    match (ptes, pasid) with
-   | (e :: g__5, l__0) =>
-      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__5) ((Z.sub (l__0) (1)))
+   | (e :: g__4, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__4) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -380,16 +380,21 @@ Definition vtd_walk_pasid
 Definition undefined_PasidCacheEntry '(tt : unit) : M (PasidCacheEntry) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
    (undefined_int (tt)) >>= fun (w__1 : Z) =>
-   (undefined_bitvector (44)) >>= fun (w__2 : mword 44) =>
+   (undefined_int (tt)) >>= fun (w__2 : Z) =>
+   (undefined_bitvector (44)) >>= fun (w__3 : mword 44) =>
    returnM (({| PasidCacheEntry_present := w__0;
-                PasidCacheEntry_pasid := w__1;
-                PasidCacheEntry_s1_root := w__2 |})).
+                PasidCacheEntry_did := w__1;
+                PasidCacheEntry_pasid := w__2;
+                PasidCacheEntry_s1_root := w__3 |})).
 
-Fixpoint pasid_cache_lookup (cache : list PasidCacheEntry) (pasid : Z) : option PasidCacheEntry :=
-   match (cache, pasid) with
-   | (e :: g__4, l__0) =>
-      if Z.eqb (l__0) (0) then Some (e) else pasid_cache_lookup (g__4) ((Z.sub (l__0) (1)))
-   | ([], _) => None
+Fixpoint pasid_cache_lookup (cache : list PasidCacheEntry) (dp : (Z * Z)) : option PasidCacheEntry :=
+   match cache with
+   | [] => None
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d))) ((Z.eqb (e.(PasidCacheEntry_pasid)) (p))) then
+        Some (e)
+      else pasid_cache_lookup (rest) (dp)
    end.
 
 Definition pasid_cached_walk
@@ -400,7 +405,7 @@ Definition pasid_cached_walk
    | None => None
    | Some c =>
       if c.(VtdContext_present) then
-        match pasid_cache_lookup (cache) (pasid) with
+        match pasid_cache_lookup (cache) ((rid, pasid)) with
         | None => None
         | Some e =>
            if e.(PasidCacheEntry_present) then
@@ -485,36 +490,45 @@ Definition vtd_walk_device_pasid
       else None
    end.
 
-Fixpoint pasid_cache_evict (cache : list PasidCacheEntry) (pasid : Z) : list PasidCacheEntry :=
-   match (cache, pasid) with
-   | (e :: rest, l__0) =>
-      if Z.eqb (l__0) (0) then
+Fixpoint pasid_cache_evict (cache : list PasidCacheEntry) (did : Z) : list PasidCacheEntry :=
+   match cache with
+   | [] => []
+   | e :: rest =>
+      if Z.eqb (e.(PasidCacheEntry_did)) (did) then
         ({| PasidCacheEntry_present := false;
+            PasidCacheEntry_did := e.(PasidCacheEntry_did);
             PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
             PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
-          rest
-      else e :: (pasid_cache_evict (rest) ((Z.sub (l__0) (1))))
-   | ([], _) => []
+          (pasid_cache_evict (rest) (did))
+      else e :: (pasid_cache_evict (rest) (did))
    end.
 
-Fixpoint pasid_cache_refill (cache : list PasidCacheEntry) (pasid : Z) (root : mword 44)
+Fixpoint pasid_cache_refill (cache : list PasidCacheEntry) (dp : (Z * Z)) (root : mword 44)
 : list PasidCacheEntry :=
-   match (cache, pasid) with
-   | (e :: rest, l__0) =>
-      if Z.eqb (l__0) (0) then
+   match cache with
+   | [] =>
+      let '((d, p)) := dp in
+      ({| PasidCacheEntry_present := true;
+          PasidCacheEntry_did := d;
+          PasidCacheEntry_pasid := p;
+          PasidCacheEntry_s1_root := root |}) ::
+        []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d))) ((Z.eqb (e.(PasidCacheEntry_pasid)) (p))) then
         ({| PasidCacheEntry_present := true;
-            PasidCacheEntry_pasid := 0;
+            PasidCacheEntry_did := e.(PasidCacheEntry_did);
+            PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
             PasidCacheEntry_s1_root := root |}) ::
           rest
-      else e :: (pasid_cache_refill (rest) ((Z.sub (l__0) (1))) (root))
-   | ([], _) => []
+      else e :: (pasid_cache_refill (rest) (dp) (root))
    end.
 
 Definition pasid_translate_fill
 (contexts : list VtdContext) (rid : Z) (ptes : list VtdPasid) (cache : list PasidCacheEntry)
 (pasid : Z) (mem : list MemEntry) (iova : mword 64)
 : (option ((mword 56 * Perm)) * list PasidCacheEntry) :=
-   match pasid_cache_lookup (cache) (pasid) with
+   match pasid_cache_lookup (cache) ((rid, pasid)) with
    | None => ((None, cache))
    | Some e =>
       if e.(PasidCacheEntry_present) then
@@ -525,7 +539,7 @@ Definition pasid_translate_fill
         | Some te =>
            if te.(VtdPasid_present) then
              ((vtd_walk_pasid (contexts) (rid) (ptes) (pasid) (mem) (iova), pasid_cache_refill
-                                                                              (cache) (pasid)
+                                                                              (cache) ((rid, pasid))
                                                                               (te.(VtdPasid_s1_root))))
            else ((None, cache))
         end
@@ -643,6 +657,15 @@ Definition frcd_pending (cache : list FrcdEntry) : bool :=
 
 Definition fault_msg_did_pasid (e : FrcdEntry) : (Z * Z) :=
    ((e.(FrcdEntry_did), e.(FrcdEntry_pasid))).
+
+Definition frcd_head (cache : list FrcdEntry) : option FrcdEntry :=
+   match cache with | [] => None | e :: _ => Some (e) end.
+
+Definition frcd_clear (cache : list FrcdEntry) : list FrcdEntry :=
+   match cache with | [] => [] | _ :: rest => rest end.
+
+Fixpoint frcd_drain (cache : list FrcdEntry) : list FrcdEntry :=
+   match cache with | [] => [] | _ :: rest => frcd_drain (rest) end.
 
 Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=
    match entries with
