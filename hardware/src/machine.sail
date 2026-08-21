@@ -855,6 +855,39 @@ function pasid_translate_fill(contexts, rid, ptes, cache, pasid, mem, iova) =
         }
   }
 
+// Generation-tagged PASID-cache fill-on-miss (VT-d §6.2.3 / §6.5.2.2).
+// The generation is a Tessera epoch tag for address-space reuse, not a field
+// claimed to exist in the VT-d PASID-cache entry: a gen-g lookup may serve a
+// cached entry only at g; a stale/missing tag re-reads the scalable-mode
+// PASID table and refills the cache under g before walking the new root.
+val pasid_translate_fill_gen : (list(VtdContext), int, list(VtdPasid), list(PasidCacheEntry), int,
+                                PageTable, vaddr, int)
+                              -> (option((paddr, Perm)), list(PasidCacheEntry))
+function pasid_translate_fill_gen(contexts, rid, ptes, cache, pasid, mem, iova, g) =
+  match pasid_cache_lookup_gen(cache, (rid, pasid), g) {
+    Some(e) =>
+      if e.present then
+        (pasid_cached_walk(contexts, rid, cache, pasid, mem, iova), cache)
+      else
+        match vtd_pasid_lookup(ptes, pasid) {
+          None() => (None(), cache),
+          Some(te) =>
+            if te.present then
+              (vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova),
+               pasid_cache_refill_gen(cache, (rid, pasid), g, te.s1_root))
+            else (None(), cache)
+        },
+    None() =>
+      match vtd_pasid_lookup(ptes, pasid) {
+        None() => (None(), cache),
+        Some(te) =>
+          if te.present then
+            (vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova),
+             pasid_cache_refill_gen(cache, (rid, pasid), g, te.s1_root))
+          else (None(), cache)
+      }
+  }
+
 // ---- Device-table view of the PASID cache (SSG-4 / S4.5) ----
 //
 // In scalable mode the device table (DTE, indexed by requester ID) assigns the

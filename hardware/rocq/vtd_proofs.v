@@ -1265,6 +1265,72 @@ Lemma test_vector_pasid_translate_fill_after_evict :
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
+   S4.5 gen-tagged PASID-cache fill-on-miss (VT-d §6.2.3 / §6.5.2.2).
+
+   The generation is Tessera's explicit address-space epoch for reuse of a
+   (DID, PASID) tag; it is not claimed as a literal VT-d PASID-cache field.
+   The model's current-generation lookup/refill/evict lemmas above establish
+   the cache boundary; this section lifts the *in-loop* translation function:
+   a gen-g hit uses the cached first-stage root, while a missing/stale gen-g
+   entry re-reads the PASID table and refills under g before walking.
+   ============================================================ *)
+
+Lemma pasid_translate_fill_gen_hit (contexts : list VtdContext) (rid pasid g : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (mem : list MemEntry)
+    (iova : mword 64) (e : PasidCacheEntry) :
+  pasid_cache_lookup_gen cache (rid, pasid) g = Some e ->
+  e.(PasidCacheEntry_present) = true ->
+  pasid_translate_fill_gen contexts rid ptes cache pasid mem iova g
+  = (pasid_cached_walk contexts rid cache pasid mem iova, cache).
+Proof.
+  intros H He. unfold pasid_translate_fill_gen. rewrite H, He. reflexivity.
+Qed.
+
+Lemma pasid_translate_fill_gen_miss_refills (contexts : list VtdContext) (rid pasid g : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (mem : list MemEntry)
+    (iova : mword 64) (root : mword 44) :
+  pasid_cache_lookup_gen cache (rid, pasid) g = None ->
+  vtd_pasid_lookup ptes pasid =
+    Some {| VtdPasid_present := true; VtdPasid_s1_root := root |} ->
+  pasid_translate_fill_gen contexts rid ptes cache pasid mem iova g
+  = (vtd_walk_pasid contexts rid ptes pasid mem iova,
+     pasid_cache_refill_gen cache (rid, pasid) g root).
+Proof.
+  intros Hmiss Hpte. unfold pasid_translate_fill_gen. rewrite Hmiss.
+  rewrite Hpte. cbn. reflexivity.
+Qed.
+
+Lemma pasid_translate_fill_gen_after_evict (contexts : list VtdContext) (rid pasid g : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (mem : list MemEntry)
+    (iova : mword 64) (root : mword 44) :
+  pasid_cache_lookup_gen (pasid_cache_evict_gen cache (rid, pasid) g)
+    (rid, pasid) g = None ->
+  vtd_pasid_lookup ptes pasid =
+    Some {| VtdPasid_present := true; VtdPasid_s1_root := root |} ->
+  pasid_translate_fill_gen contexts rid ptes
+    (pasid_cache_evict_gen cache (rid, pasid) g) pasid mem iova g
+  = (vtd_walk_pasid contexts rid ptes pasid mem iova,
+     pasid_cache_refill_gen (pasid_cache_evict_gen cache (rid, pasid) g)
+       (rid, pasid) g root).
+Proof.
+  intros Hmiss Hpte. unfold pasid_translate_fill_gen. rewrite Hmiss.
+  rewrite Hpte. cbn. reflexivity.
+Qed.
+
+(* Cross-check vector: VT-d's §6.2.3 cache is keyed by (DID,PASID), while
+   Tessera's epoch g distinguishes reused address-space instances.  The stale
+   generation misses, the fresh generation refills, and the P_IOTLB pairing
+   remains a separate invalidation obligation (§6.5.2.2/§6.5.2.4). *)
+Lemma test_vector_pasid_translate_fill_generation :
+  let cache := [vtd_coherent_cache_entry] in
+  pasid_cache_lookup_gen cache (0, 0) 1 = None /\
+  pasid_translate_fill_gen [vtd_pasid_hit_context] 0 [vtd_pasid_hit_entry]
+    cache 0 mem_vtd_pasid_hit va0 1
+  = (Some (expected_pa, Read),
+     pasid_cache_refill_gen cache (0, 0) 1 vtd_s1_root).
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
    S4.5 FRCD interrupt delivery into the core interrupt controller: a pending
    FRCD raises the fault line on the target core through the INTC's send
    (edge-triggered, latched regardless of mask/delivery, IHI0069 4.4), and the

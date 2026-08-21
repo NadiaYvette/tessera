@@ -461,6 +461,15 @@ axiom_free vtd_proofs pasid_cache_evict_gen_conflict_free
 axiom_free vtd_proofs pasid_cache_refill_gen_conflict_free
 axiom_free vtd_proofs pasid_cache_evict_gen_refill_cycle
 axiom_free vtd_proofs test_vector_pasid_cache_generation
+# S4.5 VT-d PASID generation-tagged fill-on-miss loop (VT-d §6.2.3 /
+# §6.5.2.2): a current-generation hit is served from the cache, a stale or
+# absent generation re-walks the PASID table and refills under g, and the
+# post-eviction path has the same result; the executable vector is also the
+# spec-boundary cross-check.
+axiom_free vtd_proofs pasid_translate_fill_gen_hit
+axiom_free vtd_proofs pasid_translate_fill_gen_miss_refills
+axiom_free vtd_proofs pasid_translate_fill_gen_after_evict
+axiom_free vtd_proofs test_vector_pasid_translate_fill_generation
 # S4.5 device-table fill-on-miss: the translation service loop *over the
 # device table* — hit walks the cached root (keyed by the DTE's DID), miss
 # re-walks the device's PASID table, refills under (d.did, pasid), and after
@@ -951,6 +960,11 @@ if [ -d "$GP" ]; then
   axiom_free pasid_translate_weak pasid_translate_pc_lift "$WFLAGS"
   axiom_free pasid_translate_weak pasid_translate_pc_machine "$WFLAGS"
   axiom_free pasid_translate_weak pc_ctx_update "$WFLAGS"
+  # S4.5 VT-d PASID generation-tag weak lift: the PASID-cache ghost steps
+  # from stale-tag eviction to the gen-g fill-on-miss post-state, alone or
+  # alongside the machine ghost.
+  axiom_free pasid_translate_weak pasid_translate_gen_pc_lift "$WFLAGS"
+  axiom_free pasid_translate_weak pasid_translate_gen_pc_machine "$WFLAGS"
   # S4.5 device-side lift: the same weak-memory program over the
   # device-table fill-on-miss loop, with the cache ghost keyed by the DTE's DID.
   rocq compile $WFLAGS vtd_device_translate_weak.v

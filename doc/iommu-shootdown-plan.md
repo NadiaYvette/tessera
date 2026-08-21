@@ -603,6 +603,19 @@ of being pushed invalidations.
       `amdvi_translate_fill_gen_miss_refills` and
       `iotlb_evict_gen_refill_cycle`.  Four lemmas, all axiom-free.  This
       closes the gen-tagged weak lift.
+    - **S4.5 VT-d PASID-cache generation-tagged fill loop and weak lift** —
+      landed: `pasid_translate_fill_gen_hit`,
+      `pasid_translate_fill_gen_miss_refills`, and
+      `pasid_translate_fill_gen_after_evict` prove the in-loop behavior over
+      a current-generation hit and stale/absent-generation miss; the
+      `test_vector_pasid_translate_fill_generation` vector cross-checks the
+      §6.2.3 `(DID, PASID)` cache boundary and §6.5.2.2 invalidation/refill
+      ordering while recording that `gen` is Tessera's epoch tag, not a
+      literal VT-d cache field.  `pasid_translate_gen_pc_lift` and
+      `pasid_translate_gen_pc_machine` lift that loop over the same
+      release/acquire IOMMU broadcast and thread the PASID-cache ghost alone
+      or alongside the machine ghost.  Both weak lemmas and all four pure
+      checks are axiom-free.
     - **S4.3 full ATS shootdown lift** — landed: the end-to-end teardown as
       one weak program — the machine ghost steps from the pre-shootdown
       machine to `iommu_shootdown_ats` (the S4.2a broadcast — cores flushed
@@ -617,11 +630,12 @@ of being pushed invalidations.
       all axiom-free.
 
     Still open on the device side: nothing structural remains in S4.3/S4.5 —
-    the walker loops, the gen machinery, the invalidation granules, and the
-    ATS/PRI device side are all lifted at both the pure and the weak-memory
-    level.  Natural next steps: the SMMU two-stage / VT-d PASID *weak*
-    lifts at the gen-tagged level (the VT-d PASID-cache gen lift exists at
-    generation 0 only), or moving to the next SSG track.
+    the walker loops, the gen machinery, the invalidation granules, the
+    ATS/PRI device side, and the VT-d PASID gen-tagged weak lift are all
+    lifted at both the pure and the weak-memory level.  Natural next steps
+    are the next SSG track: either SSG-4 continuation work (full command
+    queue/MMIO and device-side model refinement) or SSG-5 storage/DMA-facing
+    state, after selecting the next hardware boundary explicitly.
 
 ## What is replayed vs. new
 

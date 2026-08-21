@@ -712,6 +712,38 @@ Definition pasid_translate_fill
         end
    end.
 
+Definition pasid_translate_fill_gen
+(contexts : list VtdContext) (rid : Z) (ptes : list VtdPasid) (cache : list PasidCacheEntry)
+(pasid : Z) (mem : list MemEntry) (iova : mword 64) (g : Z)
+: (option ((mword 56 * Perm)) * list PasidCacheEntry) :=
+   match pasid_cache_lookup_gen (cache) ((rid, pasid)) (g) with
+   | Some e =>
+      if e.(PasidCacheEntry_present) then
+        ((pasid_cached_walk (contexts) (rid) (cache) (pasid) (mem) (iova), cache))
+      else
+        match vtd_pasid_lookup (ptes) (pasid) with
+        | None => ((None, cache))
+        | Some te =>
+           if te.(VtdPasid_present) then
+             ((vtd_walk_pasid (contexts) (rid) (ptes) (pasid) (mem) (iova), pasid_cache_refill_gen
+                                                                              (cache) ((rid, pasid))
+                                                                              (g)
+                                                                              (te.(VtdPasid_s1_root))))
+           else ((None, cache))
+        end
+   | None =>
+      match vtd_pasid_lookup (ptes) (pasid) with
+      | None => ((None, cache))
+      | Some te =>
+         if te.(VtdPasid_present) then
+           ((vtd_walk_pasid (contexts) (rid) (ptes) (pasid) (mem) (iova), pasid_cache_refill_gen
+                                                                            (cache) ((rid, pasid))
+                                                                            (g)
+                                                                            (te.(VtdPasid_s1_root))))
+         else ((None, cache))
+      end
+   end.
+
 Definition vtd_walk_device_pasid_cached
 (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid)) (contexts : list VtdContext) (rid : Z)
 (pasid : Z) (cache : list PasidCacheEntry) (mem : list MemEntry) (iova : mword 64)

@@ -145,3 +145,64 @@ Proof.
            (pasid_cache_evict cache rid)
            (snd (pasid_translate_fill contexts rid ptes (pasid_cache_evict cache rid) pasid mem iova))).
 Qed.
+
+(* ============================================================
+   S4.5 gen-tag lift: the generation-tagged PASID fill-on-miss loop
+   (`pasid_translate_fill_gen`) as a weak program.  The pre-state is the
+   stale-tag eviction state and the post-state is the cache returned by the
+   gen-g fill loop.  The epoch is Tessera's address-space-reuse tag; the
+   release/acquire protocol is the same IOMMU broadcast protocol used by the
+   generation-0 lift above.
+   ============================================================ *)
+
+Lemma pasid_translate_gen_pc_lift `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !pcG Σ}
+    (γc : gname) (contexts : list VtdContext) (rid pasid g : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry)
+    (mem : list MemEntry) (iova : mword 64) :
+  ∀ tid, {{{ pc_ctx γc (pasid_cache_evict_gen cache (rid, pasid) g) }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ pc_ctx γc (snd (pasid_translate_fill_gen contexts rid ptes
+                                      (pasid_cache_evict_gen cache (rid, pasid) g)
+                                      pasid mem iova g)) }}}.
+Proof.
+  iIntros (tid Φ) "Hc Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (pc_ctx γc (pasid_cache_evict_gen cache (rid, pasid) g))
+            (pc_ctx γc (snd (pasid_translate_fill_gen contexts rid ptes
+                                      (pasid_cache_evict_gen cache (rid, pasid) g)
+                                      pasid mem iova g))) _ tid
+            with "Hc").
+  - iIntros (v) "(Hv & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (pc_ctx_update γc (pasid_cache_evict_gen cache (rid, pasid) g)
+           (snd (pasid_translate_fill_gen contexts rid ptes
+                 (pasid_cache_evict_gen cache (rid, pasid) g) pasid mem iova g))).
+Qed.
+Lemma pasid_translate_gen_pc_machine `{!noprolG Σ, !atomicG Σ, !shootdown_weak.uniqTokG Σ, !bcG Σ, !pcG Σ}
+    (γm γc : gname) (m : Machine) (root : mword 44) (va : mword 64) (p : Pte)
+    (contexts : list VtdContext) (rid pasid g : Z) (ptes : list VtdPasid)
+    (cache : list PasidCacheEntry) (mem : list MemEntry) (iova : mword 64) :
+  ∀ tid, {{{ machine_ctx γm m ∗ pc_ctx γc (pasid_cache_evict_gen cache (rid, pasid) g) }}}
+    iommu_broadcast @ tid; ⊤
+  {{{ v, RET #v; ⌜v = 1⌝ ∗ machine_ctx γm (iommu_shootdown_via_queue m root va p)
+                    ∗ pc_ctx γc (snd (pasid_translate_fill_gen contexts rid ptes
+                                      (pasid_cache_evict_gen cache (rid, pasid) g)
+                                      pasid mem iova g)) }}}.
+Proof.
+  iIntros (tid Φ) "[Hm Hc] Post".
+  wp_apply (iommu_broadcast_full_gen_inv_update (Σ := Σ)
+            (machine_ctx γm m ∗ pc_ctx γc (pasid_cache_evict_gen cache (rid, pasid) g))
+            (machine_ctx γm (iommu_shootdown_via_queue m root va p)
+             ∗ pc_ctx γc (snd (pasid_translate_fill_gen contexts rid ptes
+                                      (pasid_cache_evict_gen cache (rid, pasid) g)
+                                      pasid mem iova g))) _ tid
+            with "[$Hm $Hc]").
+  - iIntros (v) "(Hv & Hm' & Hc')". iDestruct "Hv" as %Hv. iApply ("Post" $! v).
+    iFrame "Hm' Hc'". iPureIntro. exact Hv.
+  Unshelve.
+  exact (pc_machine_update γm γc m (iommu_shootdown_via_queue m root va p)
+           (pasid_cache_evict_gen cache (rid, pasid) g)
+           (snd (pasid_translate_fill_gen contexts rid ptes
+                 (pasid_cache_evict_gen cache (rid, pasid) g) pasid mem iova g))).
+Qed.
