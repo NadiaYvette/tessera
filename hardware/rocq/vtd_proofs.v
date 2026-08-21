@@ -1762,3 +1762,85 @@ Lemma test_vector_pri_fault_frcd :
                                FaultRecord_reason := FR_Stage2Fault |} []) = true /\
   pri_fault_delivers (pri_resolve q (0, 0) va0) (0, 0) va0 FR_Stage2Fault = None.
 Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
+   S4.5 PRI fault -> INTC delivery: the device-side fault-message chain — a
+   *pending* page request's translation fault delivers the record into the
+   FRCD, which raises the fault line on the target core (the twin of
+   `vtd_shootdown_frcd_delivers`, driven by the pending bit rather than the
+   queue shootdown), and the kernel's unmasked, delivery-enabled ack rings the
+   doorbell.  Once the kernel maps the page the request is resolved, so the
+   path is silent: no record, no line.
+   ============================================================ *)
+
+(* The full device-side chain: pending request -> fault record -> FRCD ->
+   line raised on the target core, with the (did, pasid) fault message. *)
+Theorem pri_fault_frcd_delivers_intc (q : list PriRequest) (did pasid : Z) (iova : mword 64)
+    (reason : FaultReason) (ic : intc_types.Intc) (core : nat) :
+  pri_pending q (did, pasid) iova = true ->
+  Nat.lt core (length (intc_types.Intc_pending ic)) ->
+  exists fr : FaultRecord,
+    pri_fault_delivers q (did, pasid) iova reason = Some fr /\
+    fault_msg_did_pasid (frcd_of fr) = (did, pasid) /\
+    intc.intc_get_bit (intc_types.Intc_pending
+                         (frcd_signal_intc (frcd_record fr []) ic (Z.of_nat core)))
+      (Z.of_nat core) false = true.
+Proof.
+  intros Hp Hlen.
+  destruct (pri_fault_frcd_records q did pasid iova reason Hp) as [fr [Hdel [Hhead [Hpend Hmsg]]]].
+  exists fr. split; [exact Hdel |]. split; [exact Hmsg |].
+  apply (frcd_signal_raises (frcd_record fr []) ic core Hlen Hpend).
+Qed.
+
+(* ... and the kernel's ack of the raised line rings the doorbell: the
+   device-side twin of `vtd_fault_ack_rings`. *)
+Lemma pri_fault_frcd_ack_rings (q : list PriRequest) (did pasid : Z) (iova : mword 64)
+    (reason : FaultReason) (ic : intc_types.Intc) (core : nat) :
+  pri_pending q (did, pasid) iova = true ->
+  intc.intc_get_bit (intc_types.Intc_masked ic) (Z.of_nat core) false = false ->
+  intc.intc_get_bit (intc_types.Intc_delivery ic) (Z.of_nat core) false = true ->
+  Nat.lt core (length (intc_types.Intc_pending ic)) ->
+  exists fr : FaultRecord,
+    pri_fault_delivers q (did, pasid) iova reason = Some fr /\
+    intc_types.Intc_ipi (intc.intc_ack (frcd_signal_intc (frcd_record fr []) ic (Z.of_nat core))
+                                       (Z.of_nat core))
+    = intc.intc_set_bit (intc_types.Intc_ipi ic) (Z.of_nat core) true.
+Proof.
+  intros Hp Hm Hd Hlen.
+  destruct (pri_fault_frcd_records q did pasid iova reason Hp) as [fr [Hdel [Hhead [Hpend Hmsg]]]].
+  exists fr. split; [exact Hdel |].
+  apply (vtd_fault_ack_rings (frcd_record fr []) ic core Hpend Hm Hd Hlen).
+Qed.
+
+(* Once the kernel mapped the page, the request is resolved and the fault path
+   is silent: no record is delivered, and with nothing recorded the INTC is
+   untouched. *)
+Lemma pri_fault_frcd_resolved_silent (q : list PriRequest) (did pasid : Z) (iova : mword 64)
+    (reason : FaultReason) (ic : intc_types.Intc) (core : Z) :
+  pri_fault_delivers (pri_resolve q (did, pasid) iova) (did, pasid) iova reason = None /\
+  frcd_signal_intc [] ic core = ic.
+Proof.
+  split.
+  - apply pri_fault_frcd_after_resolve_silent.
+  - cbn. reflexivity.
+Qed.
+
+(* Executable vector: a pending request's fault raises the line on core 0 and
+   the kernel's ack rings the doorbell — the device-side twin of the
+   shootdown-driven vector. *)
+Lemma test_vector_pri_fault_frcd_delivers_intc :
+  let q := pri_request [] (0, 0) va0 in
+  pri_pending q (0, 0) va0 = true /\
+  intc.intc_get_bit (intc_types.Intc_pending
+                       (frcd_signal_intc (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 0;
+                                                         FaultRecord_iova := va0;
+                                                         FaultRecord_reason := FR_Stage2Fault |} [])
+                                         vtd_intc0 0))
+    0 false = true /\
+  intc_types.Intc_ipi
+    (intc.intc_ack (frcd_signal_intc (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 0;
+                                                     FaultRecord_iova := va0;
+                                                     FaultRecord_reason := FR_Stage2Fault |} [])
+                                      vtd_intc0 0) 0)
+  = [true].
+Proof. vm_compute. repeat split; reflexivity. Qed.

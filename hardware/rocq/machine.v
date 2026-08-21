@@ -807,6 +807,14 @@ Definition iotlb_invalidate_all (entries : list IotlbEntry) : list IotlbEntry :=
 
 Definition ats_invalidate_all (devtlbs : list DevTlbEntry) : list DevTlbEntry := [].
 
+Fixpoint ats_invalidate_domain (devtlbs : list DevTlbEntry) (did : Z) : list DevTlbEntry :=
+   match devtlbs with
+   | [] => []
+   | e :: rest =>
+      if Z.eqb (e.(DevTlbEntry_did)) (did) then ats_invalidate_domain (rest) (did)
+      else e :: (ats_invalidate_domain (rest) (did))
+   end.
+
 Fixpoint iotlb_invalidate_pasid (entries : list IotlbEntry) (asid : Z) : list IotlbEntry :=
    match entries with
    | [] => []

@@ -1335,3 +1335,92 @@ Proof.
       * apply Z.eqb_neq. exact E.
       * exact IH.
 Qed.
+
+(* ============================================================
+   The granularity matrix (S4.4 replay of the VT-d PASID-cache granularity):
+   SMMU TLBI selects by ALL, by ASID, by VA+ASID, and AMD-Vi by ALL, by
+   domain, and by domain+VA.  The selective `iotlb_invalidate` (VA), the
+   ASID/domain filters, and the ALL filter cover the single-granule shapes;
+   the composed VA+tag granules below remove the *intersection* — the SMMU
+   TLBI_VA_ASID / AMD-Vi INVALIDATE_IOMMU_PAGES-by-(domain,VA) semantics —
+   since the composition drops everything matching either granule.
+   ============================================================ *)
+
+(* SMMU TLBI_VA_ASID (SMMUv3 §4.4): invalidating by VA then by ASID leaves no
+   entry matching *both* the VA and the ASID — the intersection is removed.
+   The surviving disjunction (pasid differs, or the VA differs) is exactly
+   "not (same ASID and same VA)". *)
+Lemma iotlb_invalidate_va_asid_removes (iotlb : list IotlbEntry) (asid : Z) (va : mword 64) :
+  Forall (fun e => e.(IotlbEntry_pasid) <> asid \/ vpn_of e.(IotlbEntry_iova) <> vpn_of va)
+         (iotlb_invalidate_pasid (iotlb_invalidate iotlb va) asid).
+Proof.
+  induction iotlb as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Eva;
+    destruct (Z.eqb e.(IotlbEntry_pasid) asid) eqn:Eas; cbn.
+    (* The destructs substitute the VA guard (present in the goal, so cbn
+       reduces the inner filter); the pasid guard only appears after the cbn
+       pushes the outer filter's match into the branches, so rewrite Eas in
+       the VA-kept cases.  Dropped by either filter -> recurse; kept by both
+       -> the head survives with a differing VA page (eq_vec_false_iff). *)
+    + exact IH.
+    + exact IH.
+    + rewrite Eas. cbn. exact IH.
+    + rewrite Eas. cbn. constructor.
+      * right. apply eq_vec_false_iff. exact Eva.
+      * exact IH.
+Qed.
+
+(* AMD-Vi INVALIDATE_IOMMU_PAGES-by-(domain, VA) (§2.4.3): invalidating by VA
+   then by domain leaves no entry matching *both* the domain and the VA. *)
+Lemma iotlb_invalidate_domain_va_removes (iotlb : list IotlbEntry) (did : Z) (va : mword 64) :
+  Forall (fun e => e.(IotlbEntry_did) <> did \/ vpn_of e.(IotlbEntry_iova) <> vpn_of va)
+         (iotlb_invalidate_domain (iotlb_invalidate iotlb va) did).
+Proof.
+  induction iotlb as [| e rest IH]; cbn.
+  - constructor.  - destruct (eq_vec (vpn_of e.(IotlbEntry_iova)) (vpn_of va)) eqn:Eva;
+    destruct (Z.eqb e.(IotlbEntry_did) did) eqn:Ed; cbn.
+    + exact IH.
+    + exact IH.
+    + rewrite Ed. cbn. exact IH.
+    + rewrite Ed. cbn. constructor.
+      * right. apply eq_vec_false_iff. exact Eva.
+      * exact IH.
+Qed.
+
+(* ============================================================
+   Device-TLB domain invalidation (AMD-Vi INVALIDATE_DEVTBL-SEL §2.4.7 / the
+   SMMU stream-side tier): drop every endpoint device-TLB entry of a domain.
+   The DevTlbEntry-granular twin of `iotlb_invalidate_domain`.
+   ============================================================ *)
+
+(* Every surviving device-TLB entry belongs to a *different* domain. *)
+Lemma ats_invalidate_domain_removes (devtlbs : list DevTlbEntry) (did : Z) :
+  Forall (fun e => e.(DevTlbEntry_did) <> did) (ats_invalidate_domain devtlbs did).
+Proof.
+  induction devtlbs as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (Z.eqb e.(DevTlbEntry_did) did) eqn:E.
+    + exact IH.
+    + constructor.
+      * apply Z.eqb_neq. exact E.
+      * exact IH.
+Qed.
+
+(* A page whose translations all belong to the invalidated domain faults after
+   the domain device-TLB invalidation — every surviving entry has a different
+   domain, so the only candidate entries for that page are gone. *)
+Lemma find_devtlb_after_ats_invalidate_domain (devtlbs : list DevTlbEntry) (did : Z) (iova : mword 64) :
+  (forall e, vpn_of e.(DevTlbEntry_iova) = vpn_of iova -> e.(DevTlbEntry_did) = did) ->
+  find_devtlb (ats_invalidate_domain devtlbs did) iova = None.
+Proof.
+  intros Honly.
+  apply find_devtlb_none_of_forall.
+  induction devtlbs as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (Z.eqb e.(DevTlbEntry_did) did) eqn:E; cbn.
+    + exact IH.
+    + constructor.
+      * intros Hvpn. apply Z.eqb_neq in E. apply E. apply (Honly e Hvpn).
+      * exact IH.
+Qed.

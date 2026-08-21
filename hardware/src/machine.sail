@@ -946,6 +946,18 @@ function iotlb_invalidate_all(entries) = [||]
 val ats_invalidate_all : list(DevTlbEntry) -> list(DevTlbEntry)
 function ats_invalidate_all(devtlbs) = [||]
 
+// The device-side domain invalidation (AMD-Vi INVALIDATE_DEVTBL-SEL §2.4.7 /
+// the SMMU stream-side tier of TLBI-by-domain): drop every endpoint
+// device-TLB entry of a domain, regardless of IOVA — the DevTlbEntry-granular
+// twin of `iotlb_invalidate_domain`.
+val ats_invalidate_domain : (list(DevTlbEntry), int) -> list(DevTlbEntry)
+function ats_invalidate_domain(devtlbs, did) = match devtlbs {
+  [||] => [||],
+  e :: rest =>
+    if e.did == did then ats_invalidate_domain(rest, did)
+    else e :: ats_invalidate_domain(rest, did)
+}
+
 // ---- ASID / domain-granularity invalidation (SSG-4 / S4.4) ----
 //
 // The coarser invalidation shapes beside the 4KiB selective `iotlb_invalidate`

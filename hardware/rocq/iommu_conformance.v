@@ -243,3 +243,54 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_amdvi_invalidate_domain_noop :
   iotlb_invalidate_domain conf_mixed_iotlb 2 = conf_mixed_iotlb.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   The composed VA+tag granules (the granularity matrix replay of the VT-d
+   PASID-cache work): SMMU TLBI_VA_ASID and AMD-Vi INVALIDATE_IOMMU_PAGES-by-
+   (domain, VA) invalidate by VA *then* by the tag — removing the
+   intersection (anything matching either granule).  On the four-entry mixed
+   IOTLB: TLBI_VA_ASID(va 0, asid 0) leaves only the entries whose VA page
+   differs *and* whose ASID differs — (0,1,4096) and (1,1,12288).
+   ============================================================ *)
+
+(* SMMU §4.4 TLBI_VA_ASID: invalidate (VA 0, ASID 0) — the (0,0,0) entry is
+   the only one matching both, so it goes; the (1,0,8192) entry is dropped by
+   the ASID filter even though its VA differs. *)
+Lemma test_vector_smmu_tlbi_va_asid :
+  iotlb_invalidate_pasid (iotlb_invalidate conf_mixed_iotlb (mword_of_int 0 : mword 64)) 0
+  = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |};
+      {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
+         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+Proof. vm_compute. reflexivity. Qed.
+
+(* AMD-Vi §2.4.3 INVALIDATE_IOMMU_PAGES-by-(domain, VA): invalidate
+   (domain 1, VA 0) — matching either the domain or the VA goes; only the
+   (0,1,4096) entry survives. *)
+Lemma test_vector_amdvi_invalidate_pages_domain_va :
+  iotlb_invalidate_domain (iotlb_invalidate conf_mixed_iotlb (mword_of_int 0 : mword 64)) 1
+  = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 4096 : mword 64);
+         IotlbEntry_pa := (mword_of_int 4096 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   The device-TLB domain invalidation (AMD-Vi INVALIDATE_DEVTBL-SEL §2.4.7 /
+   the SMMU stream-side tier): invalidating domain 0's device-TLB entries
+   leaves the other domain's translations intact — a lookup of domain 0's
+   IOVA faults while domain 1's still resolves.
+   ============================================================ *)
+
+Definition conf_devtlb_two_domains : list DevTlbEntry :=
+  [ {| DevTlbEntry_did := 0; DevTlbEntry_iova := (mword_of_int 0 : mword 64);
+       DevTlbEntry_pa := (mword_of_int 0 : mword 56); DevTlbEntry_perm := ReadWrite |};
+    {| DevTlbEntry_did := 1; DevTlbEntry_iova := (mword_of_int 4096 : mword 64);
+       DevTlbEntry_pa := (mword_of_int 4096 : mword 56); DevTlbEntry_perm := ReadWrite |} ].
+
+Lemma test_vector_amdvi_invalidate_devtbl_domain :
+  ats_invalidate_domain conf_devtlb_two_domains 0
+  = [ {| DevTlbEntry_did := 1; DevTlbEntry_iova := (mword_of_int 4096 : mword 64);
+         DevTlbEntry_pa := (mword_of_int 4096 : mword 56); DevTlbEntry_perm := ReadWrite |} ] /\
+  find_devtlb (ats_invalidate_domain conf_devtlb_two_domains 0) (mword_of_int 0 : mword 64) = None /\
+  find_devtlb (ats_invalidate_domain conf_devtlb_two_domains 0) (mword_of_int 4096 : mword 64)
+  = Some ((mword_of_int 4096 : mword 56), ReadWrite).
+Proof. vm_compute. repeat split; reflexivity. Qed.

@@ -384,11 +384,36 @@ of being pushed invalidations.
       records`: findable at the head, line raised, (did, pasid) message) —
       while resolving the request silences the path (`pri_fault_frcd_after_
       resolve_silent`); the VtdDeviceEntry-backed loop + vectors close it.
-    Still open: ATS/PRQ *fault-message interrupt delivery into the core INTC*
-    for the device side, PASID-cache *hardware tags* beyond the (DID, PASID)
-    key (e.g. generation/ASID bits), and the gpfsl lift of the *device-side*
-    translate loop as a first-class program (the current lift steps the ghost
-    at the leader's read, in the S4.2b-2 trust model).
+    - **S4.5 PRI fault -> INTC delivery** — landed (`vtd_proofs.v`): the
+      pending-bit twin of the shootdown-driven chain — a *pending* page
+      request's translation fault delivers the record into the FRCD, which
+      raises the fault line on the target core (`pri_fault_frcd_delivers_intc`,
+      with the (did, pasid) fault message), the kernel's unmasked,
+      delivery-enabled ack rings the doorbell (`pri_fault_frcd_ack_rings`),
+      and a resolved request is silent (`pri_fault_frcd_resolved_silent`),
+      plus the executable raise+ack vector.
+    - **S4.5 device-side gpfsl lift** — landed (`vtd_device_translate_weak.v`):
+      the weak-memory program over the *device-table* fill-on-miss loop
+      (`vtd_device_translate_fill`), with the cache ghost keyed by the *DTE's*
+      DID — the `dc_ctx` ghost steps from the evicted cache (by d.did) to the
+      refilled one at the leader's final read (`vtd_device_translate_dc_lift`),
+      composed alongside the machine ghost (`vtd_device_translate_dc_machine`);
+      the pure justification is `vtd_device_translate_fill_after_evict` under
+      the DTE-selection premises.
+    - **S4.5 SMMU/AMD-Vi granularity replay** — landed: the granularity matrix
+      of the VT-d PASID-cache work replayed for the IOTLB/device-TLB — SMMU
+      TLBI_VA_ASID and AMD-Vi INVALIDATE_IOMMU_PAGES-by-(domain, VA) composed
+      filters remove the intersection (`iotlb_invalidate_va_asid_removes` /
+      `iotlb_invalidate_domain_va_removes`), and the device-TLB domain
+      invalidation (`ats_invalidate_domain`, AMD-Vi INVALIDATE_DEVTBL-SEL /
+      the SMMU stream-side tier) drops the domain's entries
+      (`ats_invalidate_domain_removes`,
+      `find_devtlb_after_ats_invalidate_domain`), with three executable
+      vectors (TLBI_VA_ASID, pages-by-(domain,VA), devtbl-domain + find).
+    Still open: PASID-cache *hardware tags* beyond the (DID, PASID) key (e.g.
+    generation/ASID bits), and the SMMU two-stage / AMD-Vi *second-platform*
+    walker replay of the fill-on-miss loop (the device-side lift currently
+    steps the ghost at the leader's read, in the S4.2b-2 trust model).
 
 ## What is replayed vs. new
 

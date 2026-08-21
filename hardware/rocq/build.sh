@@ -294,6 +294,12 @@ axiom_free iommu_conformance test_vector_smmu_tlbi_asid
 axiom_free iommu_conformance test_vector_amdvi_invalidate_domain
 axiom_free iommu_conformance test_vector_smmu_tlbi_asid_noop
 axiom_free iommu_conformance test_vector_amdvi_invalidate_domain_noop
+# The composed VA+tag granules (granularity-matrix replay of the VT-d PASID-
+# cache work): SMMU TLBI_VA_ASID and AMD-Vi INVALIDATE_IOMMU_PAGES-by-(domain,
+# VA), plus the device-TLB domain invalidation (AMD-Vi INVALIDATE_DEVTBL-SEL).
+axiom_free iommu_conformance test_vector_smmu_tlbi_va_asid
+axiom_free iommu_conformance test_vector_amdvi_invalidate_pages_domain_va
+axiom_free iommu_conformance test_vector_amdvi_invalidate_devtbl_domain
 # Intel VT-d S4.5 first slice: Requester-ID context selection and the
 # second-level walk, with explicit missing/non-present faults and oracle replay.
 axiom_free vtd_proofs vtd_walk_context_spec
@@ -446,6 +452,13 @@ axiom_free vtd_proofs test_vector_vtd_device_translate_fill_after_evict
 axiom_free vtd_proofs pri_fault_frcd_records
 axiom_free vtd_proofs pri_fault_frcd_after_resolve_silent
 axiom_free vtd_proofs test_vector_pri_fault_frcd
+# S4.5 PRI fault -> INTC delivery: the pending-bit twin of the shootdown-
+# driven chain — fault record -> FRCD -> line raised on the target core, the
+# ack rings the doorbell, and a resolved request is silent.
+axiom_free vtd_proofs pri_fault_frcd_delivers_intc
+axiom_free vtd_proofs pri_fault_frcd_ack_rings
+axiom_free vtd_proofs pri_fault_frcd_resolved_silent
+axiom_free vtd_proofs test_vector_pri_fault_frcd_delivers_intc
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
@@ -555,6 +568,13 @@ axiom_free iommu_proofs      ats_invalidate_all_clears
 axiom_free iommu_proofs      find_devtlb_after_ats_invalidate_all
 axiom_free iommu_proofs      iotlb_invalidate_pasid_removes
 axiom_free iommu_proofs      iotlb_invalidate_domain_removes
+# The composed VA+tag granules (SMMU TLBI_VA_ASID / AMD-Vi pages-by-(domain,
+# VA)) remove the intersection, and the device-TLB domain invalidation
+# (AMD-Vi INVALIDATE_DEVTBL-SEL) drops the domain's entries.
+axiom_free iommu_proofs      iotlb_invalidate_va_asid_removes
+axiom_free iommu_proofs      iotlb_invalidate_domain_va_removes
+axiom_free iommu_proofs      ats_invalidate_domain_removes
+axiom_free iommu_proofs      find_devtlb_after_ats_invalidate_domain
 # command-queue MMIO (SSG-4 / S4.2c): the head/tail (prod/cons) registers are
 # pure bookkeeping — the MMIO drain realizes iommu_process_queue.
 axiom_free cmdq_mmio         cmdq_drain_refines_iommu_process_queue
@@ -848,6 +868,12 @@ if [ -d "$GP" ]; then
   axiom_free pasid_translate_weak pasid_translate_pc_lift "$WFLAGS"
   axiom_free pasid_translate_weak pasid_translate_pc_machine "$WFLAGS"
   axiom_free pasid_translate_weak pc_ctx_update "$WFLAGS"
+  # S4.5 device-side lift: the same weak-memory program over the
+  # device-table fill-on-miss loop, with the cache ghost keyed by the DTE's DID.
+  rocq compile $WFLAGS vtd_device_translate_weak.v
+  axiom_free vtd_device_translate_weak vtd_device_translate_dc_lift "$WFLAGS"
+  axiom_free vtd_device_translate_weak vtd_device_translate_dc_machine "$WFLAGS"
+  axiom_free vtd_device_translate_weak dc_ctx_update "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"
