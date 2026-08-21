@@ -1337,6 +1337,63 @@ Proof.
 Qed.
 
 (* ============================================================
+   VT-d P_IOTLB PASID-selective invalidation (S4.5 cross-check, §6.5.2.4):
+   the PASID-based-IOTLB Invalidate Descriptor's PASID-selective granularity
+   (G = 10b) drops the entries *associated with the specified PASID and
+   domain-id* — both tags, unlike the SMMU TLBI-by-ASID
+   (`iotlb_invalidate_pasid`, pasid only).  Every surviving entry differs in
+   at least one tag component.
+   ============================================================ *)
+
+Lemma iotlb_invalidate_pasid_did_removes (iotlb : list IotlbEntry) (dp : Z * Z) :
+  Forall (fun e => e.(IotlbEntry_did) <> fst dp \/ e.(IotlbEntry_pasid) <> snd dp)
+         (iotlb_invalidate_pasid_did iotlb dp).
+Proof.
+  destruct dp as [d p]. induction iotlb as [| e rest IH]; cbn.
+  - constructor.
+  - destruct (Z.eqb e.(IotlbEntry_did) d) eqn:Ed; cbn.
+    + destruct (Z.eqb e.(IotlbEntry_pasid) p) eqn:Ep; cbn.
+      * exact IH.
+      * constructor; [right; apply Z.eqb_neq; exact Ep | exact IH].
+    + destruct (Z.eqb e.(IotlbEntry_pasid) p) eqn:Ep; cbn.
+      * constructor; [left; apply Z.eqb_neq; exact Ed | exact IH].
+      * constructor; [left; apply Z.eqb_neq; exact Ed | exact IH].
+Qed.
+
+(* The mandatory PASID-cache -> IOTLB pairing (VT-d 5.20 §6.5.2.2): a
+   PASID-selective-within-domain PASID-cache invalidation (01b) must be
+   followed by a PASID-selective P_IOTLB invalidation (10b).  After both, the
+   (did, pasid) tag is gone from the PASID cache (no *present* entry — a
+   present entry either differs in the tag or was turned non-present) and from
+   the IOTLB (no entry at all) — the translation path is forced onto the
+   first-stage table re-walk, and a stale cached first-stage root cannot
+   answer. *)
+Lemma iotlb_pasid_cache_pair_invalidate_clears (cache : list PasidCacheEntry)
+    (iotlb : list IotlbEntry) (d p : Z) :
+  Forall (fun e => e.(PasidCacheEntry_did) <> d \/ e.(PasidCacheEntry_pasid) <> p
+                   \/ e.(PasidCacheEntry_present) = false)
+         (pasid_cache_evict_pasid cache (d, p)) /\
+  Forall (fun e => e.(IotlbEntry_did) <> d \/ e.(IotlbEntry_pasid) <> p)
+         (iotlb_invalidate_pasid_did iotlb (d, p)).
+Proof.
+  split.
+  - revert d p. induction cache as [| e rest IH]; cbn; intros d p.
+    + constructor.
+    + destruct (Z.eqb_spec e.(PasidCacheEntry_did) d) as [Hd | Hd].
+      * destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) p) as [Hp | Hp].
+        -- constructor.
+           ++ right; right; reflexivity.  (* the evicted head is non-present *)
+           ++ exact (IH d p).
+        -- constructor.
+           ++ right; left. exact Hp.   (* eqb_spec's negative branch is the inequality *)
+           ++ exact (IH d p).
+      * constructor.
+        ++ left. exact Hd.
+        ++ exact (IH d p).
+  - exact (iotlb_invalidate_pasid_did_removes iotlb (d, p)).
+Qed.
+
+(* ============================================================
    The granularity matrix (S4.4 replay of the VT-d PASID-cache granularity):
    SMMU TLBI selects by ALL, by ASID, by VA+ASID, and AMD-Vi by ALL, by
    domain, and by domain+VA.  The selective `iotlb_invalidate` (VA), the

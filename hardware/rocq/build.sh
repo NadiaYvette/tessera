@@ -294,6 +294,12 @@ axiom_free iommu_conformance test_vector_smmu_tlbi_asid
 axiom_free iommu_conformance test_vector_amdvi_invalidate_domain
 axiom_free iommu_conformance test_vector_smmu_tlbi_asid_noop
 axiom_free iommu_conformance test_vector_amdvi_invalidate_domain_noop
+# VT-d P_IOTLB PASID-selective vectors (§6.5.2.4): the (DID, PASID) granularity
+# on the mixed IOTLB (removes exactly the associated entry), the absent-tag
+# no-op, and the idempotent re-issue of the IOTLB half of the §6.5.2.2 pairing.
+axiom_free iommu_conformance test_vector_vtd_piotlb_pasid_selective
+axiom_free iommu_conformance test_vector_vtd_piotlb_pasid_selective_noop
+axiom_free iommu_conformance test_vector_vtd_piotlb_pair_iotlb_half
 # The composed VA+tag granules (granularity-matrix replay of the VT-d PASID-
 # cache work): SMMU TLBI_VA_ASID and AMD-Vi INVALIDATE_IOMMU_PAGES-by-(domain,
 # VA), plus the device-TLB domain invalidation (AMD-Vi INVALIDATE_DEVTBL-SEL).
@@ -581,6 +587,13 @@ axiom_free iommu_proofs      ats_invalidate_all_clears
 axiom_free iommu_proofs      find_devtlb_after_ats_invalidate_all
 axiom_free iommu_proofs      iotlb_invalidate_pasid_removes
 axiom_free iommu_proofs      iotlb_invalidate_domain_removes
+# VT-d P_IOTLB PASID-selective (S4.5 cross-check, §6.5.2.4): the (DID, PASID)
+# granularity drops entries associated with both tags, and the mandatory
+# §6.5.2.2 pairing — a PASID-selective-within-domain PASID-cache invalidation
+# (01b) followed by a PASID-selective P_IOTLB (10b) — clears the tag from the
+# cache (no present entry) and from the IOTLB (no entry at all).
+axiom_free iommu_proofs      iotlb_invalidate_pasid_did_removes
+axiom_free iommu_proofs      iotlb_pasid_cache_pair_invalidate_clears
 # The composed VA+tag granules (SMMU TLBI_VA_ASID / AMD-Vi pages-by-(domain,
 # VA)) remove the intersection, and the device-TLB domain invalidation
 # (AMD-Vi INVALIDATE_DEVTBL-SEL) drops the domain's entries.
@@ -911,6 +924,19 @@ if [ -d "$GP" ]; then
   axiom_free pri_fault_weak pri_fault_fr_silent_lift "$WFLAGS"
   axiom_free pri_fault_weak pri_fault_fr_machine "$WFLAGS"
   axiom_free pri_fault_weak fr_ctx_update "$WFLAGS"
+  # S4.5 SMMU/AMD-Vi walker weak lifts: the gpfsl programs over the two
+  # second-platform fill-on-miss loops — the SMMU's STE -> CD -> two-stage and
+  # AMD-Vi's 4-level walk — with the IOTLB ghost (`sg_ctx` / `ag_ctx`) stepped
+  # from the *invalidated* cache to the *refilled* one at the leader's final
+  # read, alone or alongside the machine ghost.
+  rocq compile $WFLAGS smmu_translate_weak.v
+  axiom_free smmu_translate_weak smmu_translate_sg_lift "$WFLAGS"
+  axiom_free smmu_translate_weak smmu_translate_sg_machine "$WFLAGS"
+  axiom_free smmu_translate_weak sg_ctx_update "$WFLAGS"
+  rocq compile $WFLAGS amdvi_translate_weak.v
+  axiom_free amdvi_translate_weak amdvi_translate_ag_lift "$WFLAGS"
+  axiom_free amdvi_translate_weak amdvi_translate_ag_machine "$WFLAGS"
+  axiom_free amdvi_translate_weak ag_ctx_update "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_ack_gen_inv "$WFLAGS"
   axiom_free iommu_broadcast_weak iommu_broadcast_full_gen_inv "$WFLAGS"
@@ -932,6 +958,22 @@ if [ -d "$GP" ]; then
   axiom_free shootdown_weak_broadcast_intc intc_exit_context_op_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc intc_ack_op_hold_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast_intc intc_ack_op_deliver_spec "$WFLAGS"
+  # S4.5 PRQ -> INTC weak lift: the fault-message delivery through the
+  # interrupt-controller delivery gate (masked/delivery in the loop — the ack
+  # rings when enabled, holds when in context) and the FRCDR drain composed
+  # into the weak PRI delivery post-state (the ghost post-state is the drained
+  # queue and the recovered controller).
+  rocq compile $WFLAGS pri_fault_intc_weak.v
+  axiom_free pri_fault_intc_weak pri_fault_intc_delivers "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_intc_gated "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_intc_drain_lift "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_intc_drain_machine "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_ack_line_raised "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_ack_unmasked_rings "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_ack_in_context_holds "$WFLAGS"
+  axiom_free pri_fault_intc_weak pri_fault_deliver_drain_cycle "$WFLAGS"
+  axiom_free pri_fault_intc_weak fr_intc_update "$WFLAGS"
+  axiom_free pri_fault_intc_weak fr_intc_machine_update "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_remote_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_wait_all_spec "$WFLAGS"
   axiom_free shootdown_weak_broadcast bc_init_acks_spec "$WFLAGS"

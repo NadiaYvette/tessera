@@ -546,9 +546,11 @@ function vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova) =
 // root for (rid, pasid) matches the table, so `pasid_cached_walk =
 // vtd_walk_pasid` (proved in vtd_proofs.v).
 //
-// The entry also carries a *generation* number (VT-d 5.20 §15.4: the PASID
-// cache tag is (DID, PASID, generation)) so the hardware can detect a reused
-// tag: when the kernel tears an address space down and a (DID, PASID) is
+// The entry also carries a *generation* number (VT-d 5.20 §6.2.3: the PASID
+// cache is tagged by (DID, PASID) — Table 17 — and the *generation* field is
+// this model's mechanism for detecting a reused tag) so the hardware can
+// detect a reused tag: when the kernel tears an address space down and a
+// (DID, PASID) is
 // reused with a fresh generation, the stale-generation entry must not answer
 // (`pasid_cache_lookup_gen` misses it) until software evicts the tag conflict
 // (`pasid_cache_evict_gen`) and refills under the new generation
@@ -683,9 +685,12 @@ function vtd_walk_device_pasid(devtbl, tbls, contexts, rid, pasid, mem, iova) =
 // with `pasid_cache_coherent` (the cache ⊆ table invariant), eviction is what
 // *breaks* coherence and refill what *restores* it: the miss/refill cycle a
 // translation after invalidation must go through.
-// PASID-selective-within-domain PASID-cache invalidation (VT-d 5.20 §6.5.2.4,
+// PASID-selective-within-domain PASID-cache invalidation (VT-d 5.20 §6.5.2.2,
 // granularity 01b): clear only the (did, pasid) entry.  The granularity matrix
-// of the PASID cache mirrors the IOTLB's (pasid/domain/ALL selectors).
+// of the PASID cache mirrors the IOTLB's (pasid/domain/ALL selectors): the
+// PASID-cache Invalidate Descriptor's G field encodes Domain-Selective = 00b,
+// PASID-Selective-within-Domain = 01b, Global = 11b, and 10b is Reserved
+// (a reserved value makes the descriptor invalid).
 val pasid_cache_evict_pasid : (list(PasidCacheEntry), (int, int)) -> list(PasidCacheEntry)
 function pasid_cache_evict_pasid(cache, dp) = match cache {
   [||] => [||],
@@ -696,8 +701,13 @@ function pasid_cache_evict_pasid(cache, dp) = match cache {
     else e :: pasid_cache_evict_pasid(rest, dp)
 }
 
-// Global PASID-cache invalidation (VT-d 5.20 §6.5.2.4, granularity 11b):
-// clear every entry, regardless of tag.
+// Global PASID-cache invalidation (VT-d 5.20 §6.5.2.2, granularity 11b):
+// clear every entry, regardless of tag.  Domain-selective eviction
+// (`pasid_cache_evict`, the 00b granularity) clears every entry of one DID.
+// Per §6.5.2.2 software must always follow a PASID-cache invalidation with
+// an IOTLB invalidation (Domain-Selective -> domain IOTLB, PASID-selective
+// -> PASID-selective P_IOTLB, Global -> global IOTLB) — the pairing is
+// proved as `iotlb_pasid_cache_pair_invalidate_clears` in iommu_proofs.v.
 val pasid_cache_evict_all : list(PasidCacheEntry) -> list(PasidCacheEntry)
 function pasid_cache_evict_all(cache) = match cache {
   [||] => [||],
@@ -728,10 +738,12 @@ function pasid_cache_refill(cache, dp, root) = match cache {
 
 // ---- PASID-cache generation tags (SSG-4 / S4.5) ----
 //
-// The PASID cache tag is (DID, PASID, generation) (VT-d 5.20 §15.4): the
-// generation distinguishes reuses of a (DID, PASID) tag across address-space
-// teardown, so a transaction issued under the *current* generation must not
-// hit a stale-generation entry.  The (DID, PASID)-keyed view above is the
+// The PASID cache tag is (DID, PASID) plus this model's *generation* field
+// (VT-d 5.20 §6.2.3, Table 17: the tag is (DID, PASID) — the generation is
+// the hardware's way of distinguishing reuses of a (DID, PASID) tag across
+// address-space teardown, so a transaction issued under the *current*
+// generation must not hit a stale-generation entry.  The (DID, PASID)-keyed
+// view above is the
 // generation-0 slice; the gen-tagged view below is the full tag.
 // `pasid_cache_lookup_gen` answers only entries whose generation equals the
 // current one; `pasid_cache_tag_conflict` detects a reused tag holding a
@@ -1110,6 +1122,26 @@ function iotlb_invalidate_domain(entries, did) = match entries {
   e :: rest =>
     if e.did == did then iotlb_invalidate_domain(rest, did)
     else e :: iotlb_invalidate_domain(rest, did)
+}
+
+// ---- VT-d P_IOTLB PASID-selective invalidation (SSG-4 / S4.5) ----
+//
+// The PASID-based-IOTLB Invalidate Descriptor (VT-d 5.20 §6.5.2.4) is how
+// software invalidates IOTLB *and* paging-structure-cache entries after
+// changing first-stage tables.  Its PASID-selective granularity (G = 10b)
+// drops the entries *associated with the specified PASID and domain-id* —
+// both tags, unlike the SMMU TLBI-by-ASID (`iotlb_invalidate_pasid`, pasid
+// only).  This is the IOTLB half of the mandatory PASID-cache -> IOTLB
+// pairing (§6.5.2.2): a PASID-selective-within-domain PASID-cache
+// invalidation (01b) must be followed by a PASID-selective P_IOTLB
+// invalidation, proved as `iotlb_pasid_cache_pair_invalidate_clears`.
+val iotlb_invalidate_pasid_did : (list(IotlbEntry), (int, int)) -> list(IotlbEntry)
+function iotlb_invalidate_pasid_did(entries, dp) = match entries {
+  [||] => [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p then iotlb_invalidate_pasid_did(rest, dp)
+    else e :: iotlb_invalidate_pasid_did(rest, dp)
 }
 
 // PRI page request: enqueue a request to map the page, tagged by

@@ -953,6 +953,16 @@ Fixpoint iotlb_invalidate_domain (entries : list IotlbEntry) (did : Z) : list Io
       else e :: (iotlb_invalidate_domain (rest) (did))
    end.
 
+Fixpoint iotlb_invalidate_pasid_did (entries : list IotlbEntry) (dp : (Z * Z)) : list IotlbEntry :=
+   match entries with
+   | [] => []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(IotlbEntry_did)) (d))) ((Z.eqb (e.(IotlbEntry_pasid)) (p))) then
+        iotlb_invalidate_pasid_did (rest) (dp)
+      else e :: (iotlb_invalidate_pasid_did (rest) (dp))
+   end.
+
 Fixpoint pri_request (prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) : list PriRequest :=
    match prireqs with
    | [] =>

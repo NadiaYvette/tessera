@@ -245,6 +245,45 @@ Lemma test_vector_amdvi_invalidate_domain_noop :
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
+   VT-d P_IOTLB PASID-selective invalidation (S4.5 cross-check, §6.5.2.4):
+   the PASID-based-IOTLB Invalidate Descriptor's PASID-selective granularity
+   (G = 10b) drops the entries *associated with the specified PASID and
+   domain-id* — both tags, unlike the SMMU TLBI-by-ASID (pasid only).  On the
+   four-entry mixed IOTLB, invalidating (PASID 1, DID 0) removes exactly the
+   (0,1,4096) entry.
+   ============================================================ *)
+
+(* VT-d §6.5.2.4 P_IOTLB, PASID-selective (10b) on (DID 0, PASID 1): only the
+   (0,1,4096) entry is associated with both tags, so it goes; the (0,0,0),
+   (1,0,8192) and (1,1,12288) entries survive (each differs in DID or
+   PASID). *)
+Lemma test_vector_vtd_piotlb_pasid_selective :
+  iotlb_invalidate_pasid_did conf_mixed_iotlb (0, 1)
+  = [ {| IotlbEntry_did := 0; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 0 : mword 64);
+         IotlbEntry_pa := (mword_of_int 0 : mword 56); IotlbEntry_perm := ReadWrite |};
+      {| IotlbEntry_did := 1; IotlbEntry_pasid := 0; IotlbEntry_iova := (mword_of_int 8192 : mword 64);
+         IotlbEntry_pa := (mword_of_int 8192 : mword 56); IotlbEntry_perm := ReadWrite |};
+      {| IotlbEntry_did := 1; IotlbEntry_pasid := 1; IotlbEntry_iova := (mword_of_int 12288 : mword 64);
+         IotlbEntry_pa := (mword_of_int 12288 : mword 56); IotlbEntry_perm := ReadWrite |} ].
+Proof. vm_compute. reflexivity. Qed.
+
+(* A (DID, PASID) absent from the IOTLB is a no-op: the (0,2) tag matches no
+   entry (no IOTLB entry has DID 0 AND PASID 2), so the cache is untouched. *)
+Lemma test_vector_vtd_piotlb_pasid_selective_noop :
+  iotlb_invalidate_pasid_did conf_mixed_iotlb (0, 2) = conf_mixed_iotlb.
+Proof. vm_compute. reflexivity. Qed.
+
+(* The IOTLB half of the mandatory §6.5.2.2 pairing: a PASID-selective-
+   within-domain PASID-cache invalidation (01b) followed by the PASID-
+   selective P_IOTLB invalidation (10b) — here the (0,1) tag is cleared from
+   the IOTLB so the device's next request misses and re-walks the first-stage
+   tables (the cache half is `iotlb_pasid_cache_pair_invalidate_clears`). *)
+Lemma test_vector_vtd_piotlb_pair_iotlb_half :
+  iotlb_invalidate_pasid_did conf_mixed_iotlb (0, 1)
+  = iotlb_invalidate_pasid_did (iotlb_invalidate_pasid_did conf_mixed_iotlb (0, 1)) (0, 1).
+Proof. reflexivity. Qed.
+
+(* ============================================================
    The composed VA+tag granules (the granularity matrix replay of the VT-d
    PASID-cache work): SMMU TLBI_VA_ASID and AMD-Vi INVALIDATE_IOMMU_PAGES-by-
    (domain, VA) invalidate by VA *then* by the tag — removing the

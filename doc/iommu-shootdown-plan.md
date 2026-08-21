@@ -424,8 +424,12 @@ of being pushed invalidations.
       — so the loop is forced onto the re-walk path and recovers: the
       invalidate-then-retranslate cycle of SMMU TLBI / AMD-Vi
       INVALIDATE_IOMMU_PAGES / PCIe ATS), plus five executable vectors.
-    - **S4.5 PASID-cache generation tags** — landed (VT-d 5.20 §15.4): the
-      PASID cache tag is (DID, PASID, *generation*).  `PasidCacheEntry` now
+    - **S4.5 PASID-cache generation tags** — landed (VT-d 5.20 §6.2.3, Table
+      17: the PASID cache is tagged by (DID, PASID); the *generation* is this
+      model's mechanism for detecting a reused tag across address-space
+      teardown — cross-checked this session against the spec, see the S4.5
+      cross-check bullet): the PASID cache tag is (DID, PASID,
+      *generation*).  `PasidCacheEntry` now
       carries a `gen` field; the gen-tagged view is
       `pasid_cache_lookup_gen` (an entry answers iff its generation equals
       the current one — a stale generation is a miss,
@@ -453,12 +457,77 @@ of being pushed invalidations.
       `pri_fault_frcd_records`; `pri_fault_fr_machine` threads it alongside
       the machine ghost (post-state carries both the IOTLB queue shootdown
       and the recorded fault); the resolved path is the identity lift
-      (`pri_fault_fr_silent_lift` — no record delivered).
+      (      `pri_fault_fr_silent_lift` — no record delivered).
+    - **S4.5 SMMU/AMD-Vi walker weak lifts** — landed
+      (`smmu_translate_weak.v` / `amdvi_translate_weak.v`): the gpfsl
+      programs over the two second-platform fill-on-miss loops, mirroring the
+      VT-d cache lifts — the leader RELEASES the invalidation doorbell and
+      the IOMMU ACQUIREs it, and at the leader's final read the IOTLB ghost
+      (`sg_ctx` / `ag_ctx`, a `ghost_var` over `list IotlbEntry`) steps from
+      the *invalidated* cache (after a 4KiB TLBI / INVALIDATE_IOMMU_PAGES of
+      the page) to the *refilled* one — the ghost post-state is exactly
+      `snd (smmu_translate_fill … (iotlb_invalidate iotlb gva) …)` /
+      `snd (amdvi_translate_fill root (iotlb_invalidate iotlb iova) mem
+      iova)`, justified at the pure level by
+      `smmu_translate_fill_after_invalidate` /
+      `amdvi_translate_fill_after_invalidate`;
+      `smmu_translate_sg_machine` / `amdvi_translate_ag_machine` thread them
+      alongside the machine ghost.  All six lemmas axiom-free.
+    - **S4.5 PRQ -> INTC weak lift with the delivery gate + FRCDR drain** —
+      landed (`pri_fault_intc_weak.v`): the weak-memory program over the PRI
+      fault delivery through the interrupt controller, composing the FRCD
+      ghost (`fr_ctx`) with the INTC ghost (`intc_ctx`, from S2.5).
+      `pri_fault_intc_delivers` lifts the record + raised line
+      (`frcd_signal_intc`, the line latches iff the FRCD is pending —
+      `pri_fault_ack_line_raised`, IHI0069 4.4 edge-triggered); the
+      *delivery gate is in the loop* as `pri_fault_intc_gated` — the ghost
+      INTC post-state is the controller *after the ack*
+      (`intc_ack (frcd_signal_intc …) core`), with the pure
+      `pri_fault_ack_unmasked_rings` (delivery enabled -> the doorbell rings,
+      pending cleared) and `pri_fault_ack_in_context_holds` (in interrupt
+      context -> the ack is a no-op, the fault line stays pending — deferred,
+      not lost: the S2.5 `intc_ack_op_deliver_spec`/`intc_ack_op_hold_spec`
+      gate at the PRQ level, and the twin of `intc_no_lost_shootdown`).  The
+      *drain in the lift* is `pri_fault_intc_drain_lift` /
+      `pri_fault_intc_drain_machine` — the ghost post-state is the *drained*
+      queue and the recovered controller, with
+      `pri_fault_deliver_drain_cycle` the pure deliver->drain cycle (record
+      learnable at the head, `frcd_drain_clears`, line deasserts,
+      `frcd_drain_recovers`).  Ten lemmas, all axiom-free.
+    - **S4.5 gen-tag cross-check vs VT-d 5.20** — landed: the reconciliation
+      of the model's PASID-cache granularity/generation machinery with the
+      spec.  Findings and fixes: (1) the PASID-cache section is §6.2.3 (not
+      §15.4) and Table 17 tags the cache by (PASID, Domain-ID, Address); the
+      §15.4 citations in machine.sail are corrected and the *generation* is
+      now documented as the model's mechanism for detecting a reused
+      (DID, PASID) tag, not a spec term.  (2) The PASID-cache Invalidate
+      Descriptor's G field (§6.5.2.2) encodes Domain-Selective = 00b,
+      PASID-Selective-within-Domain = 01b, Global = 11b, 10b Reserved — the
+      model's selectors match (evict_pasid/evict/evict_all) and the encodings
+      are now recorded in the Sail comments.  (3) The *missing granularity*
+      the cross-check surfaced: the P_IOTLB PASID-selective invalidation
+      (§6.5.2.4, G = 10b) drops IOTLB + paging-structure-cache entries
+      associated with the specified PASID *and* domain-id — both tags,
+      unlike the SMMU TLBI-by-ASID (pasid only) — added as
+      `iotlb_invalidate_pasid_did` with
+      `iotlb_invalidate_pasid_did_removes` (every survivor differs in DID or
+      PASID) and three executable vectors (the (DID, PASID)-selective drop on
+      the mixed IOTLB, the absent-tag no-op, the idempotent re-issue).
+      (4) The mandatory §6.5.2.2 *ordering rule* — a PASID-cache
+      invalidation must always be followed by the matching IOTLB
+      invalidation (PASID-selective-within-domain 01b -> PASID-selective
+      P_IOTLB 10b, domain 00b -> domain IOTLB, global -> global) — is proved
+      as `iotlb_pasid_cache_pair_invalidate_clears`: after evict_pasid + the
+      P_IOTLB the (did, pasid) tag is gone from the cache (no present entry)
+      and from the IOTLB (no entry at all), so the translation path is forced
+      onto the first-stage table re-walk.
 
-    Still open on the device side: the ATS/PRQ *interrupt delivery* into the
-    core INTC lifted as a first-class program with the delivery gate in the
-    loop (the current lift steps the FRCD ghost at the leader's read, in the
-    S4.2b-2 trust model).
+    Still open on the device side: the device-TLB (ATS) invalidation as a
+    first-class weak program (the current `ats_invalidate_*` proofs are pure;
+    the device side of the endpoint tier is not yet lifted), and the SMMU
+    two-stage / AMD-Vi second-platform walker *replay of the generation
+    machinery* (the `smmu_translate_fill` / `amdvi_translate_fill` loops are
+    lifted but stay at generation 0).
 
 ## What is replayed vs. new
 
