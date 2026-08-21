@@ -101,10 +101,17 @@ struct DevTlbEntry = {
 }
 
 // A PRI page request: on a translation fault the device asks the kernel to map
-// the page and retries.  Pending until the kernel maps + the device retries.
+// the page and retries (PCIe ATS §4.2 / VT-d 5.20 §10).  `pending` is the
+// request's pending bit: Set while the kernel has not yet resolved the fault,
+// cleared when the page is mapped (`pri_resolve`), so the device's recheck
+// (`pri_pending`) observes the resolution and retries the ATS translation.
+// The queue is tagged by (did, pasid, iova); a device retries the same fault,
+// it does not issue fresh requests (at most one entry per key).
 struct PriRequest = {
-  did  : int,
-  iova : vaddr
+  did     : int,
+  pasid   : int,
+  iova    : vaddr,
+  pending : bool
 }
 
 // A queued-invalidation descriptor (VT-d IOTLB Invalidate / Invalidation-Wait,
@@ -615,6 +622,28 @@ function vtd_walk_device_pasid(devtbl, tbls, contexts, rid, pasid, mem, iova) =
 // with `pasid_cache_coherent` (the cache ⊆ table invariant), eviction is what
 // *breaks* coherence and refill what *restores* it: the miss/refill cycle a
 // translation after invalidation must go through.
+// PASID-selective-within-domain PASID-cache invalidation (VT-d 5.20 §6.5.2.4,
+// granularity 01b): clear only the (did, pasid) entry.  The granularity matrix
+// of the PASID cache mirrors the IOTLB's (pasid/domain/ALL selectors).
+val pasid_cache_evict_pasid : (list(PasidCacheEntry), (int, int)) -> list(PasidCacheEntry)
+function pasid_cache_evict_pasid(cache, dp) = match cache {
+  [||] => [||],
+  e :: rest =>
+    let (d, p) = dp in
+    if e.did == d & e.pasid == p then
+      struct { present = false, did = e.did, pasid = e.pasid, s1_root = e.s1_root } :: pasid_cache_evict_pasid(rest, dp)
+    else e :: pasid_cache_evict_pasid(rest, dp)
+}
+
+// Global PASID-cache invalidation (VT-d 5.20 §6.5.2.4, granularity 11b):
+// clear every entry, regardless of tag.
+val pasid_cache_evict_all : list(PasidCacheEntry) -> list(PasidCacheEntry)
+function pasid_cache_evict_all(cache) = match cache {
+  [||] => [||],
+  e :: rest =>
+    struct { present = false, did = e.did, pasid = e.pasid, s1_root = e.s1_root } :: pasid_cache_evict_all(rest)
+}
+
 val pasid_cache_evict : (list(PasidCacheEntry), int) -> list(PasidCacheEntry)
 function pasid_cache_evict(cache, did) = match cache {
   [||] => [||],
@@ -665,6 +694,73 @@ function pasid_translate_fill(contexts, rid, ptes, cache, pasid, mem, iova) =
                pasid_cache_refill(cache, (rid, pasid), te.s1_root))
             else (None(), cache)
         }
+  }
+
+// ---- Device-table view of the PASID cache (SSG-4 / S4.5) ----
+//
+// In scalable mode the device table (DTE, indexed by requester ID) assigns the
+// device its domain-id; the PASID cache is tagged (DID, PASID) (VT-d 5.20
+// §15.4), so the device-table view keys the cache by the *DTE's* did rather
+// than the raw requester ID.  `vtd_walk_device_pasid_cached` is the cached
+// two-stage walk with the cache standing in for the device's PASID table;
+// `vtd_device_translate_fill` is the fill-on-miss translation service loop
+// over the device table — a hit walks the cached root, a miss re-walks the
+// device's PASID table (selected by the DTE's `pasid_tbl` pointer), refills
+// the cache under (d.did, pasid), and walks.
+val vtd_walk_device_pasid_cached : (list(VtdDeviceEntry), list(list(VtdPasid)), list(VtdContext), int, int,
+                                    list(PasidCacheEntry), PageTable, vaddr) -> option((paddr, Perm))
+function vtd_walk_device_pasid_cached(devtbl, tbls, contexts, rid, pasid, cache, mem, iova) =
+  match vtd_device_lookup(devtbl, rid) {
+    None() => None(),
+    Some(d) =>
+      if d.present then
+        match pasid_cache_lookup(cache, (d.did, pasid)) {
+          None() => None(),
+          Some(e) =>
+            if e.present then
+              match iommu_walk(e.s1_root, mem, iova) {
+                None() => None(),
+                Some((gpa, _)) =>
+                  match vtd_context_lookup(contexts, d.ctx_index) {
+                    None() => None(),
+                    Some(c) =>
+                      if c.present then iommu_walk(c.sl_root, mem, sail_zero_extend(gpa, 64))
+                      else None()
+                  }
+              }
+            else None()
+        }
+      else None()
+  }
+
+val vtd_device_translate_fill : (list(VtdDeviceEntry), list(list(VtdPasid)), list(VtdContext), int, int,
+                                 list(PasidCacheEntry), PageTable, vaddr)
+                             -> (option((paddr, Perm)), list(PasidCacheEntry))
+function vtd_device_translate_fill(devtbl, tbls, contexts, rid, pasid, cache, mem, iova) =
+  match vtd_device_lookup(devtbl, rid) {
+    None() => (None(), cache),
+    Some(d) =>
+      if d.present then
+        match pasid_cache_lookup(cache, (d.did, pasid)) {
+          None() => (None(), cache),
+          Some(e) =>
+            if e.present then
+              (vtd_walk_device_pasid_cached(devtbl, tbls, contexts, rid, pasid, cache, mem, iova), cache)
+            else
+              match pasid_table_lookup(tbls, d.pasid_tbl) {
+                None() => (None(), cache),
+                Some(ptes) =>
+                  match vtd_pasid_lookup(ptes, pasid) {
+                    None() => (None(), cache),
+                    Some(te) =>
+                      if te.present then
+                        (vtd_walk_device_pasid(devtbl, tbls, contexts, rid, pasid, mem, iova),
+                         pasid_cache_refill(cache, (d.did, pasid), te.s1_root))
+                      else (None(), cache)
+                  }
+              }
+        }
+      else (None(), cache)
   }
 
 // ---- Intel VT-d fault recording (SSG-4 / S4.5) ----
@@ -872,15 +968,65 @@ function iotlb_invalidate_domain(entries, did) = match entries {
     else e :: iotlb_invalidate_domain(rest, did)
 }
 
-// PRI page request: enqueue a request to map the page (at most one pending per
-// (did, iova) — a device retries the same fault, it does not issue fresh ones).
-val pri_request : (list(PriRequest), int, vaddr) -> list(PriRequest)
-function pri_request(prireqs, did, iova) = match prireqs {
-  [||] => struct { did = did, iova = iova } :: [||],
+// PRI page request: enqueue a request to map the page, tagged by
+// (did, pasid, iova) (at most one entry per key — a device retries the same
+// fault, it does not issue fresh ones).  Re-issuing an outstanding request
+// re-pends it (the entry's pending bit is Set again), so the queue stays
+// pending for the duration of the fault.
+val pri_request : (list(PriRequest), (int, int), vaddr) -> list(PriRequest)
+function pri_request(prireqs, dp, iova) = match prireqs {
+  [||] =>
+    let (d, p) = dp in
+    struct { did = d, pasid = p, iova = iova, pending = true } :: [||],
   r :: rest =>
-    if r.did == did & r.iova == iova then prireqs
-    else r :: pri_request(rest, did, iova)
+    let (d, p) = dp in
+    if r.did == d & r.pasid == p & r.iova == iova then
+      struct { did = r.did, pasid = r.pasid, iova = r.iova, pending = true } :: rest
+    else r :: pri_request(rest, dp, iova)
 }
+
+// The PRI recheck: find the request for (did, pasid, iova).
+val pri_lookup : (list(PriRequest), (int, int), vaddr) -> option(PriRequest)
+function pri_lookup(prireqs, dp, iova) = match prireqs {
+  [||] => None(),
+  r :: rest =>
+    let (d, p) = dp in
+    if r.did == d & r.pasid == p & r.iova == iova then Some(r)
+    else pri_lookup(rest, dp, iova)
+}
+
+// The pending-bit recheck: is the request for (did, pasid, iova) still
+// outstanding?  The device's retry loop spins on this bit: Set means the
+// kernel has not resolved the page fault yet.
+val pri_pending : (list(PriRequest), (int, int), vaddr) -> bool
+function pri_pending(prireqs, dp, iova) = match pri_lookup(prireqs, dp, iova) {
+  None() => false,
+  Some(r) => r.pending
+}
+
+// The kernel mapped the page: clear the request's pending bit, so the
+// device's recheck observes the resolution and its next ATS translation
+// succeeds (PCIe ATS §4.2, the page is now resident).
+val pri_resolve : (list(PriRequest), (int, int), vaddr) -> list(PriRequest)
+function pri_resolve(prireqs, dp, iova) = match prireqs {
+  [||] => [||],
+  r :: rest =>
+    let (d, p) = dp in
+    if r.did == d & r.pasid == p & r.iova == iova then
+      struct { did = r.did, pasid = r.pasid, iova = r.iova, pending = false } :: rest
+    else r :: pri_resolve(rest, dp, iova)
+}
+
+// The fault-message path of PRI (VT-d 5.20 §7.2 / §10.4.14): when the
+// device's request is pending and the translation faults, the fault record
+// (DID, PASID, IOVA, reason) is produced — delivered into the FRCD via
+// `frcd_record`, so the fault-message interrupt names the faulting endpoint.
+val pri_fault_delivers : (list(PriRequest), (int, int), vaddr, FaultReason) -> option(FaultRecord)
+function pri_fault_delivers(prireqs, dp, iova, reason) =
+  if pri_pending(prireqs, dp, iova) then
+    let (d, p) = dp in
+    Some(struct { did = d, pasid = p, iova = iova, reason = reason })
+  else None()
 
 // ---- TLB lookup / invalidation ----
 

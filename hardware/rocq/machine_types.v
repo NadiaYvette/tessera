@@ -436,37 +436,53 @@ Instance dummy_DevTlbEntry : Inhabited (DevTlbEntry) := {
 
 Record PriRequest := {
   PriRequest_did : Z;
+  PriRequest_pasid : Z;
   PriRequest_iova : vaddr_typ;
+  PriRequest_pending : bool;
 }.
 Arguments PriRequest : clear implicits.
 #[export]
 Instance Decidable_eq_PriRequest : EqDecision PriRequest.
-   intros [x0 x1].
-   intros [y0 y1].
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
   cmp_record_field x0 y0.
   cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
 left; subst; reflexivity.
 Defined.
 #[export]
 Instance Countable_PriRequest : Countable PriRequest.
 refine {|
-  encode x := encode (PriRequest_did x, PriRequest_iova x);
-  decode x := '(x0, x1) ← decode x;
-              mret (Build_PriRequest x0 x1)
+  encode x := encode (PriRequest_did x, PriRequest_pasid x, PriRequest_iova x, PriRequest_pending x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_PriRequest x0 x1 x2 x3)
 |}.
 abstract (
-  intros [x0 x1];
+  intros [x0 x1 x2 x3];
   rewrite decode_encode;
   reflexivity).
 Defined.
 
 Notation "{[ r 'with' 'PriRequest_did' := e ]}" :=
-  match r with Build_PriRequest _ (_ as f1) => Build_PriRequest e f1 end (at level 0).
+  match r with Build_PriRequest _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_PriRequest e f1 f2 f3 end (at level 0).
+Notation "{[ r 'with' 'PriRequest_pasid' := e ]}" :=
+  match r with Build_PriRequest (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_PriRequest f0 e f2 f3 end (at level 0).
 Notation "{[ r 'with' 'PriRequest_iova' := e ]}" :=
-  match r with Build_PriRequest (_ as f0) _ => Build_PriRequest f0 e end (at level 0).
+  match r with Build_PriRequest (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_PriRequest f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'PriRequest_pending' := e ]}" :=
+  match r with Build_PriRequest (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_PriRequest f0 f1 f2 e end (at level 0).
 #[export]
 Instance dummy_PriRequest : Inhabited (PriRequest) := {
-  inhabitant := {| PriRequest_did := inhabitant; PriRequest_iova := inhabitant
+  inhabitant := {|
+    PriRequest_did := inhabitant;
+    PriRequest_pasid := inhabitant;
+    PriRequest_iova := inhabitant;
+    PriRequest_pending := inhabitant
 |} }.
 
 

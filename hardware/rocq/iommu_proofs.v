@@ -919,16 +919,18 @@ Lemma test_vector_ats_invalidate :
   ats_invalidate [ats_dev0; ats_dev1] (mword_of_int 0 : mword 64) = [ats_dev1].
 Proof. vm_compute. reflexivity. Qed.
 
-(* PRI page request: enqueue, and dedup at most one pending per (did, iova). *)
+(* PRI page request: enqueue, and dedup at most one pending per (did, pasid, iova). *)
 Lemma test_vector_pri_request_enqueue :
-  pri_request [] 0 (mword_of_int 4096 : mword 64)
-  = [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}].
+  pri_request [] (0, 0) (mword_of_int 4096 : mword 64)
+  = [{| PriRequest_did := 0; PriRequest_pasid := 0; PriRequest_iova := (mword_of_int 4096 : mword 64);
+       PriRequest_pending := true |}].
 Proof. vm_compute. reflexivity. Qed.
 
 Lemma test_vector_pri_request_dedup :
-  pri_request [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}]
-    0 (mword_of_int 4096 : mword 64)
-  = [{| PriRequest_did := 0; PriRequest_iova := (mword_of_int 4096 : mword 64) |}].
+  pri_request [{| PriRequest_did := 0; PriRequest_pasid := 0; PriRequest_iova := (mword_of_int 4096 : mword 64);
+                 PriRequest_pending := true |}] (0, 0) (mword_of_int 4096 : mword 64)
+  = [{| PriRequest_did := 0; PriRequest_pasid := 0; PriRequest_iova := (mword_of_int 4096 : mword 64);
+       PriRequest_pending := true |}].
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
@@ -979,27 +981,93 @@ Proof.
 Qed.
 
 (* PRI dedup: a device retries the same fault and re-issues the page request;
-   the pending set is unchanged.  This is "serviced at most once per fault" —
-   enqueueing is idempotent on the (did, iova) key. *)
-Lemma pri_request_idempotent (prireqs : list PriRequest) (did : Z) (iova : mword 64) :
-  pri_request (pri_request prireqs did iova) did iova = pri_request prireqs did iova.
+   re-issuing re-pends the request (the entry's pending bit is Set again), so
+   the queue is unchanged — "at most one entry per (did, pasid, iova)" and
+   the request stays pending for the duration of the fault. *)
+Lemma pri_request_repends (prireqs : list PriRequest) (did pasid : Z) (iova : mword 64) :
+  pri_request (pri_request prireqs (did, pasid) iova) (did, pasid) iova
+  = pri_request prireqs (did, pasid) iova.
 Proof.
   induction prireqs as [| r rest IH]; cbn.
-  - (* []: the fresh request is enqueued, then the re-request finds it. *)
+  - (* []: the fresh request is enqueued, then the re-request re-pends it. *)
     assert (Ed : Z.eqb did did = true) by (apply (Z.eqb_eq did did); reflexivity).
+    assert (Ep : Z.eqb pasid pasid = true) by (apply (Z.eqb_eq pasid pasid); reflexivity).
     assert (Ei : eq_vec iova iova = true) by (apply eq_vec_true_iff; reflexivity).
-    rewrite Ed, Ei. reflexivity.
+    rewrite Ed, Ep, Ei. reflexivity.
   - destruct (Z.eqb r.(PriRequest_did) did) eqn:Ed;
-    destruct (eq_vec r.(PriRequest_iova) iova) eqn:E; cbn.
-    + (* (did,iova) matches: both calls return prireqs unchanged. *)
-      rewrite Ed, E. reflexivity.
-    + (* did matches, iova differs: keep r, recurse. *)
-      rewrite Ed, E. rewrite IH. reflexivity.
-    + (* did differs, iova matches: keep r, recurse. *)
-      rewrite Ed, E. rewrite IH. reflexivity.
-    + (* neither matches: keep r, recurse. *)
-      rewrite Ed, E. rewrite IH. reflexivity.
+    destruct (Z.eqb r.(PriRequest_pasid) pasid) eqn:Ep;
+    destruct (eq_vec r.(PriRequest_iova) iova) eqn:Ei; cbn;
+    (* The outer call's guards reference the re-pended head's fields, which
+       iota-reduce to r's — rewrite the eqns in, then decide.  All three
+       guards true: both calls re-pend the same entry; otherwise the head is
+       kept and the calls recurse identically on the tail. *)
+    rewrite Ed, Ep, Ei; cbn;
+    first [ reflexivity | rewrite IH; reflexivity ].
 Qed.
+
+(* The pending-bit recheck after the device issues the request: the request is
+   outstanding (pending) — the kernel has not resolved the fault yet. *)
+Lemma pri_pending_enqueue (prireqs : list PriRequest) (did pasid : Z) (iova : mword 64) :
+  pri_pending (pri_request prireqs (did, pasid) iova) (did, pasid) iova = true.
+Proof.
+  unfold pri_pending.
+  induction prireqs as [| r rest IH]; cbn.
+  - assert (Ed : Z.eqb did did = true) by (apply (Z.eqb_eq did did); reflexivity).
+    assert (Ep : Z.eqb pasid pasid = true) by (apply (Z.eqb_eq pasid pasid); reflexivity).
+    assert (Ei : eq_vec iova iova = true) by (apply eq_vec_true_iff; reflexivity).
+    rewrite Ed, Ep, Ei. reflexivity.
+  - destruct (Z.eqb r.(PriRequest_did) did) eqn:Ed;
+    destruct (Z.eqb r.(PriRequest_pasid) pasid) eqn:Ep;
+    destruct (eq_vec r.(PriRequest_iova) iova) eqn:Ei; cbn;
+    rewrite Ed, Ep, Ei; cbn;
+    first [ reflexivity | exact IH ].
+Qed.
+
+(* The pending-bit recheck after the kernel mapped the page: the request is
+   no longer outstanding — the device's retry loop observes the resolution. *)
+Lemma pri_resolve_clears (prireqs : list PriRequest) (did pasid : Z) (iova : mword 64) :
+  pri_pending (pri_resolve prireqs (did, pasid) iova) (did, pasid) iova = false.
+Proof.
+  unfold pri_pending.
+  induction prireqs as [| r rest IH]; cbn.
+  - reflexivity.
+  - destruct (Z.eqb r.(PriRequest_did) did) eqn:Ed;
+    destruct (Z.eqb r.(PriRequest_pasid) pasid) eqn:Ep;
+    destruct (eq_vec r.(PriRequest_iova) iova) eqn:Ei; cbn;
+    rewrite Ed, Ep, Ei; cbn;
+    first [ reflexivity | exact IH ].
+Qed.
+
+(* The device's retry loop in one theorem: the request is pending while the
+   fault is unresolved, and the recheck observes the resolution once the
+   kernel has mapped the page (PCIe ATS §4.2). *)
+Theorem pri_retry_cycle (prireqs : list PriRequest) (did pasid : Z) (iova : mword 64) :
+  pri_pending (pri_request prireqs (did, pasid) iova) (did, pasid) iova = true /\
+  pri_pending (pri_resolve (pri_request prireqs (did, pasid) iova) (did, pasid) iova)
+              (did, pasid) iova = false.
+Proof. split; [apply pri_pending_enqueue | apply pri_resolve_clears]. Qed.
+
+(* The PRI fault-message path: a *pending* request's translation fault
+   produces the fault record (DID, PASID, IOVA, reason) — delivered into the
+   FRCD via frcd_record (vtd_proofs.v), so the fault-message interrupt names
+   the faulting endpoint. *)
+Lemma pri_fault_delivers_pending (prireqs : list PriRequest) (did pasid : Z) (iova : mword 64)
+    (reason : FaultReason) :
+  pri_pending prireqs (did, pasid) iova = true ->
+  pri_fault_delivers prireqs (did, pasid) iova reason
+  = Some {| FaultRecord_did := did; FaultRecord_pasid := pasid; FaultRecord_iova := iova;
+           FaultRecord_reason := reason |}.
+Proof.
+  intros H. unfold pri_fault_delivers. rewrite H. cbn. reflexivity.
+Qed.
+
+(* No outstanding request, no fault record: the fault-message path is silent
+   (the device did not request the page, so there is nothing to report). *)
+Lemma pri_fault_delivers_none (prireqs : list PriRequest) (did pasid : Z) (iova : mword 64)
+    (reason : FaultReason) :
+  pri_pending prireqs (did, pasid) iova = false ->
+  pri_fault_delivers prireqs (did, pasid) iova reason = None.
+Proof. intros H. unfold pri_fault_delivers. rewrite H. cbn. reflexivity. Qed.
 
 (* ============================================================
    S4.2b-1 (the command queue, functional): the queued-invalidation

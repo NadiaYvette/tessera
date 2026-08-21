@@ -152,10 +152,29 @@ Lemma test_vector_pcie_ats_completion :
 Proof. vm_compute. reflexivity. Qed.
 
 (* PCIe §4.2 PRI: a page request is serviced at most once per (Requestor ID,
-   address) — re-issuing the same request leaves the pending set unchanged. *)
+   PASID, address) — re-issuing the same request leaves the pending set
+   unchanged (re-pending is idempotent). *)
 Lemma test_vector_pcie_pri_at_most_once :
-  let q := pri_request [] 0 (mword_of_int 4096 : mword 64) in
-  pri_request q 0 (mword_of_int 4096 : mword 64) = q.
+  let q := pri_request [] (0, 0) (mword_of_int 4096 : mword 64) in
+  pri_request q (0, 0) (mword_of_int 4096 : mword 64) = q.
+Proof. vm_compute. reflexivity. Qed.
+
+(* PCIe §4.2 PRI retry loop: the device's pending-bit recheck — Set while the
+   fault is unresolved, Clear once the kernel mapped the page. *)
+Lemma test_vector_pcie_pri_retry_cycle :
+  let q := pri_request [] (0, 0) (mword_of_int 4096 : mword 64) in
+  pri_pending q (0, 0) (mword_of_int 4096 : mword 64) = true /\
+  pri_pending (pri_resolve q (0, 0) (mword_of_int 4096 : mword 64))
+              (0, 0) (mword_of_int 4096 : mword 64) = false.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* PCIe §4.2 / VT-d 5.20 §7.2: a pending request's translation fault produces
+   the fault record — the fault-message payload naming the endpoint (0, 0). *)
+Lemma test_vector_pcie_pri_fault_delivers :
+  let q := pri_request [] (0, 0) (mword_of_int 4096 : mword 64) in
+  pri_fault_delivers q (0, 0) (mword_of_int 4096 : mword 64) FR_Stage2Fault
+  = Some {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := (mword_of_int 4096 : mword 64);
+           FaultRecord_reason := FR_Stage2Fault |}.
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================

@@ -357,11 +357,38 @@ of being pushed invalidations.
       `pasid_translate_pc_machine` threads it alongside the machine ghost, so
       the post-state carries both the IOTLB queue shootdown and the refilled
       PASID cache.
-    Still open: PASID-cache *tags on the DTE's* PASID-table pointer with
-    hardware fill-on-miss across device tables, ATS/PRQ fault handling, and
-    the gpfsl lift of the *device-side* translate loop as a first-class
-    program (the current lift steps the ghost at the leader's read, in the
-    S4.2b-2 trust model).
+    - **S4.5 PASID-cache invalidation granularity** — landed (VT-d 5.20
+      §6.5.2.4): the PASID-cache Invalidation Descriptor's granularity
+      selects a single (DID, PASID) tag (`pasid_cache_evict_pasid`), an entire
+      DID (`pasid_cache_evict`), or the whole cache (`pasid_cache_evict_all`);
+      each clears exactly its scope — `pasid_cache_evict_pasid_clears` /
+      `pasid_cache_evict_all_clears` (the tagged lookup misses),
+      `pasid_cache_evict_pasid_preserves_other` (selectivity per tag), and
+      `pasid_cache_evict_pasid_refill_cycle` (evict → refill restores the
+      table-driven cached walk), plus a two-DID/two-PASID executable vector.
+    - **S4.5 device-table fill-on-miss** — landed (`vtd_device_translate_fill`
+      + `vtd_walk_device_pasid_cached`): the translation service loop *over
+      the device table* — a cache hit (keyed by the *DTE's* DID) walks the
+      cached first-stage root, a miss re-walks the device's PASID table
+      (selected by the DTE's `pasid_tbl` pointer), refills under (d.did,
+      pasid), and walks; `vtd_device_translate_fill_after_evict` is the
+      invalidation-then-retranslate cycle over the device table (eviction of
+      the DTE's DID, recovery via table walk + refill), with the refill-tag
+      and executable hit/evict vectors.
+    - **S4.5 PRI fault path + FRCD composition** — landed (PCIe ATS §4.2 /
+      VT-d 5.20 §7.2, §10.4.14): the (did, pasid, iova)-tagged page request
+      re-pends on re-issue, the pending-bit recheck observes the kernel's
+      resolution (`pri_pending_enqueue` / `pri_resolve_clears` /
+      `pri_retry_cycle`), and a *pending* request's translation fault
+      delivers the fault record — composed into the FRCD (`pri_fault_frcd_
+      records`: findable at the head, line raised, (did, pasid) message) —
+      while resolving the request silences the path (`pri_fault_frcd_after_
+      resolve_silent`); the VtdDeviceEntry-backed loop + vectors close it.
+    Still open: ATS/PRQ *fault-message interrupt delivery into the core INTC*
+    for the device side, PASID-cache *hardware tags* beyond the (DID, PASID)
+    key (e.g. generation/ASID bits), and the gpfsl lift of the *device-side*
+    translate loop as a first-class program (the current lift steps the ghost
+    at the leader's read, in the S4.2b-2 trust model).
 
 ## What is replayed vs. new
 

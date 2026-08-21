@@ -791,6 +791,145 @@ Lemma test_vector_vtd_pasid_cache_tags :
 Proof. vm_compute. repeat split; reflexivity. Qed.
 
 (* ============================================================
+   S4.5 PASID-cache invalidation granularity (VT-d 5.20 §6.5.2.4): the
+   PASID-cache Invalidation Descriptor's granularity selects a single
+   (DID, PASID) tag, an entire DID (domain-selective), or the whole cache
+   (global).  Each clears exactly its scope: the tagged entry is turned
+   non-present, entries under other tags survive.
+   ============================================================ *)
+
+(* PASID-selective: clearing the (did, pasid) tag makes the tagged lookup
+   miss — the cache-miss state for that one PASID (granularity 01b). *)
+Lemma pasid_cache_evict_pasid_clears (cache : list PasidCacheEntry) (did pasid : Z) (ec : PasidCacheEntry) :
+  pasid_cache_lookup cache (did, pasid) = Some ec ->
+  exists ec', pasid_cache_lookup (pasid_cache_evict_pasid cache (did, pasid)) (did, pasid) = Some ec' /\
+             ec'.(PasidCacheEntry_present) = false.
+Proof.
+  revert did pasid. induction cache as [| e rest IH]; cbn; intros did pasid H.
+  - discriminate.
+  - destruct (Z.eqb_spec e.(PasidCacheEntry_did) did) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
+      * injection H as <-.
+        exists {| PasidCacheEntry_present := false; PasidCacheEntry_did := e.(PasidCacheEntry_did);
+                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+                 PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}.
+        cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_eq _ _) Hp). cbn. split; reflexivity.
+      * cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd), (proj2 (Z.eqb_neq _ _) Hp). cbn. exact (IH did pasid H).
+    + cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd). cbn. exact (IH did pasid H).
+Qed.
+
+(* Global: clearing every entry makes the (did, pasid) lookup miss too
+   (granularity 11b). *)
+Lemma pasid_cache_evict_all_clears (cache : list PasidCacheEntry) (did pasid : Z) (ec : PasidCacheEntry) :
+  pasid_cache_lookup cache (did, pasid) = Some ec ->
+  exists ec', pasid_cache_lookup (pasid_cache_evict_all cache) (did, pasid) = Some ec' /\
+             ec'.(PasidCacheEntry_present) = false.
+Proof.
+  revert did pasid. induction cache as [| e rest IH]; cbn; intros did pasid H.
+  - discriminate.
+  - destruct (Z.eqb_spec e.(PasidCacheEntry_did) did) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec e.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
+      * injection H as <-.
+        exists {| PasidCacheEntry_present := false; PasidCacheEntry_did := e.(PasidCacheEntry_did);
+                 PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+                 PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}.
+        (* Global eviction has no guard — the destructs already made the
+           lookup's tag guards concrete, so cbn reduces straight to the
+           evicted entry. *)
+        cbn. split; reflexivity.
+      * cbn. exact (IH did pasid H).
+    + cbn. exact (IH did pasid H).
+Qed.
+
+(* PASID-selective invalidation is selective per tag: entries under a
+   *different* (did, pasid) tag are untouched. *)
+Lemma pasid_cache_evict_pasid_preserves_other (cache : list PasidCacheEntry)
+    (did pasid did' pasid' : Z) :
+  did <> did' \/ pasid <> pasid' ->
+  forall e, pasid_cache_lookup cache (did', pasid') = Some e ->
+         pasid_cache_lookup (pasid_cache_evict_pasid cache (did, pasid)) (did', pasid') = Some e.
+Proof.
+  revert did pasid did' pasid'. induction cache as [| h rest IH]; cbn; intros did pasid did' pasid' Hneq e H.
+  - discriminate.
+  - destruct (Z.eqb_spec h.(PasidCacheEntry_did) did) as [Hd | Hd]; cbn in H.
+    + destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) pasid) as [Hp | Hp]; cbn in H.
+      (* h carries the evicted tag (did, pasid) — it is turned non-present.
+         The target tag (did', pasid') differs in at least one component, so
+         the lookup's head guard is false and it recurses. *)
+      * destruct Hneq as [Hd' | Hp'].
+        -- assert (Hd'f : Z.eqb h.(PasidCacheEntry_did) did' = false).
+           { apply Z.eqb_neq. intros Hsub. apply Hd'. congruence. }
+           rewrite Hd'f in H. cbn in H. cbn. rewrite Hd'f. cbn.
+           exact (IH did pasid did' pasid' (or_introl Hd') e H).
+        -- assert (Hp'f : Z.eqb h.(PasidCacheEntry_pasid) pasid' = false).
+           { apply Z.eqb_neq. intros Hsub. apply Hp'. congruence. }
+           rewrite Hp'f in H. rewrite Bool.andb_false_r in H. cbn in H.
+           cbn. rewrite Hp'f. rewrite Bool.andb_false_r. cbn.
+           exact (IH did pasid did' pasid' (or_intror Hp') e H).
+      * (* h.did = did but h.pasid <> pasid — the evict keeps the head
+           untouched, so both sides reduce by the same (did', pasid') tag
+           guard on the head. *)
+        cbn. destruct (Z.eqb h.(PasidCacheEntry_did) did') eqn:Hd'';
+              destruct (Z.eqb h.(PasidCacheEntry_pasid) pasid') eqn:Hp''; cbn;
+              (* The destructs substitute the head's tag guard in both the goal
+                 and H — cbn reduces both sides to the kept head or the tail. *)
+              cbn in H;
+              first [ exact H | exact (IH did pasid did' pasid' Hneq e H) ].
+    + (* h.did <> did — the evict keeps the head untouched. *)
+      destruct (Z.eqb_spec h.(PasidCacheEntry_did) did') as [Hd' | Hd']; cbn in H.
+      * destruct (Z.eqb_spec h.(PasidCacheEntry_pasid) pasid') as [Hp' | Hp']; cbn in H.
+        (* The destructs substitute the guard in H (so cbn in H reduces it),
+           while the goal keeps the head's tag guard symbolic — rewrite the
+           eqns in to decide it. *)
+        -- cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd'), (proj2 (Z.eqb_eq _ _) Hp'). cbn. exact H.
+        -- cbn. rewrite (proj2 (Z.eqb_eq _ _) Hd'), (proj2 (Z.eqb_neq _ _) Hp'). cbn.
+           exact (IH did pasid did' pasid' Hneq e H).
+      * cbn. rewrite (proj2 (Z.eqb_neq _ _) Hd'). cbn. exact (IH did pasid did' pasid' Hneq e H).
+Qed.
+
+(* The evict → refill cycle at PASID granularity: evicting the (did, pasid)
+   tag breaks the cached walk, and refilling with the table root restores the
+   table-driven result — the invalidation-then-retranslate cycle. *)
+Theorem pasid_cache_evict_pasid_refill_cycle (contexts : list VtdContext) (rid : Z)
+    (ptes : list VtdPasid) (cache : list PasidCacheEntry) (pasid : Z)
+    (mem : list MemEntry) (iova : mword 64) (c : VtdContext) (e : VtdPasid) (ec : PasidCacheEntry) :
+  vtd_context_lookup contexts rid = Some c ->
+  c.(VtdContext_present) = true ->
+  vtd_pasid_lookup ptes pasid = Some e ->
+  e.(VtdPasid_present) = true ->
+  pasid_cache_lookup cache (rid, pasid) = Some ec ->
+  pasid_cached_walk contexts rid (pasid_cache_evict_pasid cache (rid, pasid)) pasid mem iova = None /\
+  pasid_cached_walk contexts rid (pasid_cache_refill (pasid_cache_evict_pasid cache (rid, pasid)) (rid, pasid)
+                                    e.(VtdPasid_s1_root)) pasid mem iova
+  = vtd_walk_pasid contexts rid ptes pasid mem iova.
+Proof.
+  intros Hc Hcp Hp Hpp Hcl.
+  destruct (pasid_cache_evict_pasid_clears cache rid pasid ec Hcl) as [ec' [Hev Hpev]].
+  split.
+  - unfold pasid_cached_walk. rewrite Hc, Hcp, Hev. cbn. rewrite Hpev. cbn. reflexivity.
+  - apply (pasid_cache_refill_coherent contexts rid ptes (pasid_cache_evict_pasid cache (rid, pasid)) pasid
+             mem iova c e ec' Hc Hcp Hp Hpp Hev).
+Qed.
+
+(* Executable vectors: PASID-selective invalidation clears only the (0, 0)
+   tag — the same DID's other PASID (0, 1) survives; global invalidation
+   clears everything (entries stay tagged, present cleared). *)
+Definition vtd_coherent_cache_entry_pasid1 : PasidCacheEntry :=
+  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 1;
+     PasidCacheEntry_s1_root := vtd_s1_root |}.
+
+Lemma test_vector_vtd_pasid_cache_granularity :
+  pasid_cache_lookup (pasid_cache_evict_pasid [vtd_coherent_cache_entry; vtd_coherent_cache_entry_pasid1] (0, 0)) (0, 1)
+  = Some vtd_coherent_cache_entry_pasid1 /\
+  pasid_cache_lookup (pasid_cache_evict_pasid [vtd_coherent_cache_entry; vtd_coherent_cache_entry_pasid1] (0, 0)) (0, 0)
+  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 0;
+           PasidCacheEntry_s1_root := vtd_s1_root |} /\
+  pasid_cache_lookup (pasid_cache_evict_all [vtd_coherent_cache_entry; vtd_coherent_cache_entry_pasid1]) (0, 1)
+  = Some {| PasidCacheEntry_present := false; PasidCacheEntry_did := 0; PasidCacheEntry_pasid := 1;
+           PasidCacheEntry_s1_root := vtd_s1_root |}.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
    S4.5 scalable-mode device table: the requester-ID-indexed device table
    (DTE) selects the context for the second-level walk; `vtd_walk_device`
    reduces to the context's SL walk, and agrees with the flat `vtd_walk`
@@ -1350,6 +1489,169 @@ Lemma test_vector_vtd_walk_device_pasid_hit :
 Proof. vm_compute. reflexivity. Qed.
 
 (* ============================================================
+   S4.5 device-table fill-on-miss: `vtd_device_translate_fill` is the
+   translation service loop *over the device table* — a cache hit (keyed by
+   the DTE's DID) walks the cached first-stage root, a miss re-walks the
+   device's PASID table (selected by the DTE's `pasid_tbl` pointer), refills
+   under (d.did, pasid), and walks.  The device-table analogue of
+   `pasid_translate_fill`, with the tag taken from the DTE rather than the
+   requester ID (VT-d 5.20 §15.4).
+   ============================================================ *)
+
+(* A hit: the cached two-stage walk, cache untouched. *)
+Lemma vtd_device_translate_fill_hit (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (cache : list PasidCacheEntry)
+    (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) (ec : PasidCacheEntry) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_cache_lookup cache (d.(VtdDeviceEntry_did), pasid) = Some ec ->
+  ec.(PasidCacheEntry_present) = true ->
+  vtd_device_translate_fill devtbl tbls contexts rid pasid cache mem iova
+  = (vtd_walk_device_pasid_cached devtbl tbls contexts rid pasid cache mem iova, cache).
+Proof.
+  intros Hd Hdp Hcl Hcp.
+  unfold vtd_device_translate_fill. rewrite Hd. cbn. rewrite Hdp. cbn. rewrite Hcl. cbn.
+  rewrite Hcp. cbn. reflexivity.
+Qed.
+
+(* A miss (non-present slot) with a present table entry re-walks the device's
+   PASID table and refills the cache under the DTE's DID — not the requester
+   ID — with the table's first-stage root. *)
+Lemma vtd_device_translate_fill_miss_refills (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (cache : list PasidCacheEntry)
+    (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) (ec : PasidCacheEntry)
+    (ptes : list VtdPasid) (te : VtdPasid) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_cache_lookup cache (d.(VtdDeviceEntry_did), pasid) = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = true ->
+  vtd_device_translate_fill devtbl tbls contexts rid pasid cache mem iova
+  = (vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova,
+     pasid_cache_refill cache (d.(VtdDeviceEntry_did), pasid) te.(VtdPasid_s1_root)).
+Proof.
+  intros Hd Hdp Hcl Hcp Ht Hp Htp.
+  unfold vtd_device_translate_fill. rewrite Hd. cbn. rewrite Hdp. cbn. rewrite Hcl. cbn.
+  rewrite Hcp. cbn. rewrite Ht. cbn. rewrite Hp. cbn. rewrite Htp. cbn. reflexivity.
+Qed.
+
+(* A miss with no PASID table faults and leaves the cache alone. *)
+Lemma vtd_device_translate_fill_miss_missing_table (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (cache : list PasidCacheEntry)
+    (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) (ec : PasidCacheEntry) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_cache_lookup cache (d.(VtdDeviceEntry_did), pasid) = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = None ->
+  vtd_device_translate_fill devtbl tbls contexts rid pasid cache mem iova = (None, cache).
+Proof.
+  intros Hd Hdp Hcl Hcp Ht.
+  unfold vtd_device_translate_fill. rewrite Hd. cbn. rewrite Hdp. cbn. rewrite Hcl. cbn.
+  rewrite Hcp. cbn. rewrite Ht. cbn. reflexivity.
+Qed.
+
+(* A miss with a non-present table entry faults and leaves the cache alone. *)
+Lemma vtd_device_translate_fill_miss_nonpresent_entry (devtbl : list VtdDeviceEntry)
+    (tbls : list (list VtdPasid)) (contexts : list VtdContext) (rid pasid : Z)
+    (cache : list PasidCacheEntry) (mem : list MemEntry) (iova : mword 64)
+    (d : VtdDeviceEntry) (ec : PasidCacheEntry) (ptes : list VtdPasid) (te : VtdPasid) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_cache_lookup cache (d.(VtdDeviceEntry_did), pasid) = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = false ->
+  vtd_device_translate_fill devtbl tbls contexts rid pasid cache mem iova = (None, cache).
+Proof.
+  intros Hd Hdp Hcl Hcp Ht Hp Htp.
+  unfold vtd_device_translate_fill. rewrite Hd. cbn. rewrite Hdp. cbn. rewrite Hcl. cbn.
+  rewrite Hcp. cbn. rewrite Ht. cbn. rewrite Hp. cbn. rewrite Htp. cbn. reflexivity.
+Qed.
+
+(* After an eviction (of the DTE's DID) the device-table loop recovers: it
+   re-walks the device's PASID table and refills under the DTE's DID, so it
+   answers with the device-table walk result — the invalidation-then-
+   retranslate cycle over the device table. *)
+Theorem vtd_device_translate_fill_after_evict (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (cache : list PasidCacheEntry)
+    (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) (ec : PasidCacheEntry)
+    (ptes : list VtdPasid) (te : VtdPasid) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_cache_lookup cache (d.(VtdDeviceEntry_did), pasid) = Some ec ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = true ->
+  vtd_device_translate_fill devtbl tbls contexts rid pasid (pasid_cache_evict cache d.(VtdDeviceEntry_did)) mem iova
+  = (vtd_walk_device_pasid devtbl tbls contexts rid pasid mem iova,
+     pasid_cache_refill (pasid_cache_evict cache d.(VtdDeviceEntry_did)) (d.(VtdDeviceEntry_did), pasid)
+       te.(VtdPasid_s1_root)).
+Proof.
+  intros Hd Hdp Hcl Ht Hp Htp.
+  destruct (pasid_cache_evict_lookup cache d.(VtdDeviceEntry_did) pasid ec Hcl) as [ec' [Hev Hpev]].
+  apply (vtd_device_translate_fill_miss_refills devtbl tbls contexts rid pasid
+           (pasid_cache_evict cache d.(VtdDeviceEntry_did)) mem iova d ec' ptes te
+           Hd Hdp Hev Hpev Ht Hp Htp).
+Qed.
+
+(* The device-table loop's refill carries the DTE's DID — the cache is keyed
+   by (d.did, pasid), so the refilled entry is findable under the DTE's tag. *)
+Lemma vtd_device_translate_fill_refill_tagged (devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid))
+    (contexts : list VtdContext) (rid pasid : Z) (cache : list PasidCacheEntry)
+    (mem : list MemEntry) (iova : mword 64) (d : VtdDeviceEntry) (ec : PasidCacheEntry)
+    (ptes : list VtdPasid) (te : VtdPasid) :
+  vtd_device_lookup devtbl rid = Some d ->
+  d.(VtdDeviceEntry_present) = true ->
+  pasid_cache_lookup cache (d.(VtdDeviceEntry_did), pasid) = Some ec ->
+  ec.(PasidCacheEntry_present) = false ->
+  pasid_table_lookup tbls d.(VtdDeviceEntry_pasid_tbl) = Some ptes ->
+  vtd_pasid_lookup ptes pasid = Some te ->
+  te.(VtdPasid_present) = true ->
+  exists ec',
+    pasid_cache_lookup (snd (vtd_device_translate_fill devtbl tbls contexts rid pasid cache mem iova))
+                       (d.(VtdDeviceEntry_did), pasid) = Some ec' /\
+    ec'.(PasidCacheEntry_present) = true /\
+    ec'.(PasidCacheEntry_did) = d.(VtdDeviceEntry_did) /\
+    ec'.(PasidCacheEntry_pasid) = pasid /\
+    ec'.(PasidCacheEntry_s1_root) = te.(VtdPasid_s1_root).
+Proof.
+  intros Hd Hdp Hcl Hcp Ht Hp Htp.
+  rewrite (vtd_device_translate_fill_miss_refills devtbl tbls contexts rid pasid cache mem iova
+            d ec ptes te Hd Hdp Hcl Hcp Ht Hp Htp).
+  cbn.
+  destruct (pasid_cache_refill_lookup cache d.(VtdDeviceEntry_did) pasid te.(VtdPasid_s1_root) ec Hcl)
+    as [ec' [Hcl' [Hp' Hs]]].
+  exists ec'. split; [exact Hcl' |].
+  destruct (pasid_cache_lookup_tagged (pasid_cache_refill cache (d.(VtdDeviceEntry_did), pasid)
+             te.(VtdPasid_s1_root)) d.(VtdDeviceEntry_did) pasid ec' Hcl') as [Hd' Hp''].
+  repeat split; assumption.
+Qed.
+
+(* Executable vectors over the device table: a cached hit (cache keyed by the
+   DTE's DID 7) resolves the two-stage walk; after an eviction of DID 7 the
+   loop recovers via the PASID-table walk + refill under (7, 0). *)
+Definition vtd_dev_coherent_cache_entry : PasidCacheEntry :=
+  {| PasidCacheEntry_present := true; PasidCacheEntry_did := 7; PasidCacheEntry_pasid := 0;
+     PasidCacheEntry_s1_root := vtd_s1_root |}.
+
+Lemma test_vector_vtd_device_translate_fill_hit :
+  vtd_device_translate_fill [vtd_dev_pasid_hit_entry] [ [vtd_pasid_hit_entry] ] [vtd_pasid_hit_context]
+    0 0 [vtd_dev_coherent_cache_entry] mem_vtd_pasid_hit va0
+  = (Some (expected_pa, Read), [vtd_dev_coherent_cache_entry]).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vector_vtd_device_translate_fill_after_evict :
+  vtd_device_translate_fill [vtd_dev_pasid_hit_entry] [ [vtd_pasid_hit_entry] ] [vtd_pasid_hit_context]
+    0 0 (pasid_cache_evict [vtd_dev_coherent_cache_entry] 7) mem_vtd_pasid_hit va0
+  = (Some (expected_pa, Read),
+     pasid_cache_refill (pasid_cache_evict [vtd_dev_coherent_cache_entry] 7) (7, 0) vtd_s1_root).
+Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
    S4.5 FRCDR drain-by-software: software reads the head of the FRCD queue
    (the oldest recorded fault), clears it, and drains the whole queue — after
    which the interrupt line deasserts and the interrupt controller sees a
@@ -1408,4 +1710,55 @@ Lemma test_vector_frcd_drain :
   frcd_pending (frcd_drain (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 3;
                                           FaultRecord_iova := va0;
                                           FaultRecord_reason := FR_Stage2Fault |} [])) = false.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* ============================================================
+   S4.5 PRI × FRCD composition: a *pending* page request's translation fault
+   delivers the fault record (DID, PASID, IOVA, reason), which the FRCD
+   records — raising the fault-message interrupt whose payload names the
+   faulting endpoint (VT-d 5.20 §7.2).  Once the kernel resolves the request
+   (`pri_resolve`) the pending bit clears, so no further record is produced
+   and the device's retried ATS translation proceeds (PCIe ATS §4.2).
+   ============================================================ *)
+
+(* The pending-bit fault path records into the FRCD: the record is produced,
+   findable at the head, and raises the line with the (did, pasid) message. *)
+Lemma pri_fault_frcd_records (q : list PriRequest) (did pasid : Z) (iova : mword 64) (reason : FaultReason) :
+  pri_pending q (did, pasid) iova = true ->
+  exists fr : FaultRecord,
+    pri_fault_delivers q (did, pasid) iova reason = Some fr /\
+    frcd_head (frcd_record fr []) = Some (frcd_of fr) /\
+    frcd_pending (frcd_record fr []) = true /\
+    fault_msg_did_pasid (frcd_of fr) = (did, pasid).
+Proof.
+  intros Hp.
+  exists {| FaultRecord_did := did; FaultRecord_pasid := pasid; FaultRecord_iova := iova;
+           FaultRecord_reason := reason |}.
+  rewrite (pri_fault_delivers_pending q did pasid iova reason Hp).
+  split; [reflexivity |].
+  split; [apply frcd_head_record |].
+  split; [apply frcd_record_signals |].
+  rewrite fault_msg_of_record. cbn. reflexivity.
+Qed.
+
+(* After the kernel mapped the page, the retry produces no fault record — the
+   request is resolved, so the fault-message path is silent. *)
+Lemma pri_fault_frcd_after_resolve_silent (q : list PriRequest) (did pasid : Z) (iova : mword 64)
+    (reason : FaultReason) :
+  pri_fault_delivers (pri_resolve q (did, pasid) iova) (did, pasid) iova reason = None.
+Proof.
+  apply pri_fault_delivers_none. apply pri_resolve_clears.
+Qed.
+
+(* Executable vector: request (0, 0, va0) → pending → the fault delivers the
+   record, the FRCD raises the line; resolve → no record. *)
+Lemma test_vector_pri_fault_frcd :
+  let q := pri_request [] (0, 0) va0 in
+  pri_pending q (0, 0) va0 = true /\
+  pri_fault_delivers q (0, 0) va0 FR_Stage2Fault
+  = Some {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
+           FaultRecord_reason := FR_Stage2Fault |} /\
+  frcd_pending (frcd_record {| FaultRecord_did := 0; FaultRecord_pasid := 0; FaultRecord_iova := va0;
+                               FaultRecord_reason := FR_Stage2Fault |} []) = true /\
+  pri_fault_delivers (pri_resolve q (0, 0) va0) (0, 0) va0 FR_Stage2Fault = None.
 Proof. vm_compute. repeat split; reflexivity. Qed.

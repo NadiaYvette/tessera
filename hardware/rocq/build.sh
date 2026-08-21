@@ -281,9 +281,13 @@ axiom_free iommu_conformance test_vector_vtd_iotlb_invalidate
 axiom_free iommu_conformance test_vector_smmu_iotlb_invalidate
 axiom_free iommu_conformance test_vector_amdvi_iotlb_invalidate_noop
 # ATS/PRI device side vs PCIe 6.0: the translation completion is the walk's,
-# and a page request is serviced at most once per (Requestor ID, address).
+# and a page request is serviced at most once per (Requestor ID, PASID,
+# address), with the pending-bit retry loop (Set while unresolved, Clear once
+# the kernel mapped the page) and the fault-message payload naming the endpoint.
 axiom_free iommu_conformance test_vector_pcie_ats_completion
 axiom_free iommu_conformance test_vector_pcie_pri_at_most_once
+axiom_free iommu_conformance test_vector_pcie_pri_retry_cycle
+axiom_free iommu_conformance test_vector_pcie_pri_fault_delivers
 axiom_free iommu_conformance test_vector_amdvi_invalidate_iotlb_all
 axiom_free iommu_conformance test_vector_smmu_invalidate_devtlb_all
 axiom_free iommu_conformance test_vector_smmu_tlbi_asid
@@ -416,6 +420,32 @@ axiom_free vtd_proofs vtd_walk_device_pasid_missing_table_fault
 axiom_free vtd_proofs vtd_walk_device_pasid_missing_entry_fault
 axiom_free vtd_proofs vtd_walk_device_pasid_nonpresent_entry_fault
 axiom_free vtd_proofs test_vector_vtd_walk_device_pasid_hit
+# S4.5 PASID-cache invalidation granularity (VT-d 5.20 §6.5.2.4): PASID-
+# selective clears exactly the (did, pasid) tag, global clears everything, and
+# the evict -> refill cycle restores the table-driven cached walk.
+axiom_free vtd_proofs pasid_cache_evict_pasid_clears
+axiom_free vtd_proofs pasid_cache_evict_all_clears
+axiom_free vtd_proofs pasid_cache_evict_pasid_preserves_other
+axiom_free vtd_proofs pasid_cache_evict_pasid_refill_cycle
+axiom_free vtd_proofs test_vector_vtd_pasid_cache_granularity
+# S4.5 device-table fill-on-miss: the translation service loop *over the
+# device table* — hit walks the cached root (keyed by the DTE's DID), miss
+# re-walks the device's PASID table, refills under (d.did, pasid), and after
+# an eviction of the DTE's DID the loop recovers to the device-table walk.
+axiom_free vtd_proofs vtd_device_translate_fill_hit
+axiom_free vtd_proofs vtd_device_translate_fill_miss_refills
+axiom_free vtd_proofs vtd_device_translate_fill_miss_missing_table
+axiom_free vtd_proofs vtd_device_translate_fill_miss_nonpresent_entry
+axiom_free vtd_proofs vtd_device_translate_fill_after_evict
+axiom_free vtd_proofs vtd_device_translate_fill_refill_tagged
+axiom_free vtd_proofs test_vector_vtd_device_translate_fill_hit
+axiom_free vtd_proofs test_vector_vtd_device_translate_fill_after_evict
+# S4.5 PRI x FRCD composition: a pending page request's translation fault
+# records into the FRCD (raising the fault-message interrupt with the
+# (did, pasid) payload); resolving the request makes the path silent.
+axiom_free vtd_proofs pri_fault_frcd_records
+axiom_free vtd_proofs pri_fault_frcd_after_resolve_silent
+axiom_free vtd_proofs test_vector_pri_fault_frcd
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).
@@ -475,7 +505,17 @@ axiom_free iommu_proofs      test_vector_pri_request_dedup
 axiom_free iommu_proofs      ats_translate_spec
 axiom_free iommu_proofs      ats_translate_fault
 axiom_free iommu_proofs      ats_invalidate_removes
-axiom_free iommu_proofs      pri_request_idempotent
+# S4.3 ATS/PRI fault path (PCIe ATS §4.2 / VT-d 5.20 §7.2, §10.4.14): the
+# (did, pasid, iova)-tagged page request re-pends on re-issue, the pending-bit
+# recheck observes the resolution once the kernel maps the page, and a pending
+# request's translation fault delivers the fault record (the FRCD composition
+# lives in vtd_proofs.v).
+axiom_free iommu_proofs      pri_request_repends
+axiom_free iommu_proofs      pri_pending_enqueue
+axiom_free iommu_proofs      pri_resolve_clears
+axiom_free iommu_proofs      pri_retry_cycle
+axiom_free iommu_proofs      pri_fault_delivers_pending
+axiom_free iommu_proofs      pri_fault_delivers_none
 # IOMMU (SSG-4 / S4.2a): the functional IOMMU broadcast shootdown — break-before-
 # make + IOTLB invalidate + IPI-delivered CPU-TLB flush, refining the CPU-side
 # `invalidate_shootdown` and dropping the unmapped page's device translations.

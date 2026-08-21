@@ -134,8 +134,13 @@ Definition undefined_DevTlbEntry '(tt : unit) : M (DevTlbEntry) :=
 
 Definition undefined_PriRequest '(tt : unit) : M (PriRequest) :=
    (undefined_int (tt)) >>= fun (w__0 : Z) =>
-   (undefined_bitvector (64)) >>= fun (w__1 : mword 64) =>
-   returnM (({| PriRequest_did := w__0;  PriRequest_iova := w__1 |})).
+   (undefined_int (tt)) >>= fun (w__1 : Z) =>
+   (undefined_bitvector (64)) >>= fun (w__2 : mword 64) =>
+   (undefined_bool (tt)) >>= fun (w__3 : bool) =>
+   returnM (({| PriRequest_did := w__0;
+                PriRequest_pasid := w__1;
+                PriRequest_iova := w__2;
+                PriRequest_pending := w__3 |})).
 
 Definition undefined_InvalidationCmd '(tt : unit) : M (InvalidationCmd) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
@@ -490,6 +495,32 @@ Definition vtd_walk_device_pasid
       else None
    end.
 
+Fixpoint pasid_cache_evict_pasid (cache : list PasidCacheEntry) (dp : (Z * Z))
+: list PasidCacheEntry :=
+   match cache with
+   | [] => []
+   | e :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (e.(PasidCacheEntry_did)) (d))) ((Z.eqb (e.(PasidCacheEntry_pasid)) (p))) then
+        ({| PasidCacheEntry_present := false;
+            PasidCacheEntry_did := e.(PasidCacheEntry_did);
+            PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+            PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
+          (pasid_cache_evict_pasid (rest) (dp))
+      else e :: (pasid_cache_evict_pasid (rest) (dp))
+   end.
+
+Fixpoint pasid_cache_evict_all (cache : list PasidCacheEntry) : list PasidCacheEntry :=
+   match cache with
+   | [] => []
+   | e :: rest =>
+      ({| PasidCacheEntry_present := false;
+          PasidCacheEntry_did := e.(PasidCacheEntry_did);
+          PasidCacheEntry_pasid := e.(PasidCacheEntry_pasid);
+          PasidCacheEntry_s1_root := e.(PasidCacheEntry_s1_root) |}) ::
+        (pasid_cache_evict_all (rest))
+   end.
+
 Fixpoint pasid_cache_evict (cache : list PasidCacheEntry) (did : Z) : list PasidCacheEntry :=
    match cache with
    | [] => []
@@ -543,6 +574,67 @@ Definition pasid_translate_fill
                                                                               (te.(VtdPasid_s1_root))))
            else ((None, cache))
         end
+   end.
+
+Definition vtd_walk_device_pasid_cached
+(devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid)) (contexts : list VtdContext) (rid : Z)
+(pasid : Z) (cache : list PasidCacheEntry) (mem : list MemEntry) (iova : mword 64)
+: option ((mword 56 * Perm)) :=
+   match vtd_device_lookup (devtbl) (rid) with
+   | None => None
+   | Some d =>
+      if d.(VtdDeviceEntry_present) then
+        match pasid_cache_lookup (cache) ((d.(VtdDeviceEntry_did), pasid)) with
+        | None => None
+        | Some e =>
+           if e.(PasidCacheEntry_present) then
+             match iommu_walk (e.(PasidCacheEntry_s1_root)) (mem) (iova) with
+             | None => None
+             | Some (gpa, _) =>
+                match vtd_context_lookup (contexts) (d.(VtdDeviceEntry_ctx_index)) with
+                | None => None
+                | Some c =>
+                   if c.(VtdContext_present) then
+                     iommu_walk (c.(VtdContext_sl_root)) (mem) ((zero_extend (gpa) (64)))
+                   else None
+                end
+             end
+           else None
+        end
+      else None
+   end.
+
+Definition vtd_device_translate_fill
+(devtbl : list VtdDeviceEntry) (tbls : list (list VtdPasid)) (contexts : list VtdContext) (rid : Z)
+(pasid : Z) (cache : list PasidCacheEntry) (mem : list MemEntry) (iova : mword 64)
+: (option ((mword 56 * Perm)) * list PasidCacheEntry) :=
+   match vtd_device_lookup (devtbl) (rid) with
+   | None => ((None, cache))
+   | Some d =>
+      if d.(VtdDeviceEntry_present) then
+        match pasid_cache_lookup (cache) ((d.(VtdDeviceEntry_did), pasid)) with
+        | None => ((None, cache))
+        | Some e =>
+           if e.(PasidCacheEntry_present) then
+             ((vtd_walk_device_pasid_cached (devtbl) (tbls) (contexts) (rid) (pasid) (cache) (mem)
+                 (iova), cache))
+           else
+             match pasid_table_lookup (tbls) (d.(VtdDeviceEntry_pasid_tbl)) with
+             | None => ((None, cache))
+             | Some ptes =>
+                match vtd_pasid_lookup (ptes) (pasid) with
+                | None => ((None, cache))
+                | Some te =>
+                   if te.(VtdPasid_present) then
+                     ((vtd_walk_device_pasid (devtbl) (tbls) (contexts) (rid) (pasid) (mem) (iova), pasid_cache_refill
+                                                                                                      (cache)
+                                                                                                      ((d.(VtdDeviceEntry_did), pasid))
+                                                                                                      (te.(VtdPasid_s1_root))))
+                   else ((None, cache))
+                end
+             end
+        end
+      else ((None, cache))
    end.
 
 Definition undefined_FaultReason '(tt : unit) : M (FaultReason) :=
@@ -731,14 +823,73 @@ Fixpoint iotlb_invalidate_domain (entries : list IotlbEntry) (did : Z) : list Io
       else e :: (iotlb_invalidate_domain (rest) (did))
    end.
 
-Fixpoint pri_request (prireqs : list PriRequest) (did : Z) (iova : mword 64) : list PriRequest :=
+Fixpoint pri_request (prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) : list PriRequest :=
    match prireqs with
-   | [] => ({| PriRequest_did := did;  PriRequest_iova := iova |}) :: []
+   | [] =>
+      let '((d, p)) := dp in
+      ({| PriRequest_did := d;
+          PriRequest_pasid := p;
+          PriRequest_iova := iova;
+          PriRequest_pending := true |}) ::
+        []
    | r :: rest =>
-      if andb ((Z.eqb (r.(PriRequest_did)) (did))) ((eq_vec (r.(PriRequest_iova)) (iova))) then
-        prireqs
-      else r :: (pri_request (rest) (did) (iova))
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (r.(PriRequest_did)) (d)))
+           ((andb ((Z.eqb (r.(PriRequest_pasid)) (p))) ((eq_vec (r.(PriRequest_iova)) (iova)))))
+      then
+        ({| PriRequest_did := r.(PriRequest_did);
+            PriRequest_pasid := r.(PriRequest_pasid);
+            PriRequest_iova := r.(PriRequest_iova);
+            PriRequest_pending := true |}) ::
+          rest
+      else r :: (pri_request (rest) (dp) (iova))
    end.
+
+Fixpoint pri_lookup (prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) : option PriRequest :=
+   match prireqs with
+   | [] => None
+   | r :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (r.(PriRequest_did)) (d)))
+           ((andb ((Z.eqb (r.(PriRequest_pasid)) (p))) ((eq_vec (r.(PriRequest_iova)) (iova)))))
+      then
+        Some (r)
+      else pri_lookup (rest) (dp) (iova)
+   end.
+
+Definition pri_pending (prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) : bool :=
+   match pri_lookup (prireqs) (dp) (iova) with
+   | None => false
+   | Some r => r.(PriRequest_pending)
+   end.
+
+Fixpoint pri_resolve (prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) : list PriRequest :=
+   match prireqs with
+   | [] => []
+   | r :: rest =>
+      let '((d, p)) := dp in
+      if andb ((Z.eqb (r.(PriRequest_did)) (d)))
+           ((andb ((Z.eqb (r.(PriRequest_pasid)) (p))) ((eq_vec (r.(PriRequest_iova)) (iova)))))
+      then
+        ({| PriRequest_did := r.(PriRequest_did);
+            PriRequest_pasid := r.(PriRequest_pasid);
+            PriRequest_iova := r.(PriRequest_iova);
+            PriRequest_pending := false |}) ::
+          rest
+      else r :: (pri_resolve (rest) (dp) (iova))
+   end.
+
+Definition pri_fault_delivers
+(prireqs : list PriRequest) (dp : (Z * Z)) (iova : mword 64) (reason : FaultReason)
+: option FaultRecord :=
+   if pri_pending (prireqs) (dp) (iova) then
+     let '((d, p)) := dp in
+     Some
+       (({| FaultRecord_did := d;
+            FaultRecord_pasid := p;
+            FaultRecord_iova := iova;
+            FaultRecord_reason := reason |}))
+   else None.
 
 Definition tag_eq (e : TlbEntry) (vpn : mword 27) : bool :=
    if e.(TlbEntry_napot) then
