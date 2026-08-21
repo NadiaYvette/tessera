@@ -474,6 +474,97 @@ function vtd_walk_pasid(contexts, rid, ptes, pasid, mem, iova) =
       else None()
   }
 
+// ---- Intel VT-d PASID cache (SSG-4 / S4.5) ----
+//
+// VT-d scalable mode caches the PASID-table / first-stage lookup (the PASID
+// cache, VT-d 5.20 §15.4) so an access need not re-walk the guest tables.  A
+// cache entry is minimal here: present + the resolved first-stage root.
+// `pasid_cached_walk` is the two-stage walk with the cache standing in for the
+// PASID table; the coherence invariant (`pasid_cache ⊆ pasid-table`) says a
+// present cached root matches the table, so `pasid_cached_walk =
+// vtd_walk_pasid` (proved in vtd_proofs.v).  Cache eviction on invalidation
+// and the PASID-cache tag (DID+PASID) are later increments.
+struct PasidCacheEntry = {
+  present : bool,
+  pasid   : int,
+  s1_root : bits(44)
+}
+
+val pasid_cache_lookup : (list(PasidCacheEntry), int) -> option(PasidCacheEntry)
+function pasid_cache_lookup(cache, pasid) = match (cache, pasid) {
+  (e :: _, 0) => Some(e),
+  (_ :: rest, n) => pasid_cache_lookup(rest, n - 1),
+  ([||], _) => None()
+}
+
+val pasid_cached_walk : (list(VtdContext), int, list(PasidCacheEntry), int, PageTable, vaddr) -> option((paddr, Perm))
+function pasid_cached_walk(contexts, rid, cache, pasid, mem, iova) =
+  match vtd_context_lookup(contexts, rid) {
+    None() => None(),
+    Some(c) =>
+      if c.present then
+        match pasid_cache_lookup(cache, pasid) {
+          None() => None(),
+          Some(e) =>
+            if e.present then
+              match iommu_walk(e.s1_root, mem, iova) {
+                None() => None(),
+                Some((gpa, _)) =>
+                  iommu_walk(c.sl_root, mem, sail_zero_extend(gpa, 64))
+              }
+            else None()
+        }
+      else None()
+  }
+
+// ---- Intel VT-d fault recording (SSG-4 / S4.5) ----
+//
+// On a translation fault VT-d records (requester ID, PASID, IOVA, reason) in
+// its fault log and signals an interrupt (VT-d 5.20 §6.1, fault recording).
+// The reason is an enum naming exactly which structural or page-table step
+// faulted; `vtd_record_fault` mirrors the two-stage walk one-to-one, returning
+// [|sed] on the same paths the walk faults on and [||] on a hit — so a fault
+// is recorded iff the walk faults.  FRCD-cache storage, fault-message
+// (DID/PASID) signalling, and ATS/PRQ fault handling are later increments.
+enum FaultReason = {
+  FR_ContextMissing,
+  FR_ContextNotPresent,
+  FR_PasidMissing,
+  FR_PasidNotPresent,
+  FR_Stage1Fault,
+  FR_Stage2Fault
+}
+
+struct FaultRecord = {
+  did    : int,
+  pasid  : int,
+  iova   : vaddr,
+  reason : FaultReason
+}
+
+val vtd_record_fault : (list(VtdContext), int, list(VtdPasid), int, PageTable, vaddr) -> option(FaultRecord)
+function vtd_record_fault(contexts, rid, ptes, pasid, mem, iova) =
+  match vtd_context_lookup(contexts, rid) {
+    None() => Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_ContextMissing }),
+    Some(c) =>
+      if c.present then
+        match vtd_pasid_lookup(ptes, pasid) {
+          None() => Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_PasidMissing }),
+          Some(e) =>
+            if e.present then
+              match iommu_walk(e.s1_root, mem, iova) {
+                None() => Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_Stage1Fault }),
+                Some((gpa, _)) =>
+                  match iommu_walk(c.sl_root, mem, sail_zero_extend(gpa, 64)) {
+                    None() => Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_Stage2Fault }),
+                    Some(_) => None()
+                  }
+              }
+            else Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_PasidNotPresent })
+        }
+      else Some(struct { did = rid, pasid = pasid, iova = iova, reason = FR_ContextNotPresent })
+  }
+
 // The IOMMU shootdown's invalidate (SSG-4): drop every cached translation whose
 // IOVA is the page being unmapped.  VT-d IOTLB Invalidate (6.5.2.3) / SMMU TLBI
 // (4.4) / AMD-Vi INVALIDATE_IOMMU_PAGES (2.4.3).  4KiB granularity for now;

@@ -302,15 +302,15 @@ Definition amdvi_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)
 
 Fixpoint ste_lookup (stes : list Ste) (sid : Z) : option Ste :=
    match (stes, sid) with
-   | (s :: g__5, l__0) =>
-      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__5) ((Z.sub (l__0) (1)))
+   | (s :: g__6, l__0) =>
+      if Z.eqb (l__0) (0) then Some (s) else ste_lookup (g__6) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
 Fixpoint cd_lookup (cds : list Cd) (idx : Z) : option Cd :=
    match (cds, idx) with
-   | (c :: g__4, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__4) ((Z.sub (l__0) (1)))
+   | (c :: g__5, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else cd_lookup (g__5) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -331,8 +331,8 @@ Definition smmu_translate
 
 Fixpoint vtd_context_lookup (contexts : list VtdContext) (rid : Z) : option VtdContext :=
    match (contexts, rid) with
-   | (c :: g__3, l__0) =>
-      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__3) ((Z.sub (l__0) (1)))
+   | (c :: g__4, l__0) =>
+      if Z.eqb (l__0) (0) then Some (c) else vtd_context_lookup (g__4) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -351,8 +351,8 @@ Definition undefined_VtdPasid '(tt : unit) : M (VtdPasid) :=
 
 Fixpoint vtd_pasid_lookup (ptes : list VtdPasid) (pasid : Z) : option VtdPasid :=
    match (ptes, pasid) with
-   | (e :: g__2, l__0) =>
-      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__2) ((Z.sub (l__0) (1)))
+   | (e :: g__3, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else vtd_pasid_lookup (g__3) ((Z.sub (l__0) (1)))
    | ([], _) => None
    end.
 
@@ -375,6 +375,117 @@ Definition vtd_walk_pasid
            else None
         end
       else None
+   end.
+
+Definition undefined_PasidCacheEntry '(tt : unit) : M (PasidCacheEntry) :=
+   (undefined_bool (tt)) >>= fun (w__0 : bool) =>
+   (undefined_int (tt)) >>= fun (w__1 : Z) =>
+   (undefined_bitvector (44)) >>= fun (w__2 : mword 44) =>
+   returnM (({| PasidCacheEntry_present := w__0;
+                PasidCacheEntry_pasid := w__1;
+                PasidCacheEntry_s1_root := w__2 |})).
+
+Fixpoint pasid_cache_lookup (cache : list PasidCacheEntry) (pasid : Z) : option PasidCacheEntry :=
+   match (cache, pasid) with
+   | (e :: g__2, l__0) =>
+      if Z.eqb (l__0) (0) then Some (e) else pasid_cache_lookup (g__2) ((Z.sub (l__0) (1)))
+   | ([], _) => None
+   end.
+
+Definition pasid_cached_walk
+(contexts : list VtdContext) (rid : Z) (cache : list PasidCacheEntry) (pasid : Z)
+(mem : list MemEntry) (iova : mword 64)
+: option ((mword 56 * Perm)) :=
+   match vtd_context_lookup (contexts) (rid) with
+   | None => None
+   | Some c =>
+      if c.(VtdContext_present) then
+        match pasid_cache_lookup (cache) (pasid) with
+        | None => None
+        | Some e =>
+           if e.(PasidCacheEntry_present) then
+             match iommu_walk (e.(PasidCacheEntry_s1_root)) (mem) (iova) with
+             | None => None
+             | Some (gpa, _) => iommu_walk (c.(VtdContext_sl_root)) (mem) ((zero_extend (gpa) (64)))
+             end
+           else None
+        end
+      else None
+   end.
+
+Definition undefined_FaultReason '(tt : unit) : M (FaultReason) :=
+   (internal_pick
+      ([FR_ContextMissing;
+      FR_ContextNotPresent;
+      FR_PasidMissing;
+      FR_PasidNotPresent;
+      FR_Stage1Fault;
+      FR_Stage2Fault]))
+    : M (FaultReason).
+
+Definition undefined_FaultRecord '(tt : unit) : M (FaultRecord) :=
+   (undefined_int (tt)) >>= fun (w__0 : Z) =>
+   (undefined_int (tt)) >>= fun (w__1 : Z) =>
+   (undefined_bitvector (64)) >>= fun (w__2 : mword 64) =>
+   (undefined_FaultReason (tt)) >>= fun (w__3 : FaultReason) =>
+   returnM (({| FaultRecord_did := w__0;
+                FaultRecord_pasid := w__1;
+                FaultRecord_iova := w__2;
+                FaultRecord_reason := w__3 |})).
+
+Definition vtd_record_fault
+(contexts : list VtdContext) (rid : Z) (ptes : list VtdPasid) (pasid : Z) (mem : list MemEntry)
+(iova : mword 64)
+: option FaultRecord :=
+   match vtd_context_lookup (contexts) (rid) with
+   | None =>
+      Some
+        (({| FaultRecord_did := rid;
+             FaultRecord_pasid := pasid;
+             FaultRecord_iova := iova;
+             FaultRecord_reason := FR_ContextMissing |}))
+   | Some c =>
+      if c.(VtdContext_present) then
+        match vtd_pasid_lookup (ptes) (pasid) with
+        | None =>
+           Some
+             (({| FaultRecord_did := rid;
+                  FaultRecord_pasid := pasid;
+                  FaultRecord_iova := iova;
+                  FaultRecord_reason := FR_PasidMissing |}))
+        | Some e =>
+           if e.(VtdPasid_present) then
+             match iommu_walk (e.(VtdPasid_s1_root)) (mem) (iova) with
+             | None =>
+                Some
+                  (({| FaultRecord_did := rid;
+                       FaultRecord_pasid := pasid;
+                       FaultRecord_iova := iova;
+                       FaultRecord_reason := FR_Stage1Fault |}))
+             | Some (gpa, _) =>
+                match iommu_walk (c.(VtdContext_sl_root)) (mem) ((zero_extend (gpa) (64))) with
+                | None =>
+                   Some
+                     (({| FaultRecord_did := rid;
+                          FaultRecord_pasid := pasid;
+                          FaultRecord_iova := iova;
+                          FaultRecord_reason := FR_Stage2Fault |}))
+                | Some _ => None
+                end
+             end
+           else
+             Some
+               (({| FaultRecord_did := rid;
+                    FaultRecord_pasid := pasid;
+                    FaultRecord_iova := iova;
+                    FaultRecord_reason := FR_PasidNotPresent |}))
+        end
+      else
+        Some
+          (({| FaultRecord_did := rid;
+               FaultRecord_pasid := pasid;
+               FaultRecord_iova := iova;
+               FaultRecord_reason := FR_ContextNotPresent |}))
    end.
 
 Fixpoint iotlb_invalidate (entries : list IotlbEntry) (va : mword 64) : list IotlbEntry :=

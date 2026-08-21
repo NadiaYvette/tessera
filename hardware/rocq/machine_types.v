@@ -805,6 +805,174 @@ Instance dummy_VtdPasid : Inhabited (VtdPasid) := {
 |} }.
 
 
+Record PasidCacheEntry := {
+  PasidCacheEntry_present : bool;
+  PasidCacheEntry_pasid : Z;
+  PasidCacheEntry_s1_root : bits 44;
+}.
+Arguments PasidCacheEntry : clear implicits.
+#[export]
+Instance Decidable_eq_PasidCacheEntry : EqDecision PasidCacheEntry.
+   intros [x0 x1 x2].
+   intros [y0 y1 y2].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_PasidCacheEntry : Countable PasidCacheEntry.
+refine {|
+  encode x := encode (PasidCacheEntry_present x, PasidCacheEntry_pasid x, PasidCacheEntry_s1_root x);
+  decode x := '(x0, x1, x2) ← decode x;
+              mret (Build_PasidCacheEntry x0 x1 x2)
+|}.
+abstract (
+  intros [x0 x1 x2];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'PasidCacheEntry_present' := e ]}" :=
+  match r with Build_PasidCacheEntry _ (_ as f1) (_ as f2) =>
+    Build_PasidCacheEntry e f1 f2 end (at level 0).
+Notation "{[ r 'with' 'PasidCacheEntry_pasid' := e ]}" :=
+  match r with Build_PasidCacheEntry (_ as f0) _ (_ as f2) =>
+    Build_PasidCacheEntry f0 e f2 end (at level 0).
+Notation "{[ r 'with' 'PasidCacheEntry_s1_root' := e ]}" :=
+  match r with Build_PasidCacheEntry (_ as f0) (_ as f1) _ =>
+    Build_PasidCacheEntry f0 f1 e end (at level 0).
+#[export]
+Instance dummy_PasidCacheEntry : Inhabited (PasidCacheEntry) := {
+  inhabitant := {|
+    PasidCacheEntry_present := inhabitant;
+    PasidCacheEntry_pasid := inhabitant;
+    PasidCacheEntry_s1_root := inhabitant
+|} }.
+
+
+Inductive FaultReason :=
+  | FR_ContextMissing
+  | FR_ContextNotPresent
+  | FR_PasidMissing
+  | FR_PasidNotPresent
+  | FR_Stage1Fault
+  | FR_Stage2Fault.
+Definition num_of_FaultReason (arg_ : FaultReason) : Z :=
+   match arg_ with
+   | FR_ContextMissing => 0
+   | FR_ContextNotPresent => 1
+   | FR_PasidMissing => 2
+   | FR_PasidNotPresent => 3
+   | FR_Stage1Fault => 4
+   | FR_Stage2Fault => 5
+   end.
+
+Definition FaultReason_of_num (arg_ : Z) (*(0 <=? arg_) && (arg_ <=? 5)*) : FaultReason :=
+   let l__0 := arg_ in
+   if Z.eqb (l__0) (0) then FR_ContextMissing
+   else if Z.eqb (l__0) (1) then FR_ContextNotPresent
+   else if Z.eqb (l__0) (2) then FR_PasidMissing
+   else if Z.eqb (l__0) (3) then FR_PasidNotPresent
+   else if Z.eqb (l__0) (4) then FR_Stage1Fault
+   else FR_Stage2Fault.
+
+Lemma FaultReason_num_of_roundtrip (x : FaultReason) : FaultReason_of_num (num_of_FaultReason x) = x.
+  destruct x; reflexivity.
+Qed.
+Lemma num_of_FaultReason_injective (x y : FaultReason) : num_of_FaultReason x = num_of_FaultReason y -> x = y.
+  intro.
+  rewrite <- (FaultReason_num_of_roundtrip x).
+  rewrite <- (FaultReason_num_of_roundtrip y).
+  congruence.
+Qed.
+Definition FaultReason_eq_dec (x y : FaultReason) : {x = y} + {x <> y}.
+  refine (match Z.eq_dec (num_of_FaultReason x) (num_of_FaultReason y) with
+  | left e => left (num_of_FaultReason_injective x y e)
+  | right ne => right _
+  end).
+  congruence.
+Defined.
+Definition FaultReason_beq (x y : FaultReason) : bool :=
+  Z.eqb (num_of_FaultReason x) (num_of_FaultReason y).
+Lemma FaultReason_beq_iff x y : FaultReason_beq x y = true <-> x = y.
+  unfold FaultReason_beq.
+  rewrite Z.eqb_eq.
+  split; [apply num_of_FaultReason_injective | congruence].
+Qed.
+Lemma FaultReason_beq_refl x : FaultReason_beq x x = true.
+apply FaultReason_beq_iff; reflexivity.
+Qed.
+#[export]
+Instance Decidable_eq_FaultReason : EqDecision FaultReason := FaultReason_eq_dec.
+#[export]
+Instance Countable_FaultReason : Countable FaultReason.
+refine {|
+  encode x := encode (num_of_FaultReason x);
+  decode x := z ← decode x; mret (FaultReason_of_num z);
+|}.
+abstract (
+  intro s; rewrite decode_encode;
+  simpl;
+  rewrite FaultReason_num_of_roundtrip;
+  reflexivity).
+Defined.
+#[export]
+Instance dummy_FaultReason : Inhabited FaultReason := { inhabitant := FR_ContextMissing }.
+
+
+Record FaultRecord := {
+  FaultRecord_did : Z;
+  FaultRecord_pasid : Z;
+  FaultRecord_iova : vaddr_typ;
+  FaultRecord_reason : FaultReason;
+}.
+Arguments FaultRecord : clear implicits.
+#[export]
+Instance Decidable_eq_FaultRecord : EqDecision FaultRecord.
+   intros [x0 x1 x2 x3].
+   intros [y0 y1 y2 y3].
+  cmp_record_field x0 y0.
+  cmp_record_field x1 y1.
+  cmp_record_field x2 y2.
+  cmp_record_field x3 y3.
+left; subst; reflexivity.
+Defined.
+#[export]
+Instance Countable_FaultRecord : Countable FaultRecord.
+refine {|
+  encode x := encode (FaultRecord_did x, FaultRecord_pasid x, FaultRecord_iova x, FaultRecord_reason x);
+  decode x := '(x0, x1, x2, x3) ← decode x;
+              mret (Build_FaultRecord x0 x1 x2 x3)
+|}.
+abstract (
+  intros [x0 x1 x2 x3];
+  rewrite decode_encode;
+  reflexivity).
+Defined.
+
+Notation "{[ r 'with' 'FaultRecord_did' := e ]}" :=
+  match r with Build_FaultRecord _ (_ as f1) (_ as f2) (_ as f3) =>
+    Build_FaultRecord e f1 f2 f3 end (at level 0).
+Notation "{[ r 'with' 'FaultRecord_pasid' := e ]}" :=
+  match r with Build_FaultRecord (_ as f0) _ (_ as f2) (_ as f3) =>
+    Build_FaultRecord f0 e f2 f3 end (at level 0).
+Notation "{[ r 'with' 'FaultRecord_iova' := e ]}" :=
+  match r with Build_FaultRecord (_ as f0) (_ as f1) _ (_ as f3) =>
+    Build_FaultRecord f0 f1 e f3 end (at level 0).
+Notation "{[ r 'with' 'FaultRecord_reason' := e ]}" :=
+  match r with Build_FaultRecord (_ as f0) (_ as f1) (_ as f2) _ =>
+    Build_FaultRecord f0 f1 f2 e end (at level 0).
+#[export]
+Instance dummy_FaultRecord : Inhabited (FaultRecord) := {
+  inhabitant := {|
+    FaultRecord_did := inhabitant;
+    FaultRecord_pasid := inhabitant;
+    FaultRecord_iova := inhabitant;
+    FaultRecord_reason := inhabitant
+|} }.
+
+
 
 
 

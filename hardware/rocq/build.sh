@@ -92,10 +92,10 @@ rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS iommu_conformance.v
-rocq compile $FLAGS vtd_proofs.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
 rocq compile $FLAGS iommu_broadcast_reify.v
+rocq compile $FLAGS vtd_proofs.v
 rocq compile $FLAGS smmu_proofs.v
 rocq compile $FLAGS amdvi_proofs.v
 rocq compile $FLAGS shootdown_iris.v
@@ -317,6 +317,28 @@ axiom_free vtd_proofs test_vector_vtd_pasid_missing_fault
 axiom_free vtd_proofs test_vector_vtd_pasid_nonpresent_fault
 axiom_free vtd_proofs test_vector_vtd_pasid_nonpresent_context_fault
 axiom_free vtd_proofs test_vector_vtd_pasid_empty_fault
+# S4.5 PASID-cache slice: the cached first-stage lookup is an alias of the
+# PASID table, so the cached two-stage walk equals the table-driven one.
+axiom_free vtd_proofs pasid_cached_walk_two_stage
+axiom_free vtd_proofs pasid_cached_walk_of_table
+axiom_free vtd_proofs pasid_cached_walk_coherent
+axiom_free vtd_proofs test_vector_vtd_pasid_cache_coherent
+# S4.5 fault-recording slice: a record (DID, PASID, IOVA, reason) is produced
+# exactly when the two-stage walk faults.
+axiom_free vtd_proofs vtd_record_fault_stage1_spec
+axiom_free vtd_proofs vtd_record_fault_stage2_spec
+axiom_free vtd_proofs vtd_record_fault_hit_none
+axiom_free vtd_proofs vtd_record_fault_iff_walk
+axiom_free vtd_proofs test_vector_vtd_record_fault_stage1
+axiom_free vtd_proofs test_vector_vtd_record_fault_missing_context
+axiom_free vtd_proofs test_vector_vtd_record_fault_hit_none
+# S4.5 PASID in the machine ghost: after the queue shootdown un-maps the freed
+# frame at the context's SL root, the two-stage PASID walk faults and a fault is
+# recorded — the functional precondition the weak-memory ghost's post-state
+# (iommu_shootdown_via_queue) satisfies.
+axiom_free vtd_proofs vtd_shootdown_via_queue_pasid_faults
+axiom_free vtd_proofs test_vector_vtd_shootdown_pasid
+axiom_free vtd_proofs test_vector_vtd_shootdown_pasid_record
 # IOMMU (SSG-4 / S4.1b): the IOTLB coherence replay — invalidate drops the
 # unmapped page's entries, the walk faults, and unmap+invalidate keeps the device
 # from reaching the freed frame (vs the stale-entry bug when invalidate is omitted).

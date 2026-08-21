@@ -262,9 +262,24 @@ of being pushed invalidations.
       GPA→SPA walk (VT-d 5.20 §3 / §15).  Per-stage fault/hit specs, structural
       faults, the conformance oracle replay, and executable vectors all landed
       axiom-free.
-    Still open: VT-d scalable-mode device/PASID-cache lookup and fault recording,
-    and the final machine-ghost threading of the weak-memory IOMMU program
-    described in S4.2b-2 above.
+    - **S4.5 PASID-cache slice** — landed (`PasidCacheEntry` +
+      `pasid_cache_lookup` + `pasid_cached_walk`): the cached first-stage lookup
+      is an alias of the PASID table, so `pasid_cached_walk = vtd_walk_pasid`
+      under the `pasid_cache_coherent` invariant (the first-stage analogue of
+      `iotlb_coherent`).
+    - **S4.5 fault-recording slice** — landed (`FaultReason` + `FaultRecord` +
+      `vtd_record_fault`): a record (DID, PASID, IOVA, reason) is produced exactly
+      when the two-stage walk faults (`vtd_record_fault_iff_walk`).
+    - **S4.5 PASID in the machine ghost** — landed
+      (`vtd_shootdown_via_queue_pasid_faults`): after the queue shootdown unmaps
+      the freed frame at the context's SL root and invalidates the IOTLB, the
+      two-stage PASID walk faults and a fault is recorded — the functional
+      precondition the weak-memory ghost's post-state (`iommu_shootdown_via_queue`)
+      satisfies.
+    Still open: scalable-mode device-table lookup, FRCD-cache storage and
+    fault-message (DID/PASID) interrupt signalling, PASID-cache eviction on
+    invalidation, and reifying the weak-memory IOMMU program onto the PASID
+    walker described in S4.2b-2 above.
 
 ## What is replayed vs. new
 
