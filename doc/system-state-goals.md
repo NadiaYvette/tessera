@@ -191,8 +191,8 @@ carved out of.
 ### SSG-7 — Network device
 
 - **Objective.** NIC driver correct; buffers/descriptors not corrupted under DMA.
-- **Modeled today.** *No.*
-- **Proof needed.** Overlaps SSG-4 (DMA coherence); otherwise out of current scope.
+- **Modeled today.** *Yes* (2026-08-22): `net.sail` (DmaDesc + NetRegs types), `net_ops.v` (tx_pending, rx_pending, tx_advance_head, rx_advance_tail), `net_proofs.v` (8 axiom-free test vectors).
+- **Proof needed.** TX/RX ring head/tail invariants; DMA coherence via SSG-4 IOMMU — left for SSG-4 integration.
 
 ### SSG-8 — Disk device
 

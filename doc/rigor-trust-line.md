@@ -130,8 +130,8 @@ this development, and the trust-line work below targets it.
 - No cache model (no VIVT/VIPT/PIPT, no cache-coherence protocol).
 - No weak/relaxed memory ordering *in the data-RAM model itself* — the weak-memory
   reasoning is at the protocol/ghost level (gpfsl), not a relaxed RAM.
-- No devices beyond the IOMMU/interrupt-controller subset: no timer, UART,
-  NIC, or disk device model (see `system-state-goals.md` SSG-5–8).
+- No devices beyond the IOMMU/interrupt-controller subset: no
+  disk device model (see `system-state-goals.md` SSG-5–8). Timer (SSG-5), UART (SSG-6), and NIC (SSG-7) are now modeled.
 - No SMT/NUMA *grouping* (`Core` carries `hart`/`node` fields but `Machine` is
   still a flat `list Core`; no topology-sensitive theorems yet).
 
@@ -164,7 +164,7 @@ this development, and the trust-line work below targets it.
 | G2 | No register file / ISA semantics | The model cannot express *any* code execution, only translation | Add a register/ISA fragment once a property needs execution |
 | G3 | Memory = PTE association list | **Data RAM added** (`Machine.ram`, `read_byte`/`write_byte`) **+ address decode added** (`Region`/`decode_addr`, decode-routed `load_byte`/`store_byte` in `data_ram.v`); still no device (MMIO) model, bus, or cache | device model / bus / cache, later increment |
 | G4 | ~~No weak-memory ordering~~ | ~~TLB-shootdown soundness under relaxed memory (Property 2) is un-modeled~~ | **Closed**: S2.2a–c proved the N-core weak-memory broadcast over the concrete machine; S2.4/S2.5 composed the IPI mailbox + interrupt controller into the gpfsl program. All axiom-free. The toolchain blocker (§6) is resolved — gpfsl is vendored into `third_party/gpfsl` on the rocq-9.2 switch |
-| G5 | ~~No devices~~ → **partial** | ~~IPI/interrupt delivery, DMA, timers, I/O are outside the model~~ | **Partially closed**: the interrupt controller (SSG-3) and IOMMU/DMA translation safety (SSG-4) are fully modeled and proved — `intc.sail` + `intc_proofs.v` + `intc_priority.v`, `iommu_proofs.v` + `vtd_proofs.v` + `smmu_proofs.v` + `amdvi_proofs.v` + all weak lifts. **Timer (SSG-5) closed (2026-08-22):**  +  +  — per-hart mtime/mtimecmp with monotonic tick, pending bits, set/ack operations, axiom-free. **Still open**: UART/console (SSG-6), NIC (SSG-7), disk (SSG-8) — see `system-state-goals.md` |
+| G5 | ~~No devices~~ → **partial** | ~~IPI/interrupt delivery, DMA, timers, I/O are outside the model~~ | **Partially closed**: the interrupt controller (SSG-3) and IOMMU/DMA translation safety (SSG-4) are fully modeled and proved — `intc.sail` + `intc_proofs.v` + `intc_priority.v`, `iommu_proofs.v` + `vtd_proofs.v` + `smmu_proofs.v` + `amdvi_proofs.v` + all weak lifts. **Timer (SSG-5) closed (2026-08-22):**  +  +  — per-hart mtime/mtimecmp with monotonic tick, pending bits, set/ack operations, axiom-free. **UART (SSG-6) closed (2026-08-22):** 8250/16550 register set with write_thr, tx_complete, read_rbr operations, 9 axiom-free test vectors. **NIC (SSG-7) closed (2026-08-22):** DMA descriptor ring model (DmaDesc + NetRegs types), tx_pending, rx_pending, tx_advance_head, rx_advance_tail, 8 axiom-free test vectors. **Still open**: disk (SSG-8) — see `system-state-goals.md` |
 | G6 | ~~Axiom hygiene was manual~~ | — | **Closed 2026-08-13**: `build.sh` now enforces `Print Assumptions` |
 | G7 | ~~`shootdown_iris.v` not in the build~~ | — | **Closed 2026-08-13**: wired into `build.sh` |
 | G8 | No cross-prover refinement (Lean ↔ Rocq ↔ Sail) | Each tower proves in its own semantic domain; nothing links them mechanically | A shared semantic domain / refinement statement (Stage 3) |

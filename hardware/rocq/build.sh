@@ -16,6 +16,7 @@ TIMER_SRC="$HW/src/timer.sail"
 UPSTREAM_VMEM_PTE_SRC="$HW/src/upstream_vmem_pte.sail"
 UPSTREAM_PTW_SRC="$HW/src/upstream_ptw.sail"
 UART_SRC="$HW/src/uart.sail"
+NET_SRC="$HW/src/net.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -45,6 +46,7 @@ sail --just-check "$SA_SRC"
 sail --just-check "$INTC_SRC"
 sail --just-check "$TIMER_SRC"
 sail --just-check "$UART_SRC"
+sail --just-check "$NET_SRC"
 sail --just-check "$UPSTREAM_VMEM_PTE_SRC"
 sail --just-check "$UPSTREAM_PTW_SRC"
 
@@ -61,13 +63,14 @@ sail "$TIMER_SRC" --rocq --rocq-output-dir "$HERE" -o timer
 sail "$UPSTREAM_VMEM_PTE_SRC" --rocq --rocq-output-dir "$HERE" -o upstream_vmem_pte
 sail "$UPSTREAM_PTW_SRC" --rocq --rocq-output-dir "$HERE" -o upstream_ptw
 sail "$UART_SRC" --rocq --rocq-output-dir "$HERE" -o uart
+sail "$NET_SRC" --rocq --rocq-output-dir "$HERE" -o net
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v" "$HERE/uart_types.v "$HERE/upstream_ptw_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v" "$HERE/uart_types.v" "$HERE/upstream_ptw_types.v" "$HERE/net_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -120,6 +123,9 @@ rocq compile $FLAGS upstream_ptw.v
 rocq compile $FLAGS uart_types.v
 rocq compile $FLAGS uart_ops.v
 rocq compile $FLAGS uart_proofs.v
+rocq compile $FLAGS net_types.v
+rocq compile $FLAGS net_ops.v
+rocq compile $FLAGS net_proofs.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
@@ -426,6 +432,15 @@ axiom_free uart_proofs uart_tx_complete_sets_tx
 axiom_free uart_proofs uart_read_rbr_returns_char
 axiom_free uart_proofs uart_read_rbr_clears_rx
 axiom_free uart_proofs uart_tx_roundtrip
+# SSG-7 NIC: DMA descriptor ring model.
+axiom_free net_proofs net_default_tx_not_pending
+axiom_free net_proofs net_default_rx_not_pending
+axiom_free net_proofs configured_not_pending
+axiom_free net_proofs tx_advance_creates_pending
+axiom_free net_proofs rx_advance_creates_pending
+axiom_free net_proofs tx_advance_preserves_ring_base
+axiom_free net_proofs rx_advance_preserves_tx_head
+axiom_free net_proofs dma_desc_zero
 axiom_free upstream_ptw_bridge test_read_0
 axiom_free upstream_ptw_bridge test_read_16777216
 axiom_free upstream_ptw_bridge test_ppn
