@@ -339,6 +339,41 @@ function walk_decision(valid, read, write, exec, napot, level) = {
   }
 }
 
+// ---- G1 upstream-bridge: the upstream PTE predicates (verbatim fragment) ----
+//
+// This section adds the *upstream predicates* — `pte_is_non_leaf` and
+// `pte_is_invalid` — as Sail functions, verbatim from the vendored
+// `third_party/sail-riscv/model/sys/vmem_pte.sail` @ commit 75a7a4b7,
+// ll. 46-108, in the Sv39 fragment with Svnapot enabled (the extension
+// `walk_decision` models), PBMT/Svrsw60t59b disabled, menvcfg.SSE = 0,
+// pte_reserved_bits_must_be_zero = true, and A/D/U bits assumed zero (not
+// modeled in Tessera's `Pte` record).  The fragment lifts the upstream
+// bitfield predicates to the flag booleans `walk_decision` already takes
+// (V/R/W/X/N), so `upstream_bridge.v` can prove, machine-checked, that the
+// shared `walk_decision` agrees with the upstream predicates on every PTE —
+// the G1 PTE-flags bridge (doc/trust-line-plan.md Step 4.1).
+//
+// The remaining trust step is the bitfield extraction — Tessera's `Pte`
+// record ↔ the upstream `bits(64)` + `PTE_Flags`/`PTE_Ext` — which is a
+// small, reviewable correspondence documented in `conformance.v`'s header.
+
+// Upstream: pte_is_non_leaf (vmem_pte.sail ll. 69-71): X=0 & W=0 & R=0.
+val upstream_pte_is_non_leaf : (bool, bool, bool) -> bool
+function upstream_pte_is_non_leaf(read, write, exec) =
+  not_bool(exec) & not_bool(write) & not_bool(read)
+
+// Upstream: pte_is_invalid (vmem_pte.sail ll. 89-109) in the fragment with
+// Svnapot enabled, other extensions disabled, SSE=0, reserved-bits-must-be-
+// zero.  Eliminating the disabled-extension terms leaves the three clauses
+// below.  The A/D/U bits on non-leaf PTEs are reserved in the upstream model
+// but not modeled in Tessera's `Pte` record — this fragment assumes them zero
+// (the `walk_decision`-equivalent case).
+val upstream_pte_is_invalid : (bool, bool, bool, bool, bool) -> bool
+function upstream_pte_is_invalid(valid, read, write, exec, napot) =
+  not_bool(valid)
+  | (not_bool(read) & write)
+  | (upstream_pte_is_non_leaf(read, write, exec) & napot)
+
 // ---- hardware page-table walk (3 levels, Sv39) ----
 //
 // The walk calls `walk_decision` at each level — the decision logic is shared

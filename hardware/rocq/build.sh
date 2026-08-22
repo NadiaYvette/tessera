@@ -91,6 +91,7 @@ rocq compile $FLAGS intc.v
 rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
+rocq compile $FLAGS upstream_bridge.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
@@ -270,6 +271,22 @@ axiom_free conformance      test_vector_napot_conforms
 axiom_free conformance      test_vector_napot_bad_conforms
 axiom_free conformance      test_vector_napot_nonleaf_faults
 axiom_free conformance      test_vector_napot_nonleaf_conforms
+# G1 upstream-bridge: the shared `walk_decision` agrees with the *verbatim
+# upstream* sail-riscv PTE predicates (pte_is_invalid / pte_is_non_leaf),
+# mechanically generated from machine.sail — the bridge lemma set of
+# doc/trust-line-plan.md Step 4.1.
+axiom_free upstream_bridge  walk_decision_fault_iff
+axiom_free upstream_bridge  walk_decision_pointer_iff
+axiom_free upstream_bridge  walk_decision_leaf_iff
+axiom_free upstream_bridge  walk_decision_napot_iff
+axiom_free upstream_bridge  bridge_vec_invalid_v0
+axiom_free upstream_bridge  bridge_vec_writeonly
+axiom_free upstream_bridge  bridge_vec_pointer
+axiom_free upstream_bridge  bridge_vec_pointer_napot
+axiom_free upstream_bridge  bridge_vec_leaf
+axiom_free upstream_bridge  bridge_vec_napot
+axiom_free upstream_bridge  bridge_vec_superpage_not_invalid
+axiom_free upstream_bridge  bridge_vec_superpage_faults
 # IOMMU (SSG-4) conformance cross-check: the walker is translate re-rooted (so
 # G1's upstream-oracle agreement transfers), and the invalidation is pinned per
 # platform (VT-d IOTLB Invalidate §6.5.2.3 / SMMU TLBI §4.4 /

@@ -257,6 +257,16 @@ Definition walk_decision
    else if napot then WalkNAPOT
    else WalkLeaf.
 
+Definition upstream_pte_is_non_leaf (read : bool) (write : bool) (exec : bool) : bool :=
+   andb ((negb (exec))) ((andb ((negb (write))) ((negb (read))))).
+
+Definition upstream_pte_is_invalid
+(valid : bool) (read : bool) (write : bool) (exec : bool) (napot : bool)
+: bool :=
+   orb ((negb (valid)))
+     ((orb ((andb ((negb (read))) (write)))
+         ((andb ((upstream_pte_is_non_leaf (read) (write) (exec))) (napot))))).
+
 Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
 : option ((mword 56 * Perm)) :=
    let l2 : option Pte := read_pte (mem) ((pte_address (core.(Core_satp_ppn)) ((vpn2 (va))))) in

@@ -167,10 +167,27 @@ under the global context** (axiom-free). All 14 conformance test vectors
 Closed. The trust-line transcription half of **G1 is closed**: the oracle is no
 longer a hand-copy — it is mechanically linked to the generated walk.
 
-**What remains open in G1:** the *upstream-bridge* half — connecting the
-shared `walk_decision` to the *actual upstream `sail-riscv` `pt_walk`*
-(`third_party/sail-riscv/model/sys/vmem.sail` ll. 85–214), not just to
-Tessera's own `machine.sail`. This requires generating the upstream model to
-Rocq and isolating its walk fragment (the original Step 3 upstream-adapter
-work, which is a larger effort). The current state is the strongest link
-short of that: the oracle and `translate` share one generated function.
+**Upstream-bridge half — Step 2 of this phase (2026-08-22):** the shared
+`walk_decision` is now machine-checked against the *verbatim upstream*
+`sail-riscv` PTE predicates. `machine.sail` carries `upstream_pte_is_non_leaf`
+and `upstream_pte_is_invalid` — transcribed verbatim from
+`third_party/sail-riscv/model/sys/vmem_pte.sail` ll. 46–108 (`pte_is_non_leaf`
+ll. 69-71, `pte_is_invalid` ll. 89-109), in the Sv39 fragment with Svnapot
+enabled (the extension `walk_decision` models), PBMT/Svrsw60t59b disabled,
+menvcfg.SSE=0, reserved-bits-must-be-zero, A/D/U assumed zero — and
+`upstream_bridge.v` proves the four bridge iff-lemmas
+(`walk_decision_fault_iff`, `walk_decision_pointer_iff`, `walk_decision_leaf_iff`,
+`walk_decision_napot_iff`, all **Closed under the global context**, enforced by
+`build.sh`) plus executable vectors. The decision half of the bridge is now
+mechanical: `walk_decision` takes the same branch as upstream's predicates on
+*every* PTE, and both come from one generated function.
+
+**What remains open in G1:** the *upstream-interface* half — generating the
+upstream model itself to Rocq and isolating its `pt_walk` (`PTW_Result`, the
+`read_pte` memory interface, `check_PTE_permission`, A/D bit updates), the
+original Step 3 upstream-adapter work (a larger effort). The remaining trust
+step is the bitfield extraction: Tessera's `Pte` record ↔ the upstream
+`bits(64)` + `PTE_Flags`/`PTE_Ext`, a small reviewable correspondence noted in
+`conformance.v`'s header. The current state is the strongest link short of
+that: the oracle and `translate` share one generated function, and that
+function is proved to agree with the verbatim upstream predicates.
