@@ -108,6 +108,7 @@ rocq compile $FLAGS bitfield_bridge.v
 rocq compile $FLAGS upstream_vmem_pte_types.v
 rocq compile $FLAGS upstream_vmem_pte.v
 rocq compile $FLAGS upstream_gen_bridge.v
+rocq compile $FLAGS upstream_ptw_bridge.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
@@ -394,6 +395,19 @@ axiom_free upstream_gen_bridge nl_r1w0x0
 axiom_free upstream_gen_bridge nl_r1w0x1
 axiom_free upstream_gen_bridge nl_r1w1x0
 axiom_free upstream_gen_bridge nl_r1w1x1
+# G1 upstream-ptw bridge: hand-verified upstream pt_walk (Z-valued, nat-terminating)
+# agrees with Tessera's translate on 10 concrete Sv39 test vectors.
+axiom_free upstream_ptw_bridge test_full
+axiom_free upstream_ptw_bridge test_level1
+axiom_free upstream_ptw_bridge test_level0
+axiom_free upstream_ptw_bridge test_empty
+axiom_free upstream_ptw_bridge test_only_l2
+axiom_free upstream_ptw_bridge test_l0_leaf
+axiom_free upstream_ptw_bridge test_read_0
+axiom_free upstream_ptw_bridge test_read_16777216
+axiom_free upstream_ptw_bridge test_ppn
+axiom_free upstream_ptw_bridge test_vpn_i_0
+axiom_free upstream_ptw_bridge test_vpn_i_1
 # IOMMU (SSG-4) conformance cross-check: the walker is translate re-rooted (so
 # G1's upstream-oracle agreement transfers), and the invalidation is pinned per
 # platform (VT-d IOTLB Invalidate §6.5.2.3 / SMMU TLBI §4.4 /
