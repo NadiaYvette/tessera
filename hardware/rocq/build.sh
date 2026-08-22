@@ -133,6 +133,7 @@ rocq compile $FLAGS disk_types.v
 rocq compile $FLAGS disk_ops.v
 rocq compile $FLAGS disk_proofs.v
 rocq compile $FLAGS topology.v
+rocq compile $FLAGS placement.v
 rocq compile $FLAGS disk_dma_coherence.v
 rocq compile $FLAGS net_dma_coherence.v
 rocq compile $FLAGS iommu_conformance.v
@@ -473,6 +474,16 @@ axiom_free topology topo_core2_not_in_node0
 axiom_free topology topo_node0_in_domain0
 axiom_free topology topo_node1_not_in_domain0
 axiom_free topology topo_node_mem_disjoint
+# SSG-1 placement: topology-aware placement theorems
+axiom_free placement node0_cores
+axiom_free placement node1_cores
+axiom_free placement domain0_nodes
+axiom_free placement domain1_nodes
+axiom_free placement node0_mem
+axiom_free placement node1_mem
+axiom_free placement node_mem_adjacent
+axiom_free placement find_node_0_is_node0
+axiom_free placement find_node_1_is_node1
 # SSG-8 disk device: command/completion ring model
 axiom_free disk_proofs disk_default_cmd_not_pending
 axiom_free disk_proofs disk_default_cmp_not_pending

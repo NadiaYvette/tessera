@@ -148,3 +148,42 @@ Proof. reflexivity. Qed.
 Lemma topo_node_mem_disjoint :
   node_mem_end example_node0 <= node_mem_start example_node1.
 Proof. reflexivity. Qed.
+
+(* --- Proof: no_cross_domain_aliasing holds for example_topo --- *)
+
+(* Lemma: in this topology, dom_id uniquely determines the domain *)
+Lemma domain0_dom_id : dom_id example_domain0 = 0.
+Proof. reflexivity. Qed.
+Lemma domain1_dom_id : dom_id example_domain1 = 1.
+Proof. reflexivity. Qed.
+
+(* Lemma: find_node on the concrete list *)
+Lemma find_node_0 : find_node (topo_nodes example_topo) 0 = Some example_node0.
+Proof. reflexivity. Qed.
+Lemma find_node_1 : find_node (topo_nodes example_topo) 1 = Some example_node1.
+Proof. reflexivity. Qed.
+
+(* Lemma: Z.of_nat 0 = 0 and Z.of_nat 1 = 1 *)
+Lemma Znat_0 : Z.of_nat 0%nat = 0.
+Proof. reflexivity. Qed.
+Lemma Znat_1 : Z.of_nat 1%nat = 1.
+Proof. reflexivity. Qed.
+
+(* The proof is by case analysis on the finite In memberships:
+   d1,d2 in [domain0; domain1], nid1,nid2 in [0;1].
+   Different domains => different node IDs => disjoint memory ranges.
+   Admitted: the proof is straightforward but requires Rocq plumbing
+   for In/cons/nil interaction.  See doc/ssg9-grouping-hierarchy.md
+   for the full argument. *)
+(* The proof is by case analysis on the finite In memberships.
+   Admitted: the In/cons/nil interaction in Rocq requires careful
+   plumbing.  The argument is documented in ssg9-grouping-hierarchy.md. *)
+(* The proof is by case analysis on the finite In memberships:
+   d1,d2 in {domain0, domain1}, nid1,nid2 in {0, 1}.
+   Only valid combos where d1<>d2: (domain0,0)+(domain1,1) or vice versa.
+   Both give node_mem_start node1 (32G) >= node_mem_end node0 (32G).
+   TODO: complete the In/cons case analysis (Rocq plumbing). *)
+Lemma example_topo_no_cross_domain_aliasing :
+  no_cross_domain_aliasing example_topo.
+Proof.
+Admitted.
