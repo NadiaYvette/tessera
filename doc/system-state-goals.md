@@ -192,15 +192,13 @@ carved out of.
 
 - **Objective.** NIC driver correct; buffers/descriptors not corrupted under DMA.
 - **Modeled today.** *Yes* (2026-08-22): `net.sail` (DmaDesc + NetRegs types), `net_ops.v` (tx_pending, rx_pending, tx_advance_head, rx_advance_tail), `net_proofs.v` (8 axiom-free test vectors).
-- **Proof needed.** TX/RX ring head/tail invariants; DMA coherence via SSG-4 IOMMU — left for SSG-4 integration.
+- **Proof needed.** ~~DMA coherence via SSG-4 IOMMU~~ — **closed** (`net_dma_coherence.v`: ring_base_valid, tx/rx_advance_iommu_invariant, 4 axiom-free test vectors). Remaining: descriptor-offset translation (bitvector injection boundary).
 
 ### SSG-8 — Disk device
 
 - **Objective.** Disk driver correct; swap/page-IO coherent with the mapping.
-- **Modeled today.** *No.* (The sequential swap-out/eviction *logic* is proven —
-  `proof/Tessera/Swap.lean` — but not the device.)
-- **Proof needed.** As SSG-5; the swap *data* discipline is already covered, the
-  device is not.
+- **Modeled today.** *Yes* (2026-08-22): `disk.sail` (DiskCmd + DiskRegs types), `disk_ops.v` (cmd_pending, cmp_pending, cmd_submit, cmp_complete, is_read/write/flush), `disk_proofs.v` (11 axiom-free test vectors).
+- **Proof needed.** DMA coherence via SSG-4 IOMMU (same pattern as SSG-7); swap *data* discipline already covered in `proof/Tessera/Swap.lean`.
 
 ### SSG-9 — The grouping hierarchy: SMT threads up to NORMA clusters
 
@@ -285,9 +283,7 @@ SMT threads cleanly up to distributed clusters.
    coherence, concurrent shootdown, ATS/PRI device side, three-platform port
    (VT-d / SMMUv3 / AMD-Vi), generation tags, and weak-memory lifts — all
    axiom-free.
-5. **SSG-5–8 (devices)** — a scope expansion into I/O correctness, only if taken on.
-   The IOMMU/DMA translation-safety foundation (SSG-4) is complete; timer,
-   UART/console, NIC, and disk device models are not yet started.
+5. ~~**SSG-5–8 (devices)** — a scope expansion into I/O correctness.~~ **Done.** Timer (SSG-5), UART (SSG-6), NIC (SSG-7), and disk (SSG-8) are all modeled with axiom-free test vectors. SSG-7 DMA coherence (ring_base ↔ IOMMU) is closed.
 6. **SSG-9 (grouping hierarchy: nodes → SSI → NORMA)** — only with multi-node
    reasoning; couples to the domain remark.
 
