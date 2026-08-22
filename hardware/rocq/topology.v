@@ -14,7 +14,7 @@
 
    This file is axiom-free. *)
 
-From Stdlib Require Import Bool ZArith List.
+From Stdlib Require Import Bool ZArith List Lia.
 Require Import machine_types.
 Require Import machine.
 
@@ -170,20 +170,60 @@ Lemma Znat_1 : Z.of_nat 1%nat = 1.
 Proof. reflexivity. Qed.
 
 (* The proof is by case analysis on the finite In memberships:
-   d1,d2 in [domain0; domain1], nid1,nid2 in [0;1].
-   Different domains => different node IDs => disjoint memory ranges.
-   Admitted: the proof is straightforward but requires Rocq plumbing
-   for In/cons/nil interaction.  See doc/ssg9-grouping-hierarchy.md
-   for the full argument. *)
-(* The proof is by case analysis on the finite In memberships.
-   Admitted: the In/cons/nil interaction in Rocq requires careful
-   plumbing.  The argument is documented in ssg9-grouping-hierarchy.md. *)
-(* The proof is by case analysis on the finite In memberships:
    d1,d2 in {domain0, domain1}, nid1,nid2 in {0, 1}.
-   Only valid combos where d1<>d2: (domain0,0)+(domain1,1) or vice versa.
-   Both give node_mem_start node1 (32G) >= node_mem_end node0 (32G).
-   TODO: complete the In/cons case analysis (Rocq plumbing). *)
+   Different domains => different node IDs => disjoint memory ranges.
+   Helper lemmas: some_inj (Some x=Some y -> x=y),
+   in_singleton (In x [y] -> x=y), In_domain_cases (2-element In). *)
+
+Lemma some_inj : forall A (x y : A), Some x = Some y -> x = y.
+Proof. intros A x y H. congruence. Qed.
+
+Lemma in_nil_false : forall A (x : A), In x nil -> False.
+Proof. intros A x H. destruct H. Qed.
+
+Lemma in_singleton : forall A (x y : A), In x (y :: nil) -> x = y.
+Proof.
+  intros A x y H. apply in_inv in H. destruct H as [-> | H].
+  - reflexivity.
+  - apply in_nil_false in H; contradiction.
+Qed.
+
+Lemma In_domain_cases : forall d, In d (topo_domains example_topo) ->
+  d = example_domain0 \/ d = example_domain1.
+Proof.
+  intros d H.
+  apply in_inv in H. destruct H as [-> | H].
+  - left; reflexivity.
+  - apply in_inv in H. destruct H as [-> | H].
+    + right; reflexivity.
+    + contradiction.
+Qed.
+
 Lemma example_topo_no_cross_domain_aliasing :
   no_cross_domain_aliasing example_topo.
 Proof.
-Admitted.
+  unfold no_cross_domain_aliasing.
+  intros d1 d2 nid1 nid2 Hd1 Hd2 Hdiff Hnid1 Hnid2 n1 n2 Hn1 Hn2.
+  apply In_domain_cases in Hd1. apply In_domain_cases in Hd2.
+  destruct Hd1 as [-> | ->]; destruct Hd2 as [-> | ->].
+  - exfalso; apply Hdiff; reflexivity.
+  - change (dom_nodes example_domain0) with (0%nat :: nil) in Hnid1.
+    change (dom_nodes example_domain1) with (1%nat :: nil) in Hnid2.
+    apply in_singleton in Hnid1. subst.
+    apply in_singleton in Hnid2. subst.
+    assert (H1 : n1 = example_node0).
+    { apply some_inj in Hn1. symmetry. exact Hn1. }
+    assert (H2 : n2 = example_node1).
+    { apply some_inj in Hn2. symmetry. exact Hn2. }
+    subst. simpl. lia.
+  - change (dom_nodes example_domain1) with (1%nat :: nil) in Hnid1.
+    change (dom_nodes example_domain0) with (0%nat :: nil) in Hnid2.
+    apply in_singleton in Hnid1. subst.
+    apply in_singleton in Hnid2. subst.
+    assert (H1 : n1 = example_node1).
+    { apply some_inj in Hn1. symmetry. exact Hn1. }
+    assert (H2 : n2 = example_node0).
+    { apply some_inj in Hn2. symmetry. exact Hn2. }
+    subst. simpl. lia.
+  - exfalso; apply Hdiff; reflexivity.
+Qed.

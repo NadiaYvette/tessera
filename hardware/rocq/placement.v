@@ -5,7 +5,7 @@
    - NUMA-local allocation never aliases remote frames
    - Cross-node communication uses message passing
 
-   This file is axiom-free (except the same_node_implies_same_domain admitted). *)
+   This file is axiom-free (except the generic same_node_implies_same_domain). *)
 
 From Stdlib Require Import Bool ZArith List.
 Require Import machine_types.
@@ -27,16 +27,46 @@ Definition same_domain (topo : Topology) (c1 c2 : nat) : Prop :=
 
 (* --- Placement theorems --- *)
 
+(* Generic version requires two bridge lemmas:
+   1. node_in_domain d n.(node_id) = true -> In (Z.to_nat n.(node_id)) d.(dom_nodes)
+   2. In n topo.(topo_nodes) -> find_node topo.(topo_nodes) n.(node_id) = Some n
+   Left Admitted until the bridge lemmas are proven. *)
 Theorem same_node_implies_same_domain :
   forall topo c1 c2,
     same_node topo c1 c2 -> same_domain topo c1 c2.
 Proof.
   intros topo c1 c2 H. unfold same_domain, same_node in *.
   destruct H as [n [Hn_mem [Hc1 Hc2]]].
-  (* Requires: for each node in topo_nodes, there exists a domain
-     containing its index.  This is a topology well-formedness property. *)
   admit.
 Admitted.
+
+(* Concrete version: fully proved for example_topo via direct case analysis.
+   Key subtlety: example_domain0 is the HEAD of topo_domains but
+   example_domain1 is the TAIL, so the second case needs in_cons. *)
+Theorem concrete_same_node_implies_same_domain :
+  forall c1 c2, same_node example_topo c1 c2 -> same_domain example_topo c1 c2.
+Proof.
+  intros c1 c2 [n [Hn_mem [Hc1 Hc2]]].
+  apply in_inv in Hn_mem.
+  destruct Hn_mem as [Heq | Hn_mem].
+  - (* n = example_node0: domain0 is the HEAD of topo_domains *)
+    subst.
+    exists example_domain0, 0%nat, example_node0.
+    split; [apply in_eq |].
+    split; [| split; [reflexivity | split; [exact Hc1 | exact Hc2]]].
+    change (dom_nodes example_domain0) with (0%nat :: nil).
+    apply in_eq.
+  - apply in_inv in Hn_mem.
+    destruct Hn_mem as [Heq | Habs].
+    + (* n = example_node1: domain1 is the TAIL — need in_cons *)
+      subst.
+      exists example_domain1, 1%nat, example_node1.
+      split; [apply in_cons; apply in_eq |].
+      split; [| split; [reflexivity | split; [exact Hc1 | exact Hc2]]].
+      change (dom_nodes example_domain1) with (1%nat :: nil).
+      apply in_eq.
+    + contradiction.
+Qed.
 
 (* --- Concrete test vectors --- *)
 
@@ -71,3 +101,37 @@ Proof. reflexivity. Qed.
 Lemma find_node_1_is_node1 :
   find_node (topo_nodes example_topo) 1 = Some example_node1.
 Proof. reflexivity. Qed.
+
+(* --- Concrete placement test vectors --- *)
+
+Lemma core0_core1_same_node :
+  same_node example_topo 0%nat 1%nat.
+Proof.
+  exists example_node0. split.
+  - apply in_eq.
+  - split.
+    + apply in_eq.
+    + apply in_cons. apply in_eq.
+Qed.
+
+Lemma core0_core1_same_domain :
+  same_domain example_topo 0%nat 1%nat.
+Proof.
+  exact (concrete_same_node_implies_same_domain 0%nat 1%nat core0_core1_same_node).
+Qed.
+
+Lemma core2_core3_same_node :
+  same_node example_topo 2%nat 3%nat.
+Proof.
+  exists example_node1. split.
+  - apply in_cons. apply in_eq.
+  - split.
+    + apply in_eq.
+    + apply in_cons. apply in_eq.
+Qed.
+
+Lemma core2_core3_same_domain :
+  same_domain example_topo 2%nat 3%nat.
+Proof.
+  exact (concrete_same_node_implies_same_domain 2%nat 3%nat core2_core3_same_node).
+Qed.

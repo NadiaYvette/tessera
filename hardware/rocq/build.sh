@@ -474,6 +474,11 @@ axiom_free topology topo_core2_not_in_node0
 axiom_free topology topo_node0_in_domain0
 axiom_free topology topo_node1_not_in_domain0
 axiom_free topology topo_node_mem_disjoint
+axiom_free topology some_inj
+axiom_free topology in_nil_false
+axiom_free topology in_singleton
+axiom_free topology In_domain_cases
+axiom_free topology example_topo_no_cross_domain_aliasing
 # SSG-1 placement: topology-aware placement theorems
 axiom_free placement node0_cores
 axiom_free placement node1_cores
@@ -484,6 +489,11 @@ axiom_free placement node1_mem
 axiom_free placement node_mem_adjacent
 axiom_free placement find_node_0_is_node0
 axiom_free placement find_node_1_is_node1
+axiom_free placement concrete_same_node_implies_same_domain
+axiom_free placement core0_core1_same_node
+axiom_free placement core0_core1_same_domain
+axiom_free placement core2_core3_same_node
+axiom_free placement core2_core3_same_domain
 # SSG-8 disk device: command/completion ring model
 axiom_free disk_proofs disk_default_cmd_not_pending
 axiom_free disk_proofs disk_default_cmp_not_pending
