@@ -921,6 +921,14 @@ Defined.
 Instance dummy_WalkDecision : Inhabited WalkDecision := { inhabitant := WalkFault }.
 
 
+Definition pte_flags_bits : Type := bits 8.
+
+Definition pte_ext_bits : Type := bits 10.
+
+Definition PTE_Ext : Type := mword 10.
+
+Definition PTE_Flags : Type := mword 8.
+
 Record VtdPasid := {
   VtdPasid_present : bool;
   VtdPasid_s1_root : bits 44;

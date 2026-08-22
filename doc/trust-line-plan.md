@@ -182,6 +182,12 @@ menvcfg.SSE=0, reserved-bits-must-be-zero, A/D/U assumed zero — and
 mechanical: `walk_decision` takes the same branch as upstream's predicates on
 *every* PTE, and both come from one generated function.
 
+**PTE-flags bridge closed (2026-08-22):** `machine.sail` carries the verbatim
+upstream `PTE_Flags`/`PTE_Ext` bitfields and `pte_of_bits`/`bits_of_pte`
+(generated to Rocq), and `bitfield_bridge.v` proves the flag extraction
+agreement — per-field vectors on 7 concrete Sv39 words covering every flag
+combination + a per-field roundtrip on an encoded Pte. All axiom-free.
+
 **What remains open in G1:** the *upstream-interface* half — generating the
 upstream model itself to Rocq and isolating its `pt_walk` (`PTW_Result`, the
 `read_pte` memory interface, `check_PTE_permission`, A/D bit updates), the

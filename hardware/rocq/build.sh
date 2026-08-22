@@ -92,6 +92,7 @@ rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS upstream_bridge.v
+rocq compile $FLAGS bitfield_bridge.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
@@ -287,6 +288,40 @@ axiom_free upstream_bridge  bridge_vec_leaf
 axiom_free upstream_bridge  bridge_vec_napot
 axiom_free upstream_bridge  bridge_vec_superpage_not_invalid
 axiom_free upstream_bridge  bridge_vec_superpage_faults
+# G1 PTE-flags bridge (bitfield_bridge.v): the flag extraction from a bits(64)
+# PTE word agrees with the structured Pte record fields — per-field vectors on
+# concrete Sv39 PTE words + flag roundtrip on an encoded Pte (encoding then
+# decoding recovers the boolean fields).  Seven concrete words cover every flag
+# combination (ro/ptr/invalid/writeonly/rw/exec-only/napot).
+axiom_free bitfield_bridge vec_ro_valid
+axiom_free bitfield_bridge vec_ro_read
+axiom_free bitfield_bridge vec_ro_write
+axiom_free bitfield_bridge vec_ro_exec
+axiom_free bitfield_bridge vec_ro_user
+axiom_free bitfield_bridge vec_ro_napot
+axiom_free bitfield_bridge vec_ptr_valid
+axiom_free bitfield_bridge vec_ptr_read
+axiom_free bitfield_bridge vec_ptr_napot
+axiom_free bitfield_bridge vec_inv_valid
+axiom_free bitfield_bridge vec_wo_valid
+axiom_free bitfield_bridge vec_wo_read
+axiom_free bitfield_bridge vec_wo_write
+axiom_free bitfield_bridge vec_wo_exec
+axiom_free bitfield_bridge vec_wo_upstream_invalid
+axiom_free bitfield_bridge vec_rw_valid
+axiom_free bitfield_bridge vec_rw_read
+axiom_free bitfield_bridge vec_rw_write
+axiom_free bitfield_bridge vec_xo_valid
+axiom_free bitfield_bridge vec_xo_read
+axiom_free bitfield_bridge vec_xo_exec
+axiom_free bitfield_bridge vec_napot_valid
+axiom_free bitfield_bridge vec_napot_napot
+axiom_free bitfield_bridge roundtrip_valid
+axiom_free bitfield_bridge roundtrip_read
+axiom_free bitfield_bridge roundtrip_write
+axiom_free bitfield_bridge roundtrip_exec
+axiom_free bitfield_bridge roundtrip_user
+axiom_free bitfield_bridge roundtrip_napot
 # IOMMU (SSG-4) conformance cross-check: the walker is translate re-rooted (so
 # G1's upstream-oracle agreement transfers), and the invalidation is pinned per
 # platform (VT-d IOTLB Invalidate §6.5.2.3 / SMMU TLBI §4.4 /

@@ -267,6 +267,163 @@ Definition upstream_pte_is_invalid
      ((orb ((andb ((negb (read))) (write)))
          ((andb ((upstream_pte_is_non_leaf (read) (write) (exec))) (napot))))).
 
+Definition undefined_PTE_Ext '(tt : unit) : M (mword 10) :=
+   (undefined_bitvector (10))  : M (mword 10).
+
+Definition Mk_PTE_Ext (v : mword 10) : mword 10 := v.
+
+Definition _get_PTE_Ext_bits (v : mword 10) : mword 10 :=
+   subrange_vec_dec (v) ((Z.sub (10) (1))) (0).
+
+Definition _update_PTE_Ext_bits (v : mword 10) (x : mword 10) : mword 10 :=
+   update_subrange_vec_dec (v) ((Z.sub (10) (1))) (0) (x).
+
+Definition _update_PTE_Flags_bits (v : mword 8) (x : mword 8) : mword 8 :=
+   update_subrange_vec_dec (v) ((Z.sub (8) (1))) (0) (x).
+
+Definition _set_PTE_Ext_bits (r_ref : register_ref (mword 10)) (v : mword 10) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Ext_bits (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_bits (v : mword 8) : mword 8 :=
+   subrange_vec_dec (v) ((Z.sub (8) (1))) (0).
+
+Definition _set_PTE_Flags_bits (r_ref : register_ref (mword 8)) (v : mword 8) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_bits (r) (v))  : M (unit).
+
+Definition _get_PTE_Ext_N (v : mword 10) : mword 1 := subrange_vec_dec (v) (9) (9).
+
+Definition _update_PTE_Ext_N (v : mword 10) (x : mword 1) : mword 10 :=
+   update_subrange_vec_dec (v) (9) (9) (x).
+
+Definition _set_PTE_Ext_N (r_ref : register_ref (mword 10)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Ext_N (r) (v))  : M (unit).
+
+Definition _get_PTE_Ext_PBMT (v : mword 10) : mword 2 := subrange_vec_dec (v) (8) (7).
+
+Definition _update_PTE_Ext_PBMT (v : mword 10) (x : mword 2) : mword 10 :=
+   update_subrange_vec_dec (v) (8) (7) (x).
+
+Definition _set_PTE_Ext_PBMT (r_ref : register_ref (mword 10)) (v : mword 2) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Ext_PBMT (r) (v))  : M (unit).
+
+Definition _get_PTE_Ext_RSW_60t59b (v : mword 10) : mword 2 := subrange_vec_dec (v) (6) (5).
+
+Definition _update_PTE_Ext_RSW_60t59b (v : mword 10) (x : mword 2) : mword 10 :=
+   update_subrange_vec_dec (v) (6) (5) (x).
+
+Definition _set_PTE_Ext_RSW_60t59b (r_ref : register_ref (mword 10)) (v : mword 2) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r =>
+   write_reg_ref r_ref (_update_PTE_Ext_RSW_60t59b (r) (v))
+    : M (unit).
+
+Definition _get_PTE_Ext_reserved (v : mword 10) : mword 5 := subrange_vec_dec (v) (4) (0).
+
+Definition _update_PTE_Ext_reserved (v : mword 10) (x : mword 5) : mword 10 :=
+   update_subrange_vec_dec (v) (4) (0) (x).
+
+Definition _set_PTE_Ext_reserved (r_ref : register_ref (mword 10)) (v : mword 5) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r =>
+   write_reg_ref r_ref (_update_PTE_Ext_reserved (r) (v))
+    : M (unit).
+
+Definition undefined_PTE_Flags '(tt : unit) : M (mword 8) :=
+   (undefined_bitvector (8))  : M (mword 8).
+
+Definition Mk_PTE_Flags (v : mword 8) : mword 8 := v.
+
+Definition _get_PTE_Flags_A (v : mword 8) : mword 1 := subrange_vec_dec (v) (6) (6).
+
+Definition _update_PTE_Flags_A (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (6) (6) (x).
+
+Definition _set_PTE_Flags_A (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_A (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_D (v : mword 8) : mword 1 := subrange_vec_dec (v) (7) (7).
+
+Definition _update_PTE_Flags_D (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (7) (7) (x).
+
+Definition _set_PTE_Flags_D (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_D (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_G (v : mword 8) : mword 1 := subrange_vec_dec (v) (5) (5).
+
+Definition _update_PTE_Flags_G (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (5) (5) (x).
+
+Definition _set_PTE_Flags_G (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_G (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_R (v : mword 8) : mword 1 := subrange_vec_dec (v) (1) (1).
+
+Definition _update_PTE_Flags_R (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (1) (1) (x).
+
+Definition _set_PTE_Flags_R (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_R (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_U (v : mword 8) : mword 1 := subrange_vec_dec (v) (4) (4).
+
+Definition _update_PTE_Flags_U (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (4) (4) (x).
+
+Definition _set_PTE_Flags_U (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_U (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_V (v : mword 8) : mword 1 := subrange_vec_dec (v) (0) (0).
+
+Definition _update_PTE_Flags_V (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (0) (0) (x).
+
+Definition _set_PTE_Flags_V (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_V (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_W (v : mword 8) : mword 1 := subrange_vec_dec (v) (2) (2).
+
+Definition _update_PTE_Flags_W (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (2) (2) (x).
+
+Definition _set_PTE_Flags_W (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_W (r) (v))  : M (unit).
+
+Definition _get_PTE_Flags_X (v : mword 8) : mword 1 := subrange_vec_dec (v) (3) (3).
+
+Definition _update_PTE_Flags_X (v : mword 8) (x : mword 1) : mword 8 :=
+   update_subrange_vec_dec (v) (3) (3) (x).
+
+Definition _set_PTE_Flags_X (r_ref : register_ref (mword 8)) (v : mword 1) : M (unit) :=
+   (reg_deref (r_ref)) >>= fun r => write_reg_ref r_ref (_update_PTE_Flags_X (r) (v))  : M (unit).
+
+Definition ext_bits_of_PTE (pte : mword 64) : mword 10 :=
+   Mk_PTE_Ext ((subrange_vec_dec (pte) (63) (54))).
+
+Definition pte_of_bits (pte : mword 64) : Pte :=
+   let flags := Mk_PTE_Flags ((subrange_vec_dec (pte) (7) (0))) in
+   let ext := ext_bits_of_PTE (pte) in
+   {| Pte_valid := eq_vec ((_get_PTE_Flags_V (flags))) (('b"1"));
+      Pte_read := eq_vec ((_get_PTE_Flags_R (flags))) (('b"1"));
+      Pte_write := eq_vec ((_get_PTE_Flags_W (flags))) (('b"1"));
+      Pte_exec := eq_vec ((_get_PTE_Flags_X (flags))) (('b"1"));
+      Pte_user := eq_vec ((_get_PTE_Flags_U (flags))) (('b"1"));
+      Pte_napot := eq_vec ((_get_PTE_Ext_N (ext))) (('b"1"));
+      Pte_ppn := subrange_vec_dec (pte) (53) (10) |}.
+
+Definition bits_of_pte (p : Pte) : mword 64 :=
+   let flags : pte_flags_bits :=
+     concat_vec (('b"0"))
+       ((concat_vec (('b"0"))
+           ((concat_vec (('b"0"))
+               ((concat_vec ((if p.(Pte_user) then ('b"1") else ('b"0")))
+                   ((concat_vec ((if p.(Pte_exec) then ('b"1") else ('b"0")))
+                       ((concat_vec ((if p.(Pte_write) then ('b"1") else ('b"0")))
+                           ((concat_vec ((if p.(Pte_read) then ('b"1") else ('b"0")))
+                               ((if p.(Pte_valid) then ('b"1")
+                                 else ('b"0"))))))))))))))) in
+   let ext_n : bits 1 := if p.(Pte_napot) then ('b"1") else ('b"0") in
+   concat_vec (ext_n)
+     ((concat_vec (('b"000000000")) ((concat_vec (p.(Pte_ppn)) ((concat_vec (('b"00")) (flags))))))).
+
 Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
 : option ((mword 56 * Perm)) :=
    let l2 : option Pte := read_pte (mem) ((pte_address (core.(Core_satp_ppn)) ((vpn2 (va))))) in

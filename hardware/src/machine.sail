@@ -374,6 +374,78 @@ function upstream_pte_is_invalid(valid, read, write, exec, napot) =
   | (not_bool(read) & write)
   | (upstream_pte_is_non_leaf(read, write, exec) & napot)
 
+// ---- G1 PTE-flags bridge: the upstream bitfields + bits(64) ⟷ Pte ----
+//
+// The upstream PTE_Flags and PTE_Ext bitfields (SaIL→Rocq as records) and the
+// bitfield extraction / encoding functions on a raw `bits(64)` PTE word,
+// verbatim from `third_party/sail-riscv/model/sys/vmem_pte.sail` ll. 19-53.
+// The Sv39 fragment keeps only the N bit of PTE_Ext (the rest is reserved /
+// zero).  `pte_of_bits` / `bits_of_pte` provide the round-trip between the
+// structured `Pte` record and the `bits(64)` word, closing the remaining trust
+// step documented in `conformance.v`'s header (Tessera's `Pte` ↔ upstream
+// `bits(64)` + `PTE_Flags`/`PTE_Ext`).
+type pte_flags_bits = bits(8)
+type pte_ext_bits   = bits(10)
+
+bitfield PTE_Ext : pte_ext_bits = {
+  N          : 9,
+  PBMT       : 8 .. 7,
+  RSW_60t59b : 6 .. 5,
+  reserved   : 4 .. 0
+}
+
+bitfield PTE_Flags : pte_flags_bits = {
+  D : 7,
+  A : 6,
+  G : 5,
+  U : 4,
+  X : 3,
+  W : 2,
+  R : 1,
+  V : 0
+}
+
+// Extract extension bits from a 64-bit PTE word (vmem_pte.sail ll. 46-48).
+val ext_bits_of_PTE : bits(64) -> PTE_Ext
+function ext_bits_of_PTE(pte) = Mk_PTE_Ext(pte[63 .. 54])
+
+// Convert a bits(64) PTE word to the structured Pte record.
+// bits[63]: N (Svnapot), bits[53..10]: PPN, bits[9..8]: RSW (ignored),
+// bits[7..0]: V(0)/R(1)/W(2)/X(3)/U(4)/G(5)/A(6)/D(7).
+val pte_of_bits : bits(64) -> Pte
+function pte_of_bits(pte) = {
+  let flags = Mk_PTE_Flags(pte[7 .. 0]);
+  let ext   = ext_bits_of_PTE(pte);
+  struct {
+    valid = flags[V] == 0b1,
+    read  = flags[R] == 0b1,
+    write = flags[W] == 0b1,
+    exec  = flags[X] == 0b1,
+    user  = flags[U] == 0b1,
+    napot = ext[N] == 0b1,
+    ppn   = pte[53 .. 10]
+  }
+}
+
+// Encode a structured Pte record back to a bits(64) PTE word.
+// G=0, A=0, D=0, RSW=0 — the subset Tessera's Pte models.
+val bits_of_pte : Pte -> bits(64)
+function bits_of_pte(p) = {
+  // flags byte: D(7) A(6) G(5) U(4) X(3) W(2) R(1) V(0)
+  // Build MSB-first (Sail @ is upper @ lower)
+  let flags : pte_flags_bits =
+    0b0 @  // D=0
+    0b0 @  // A=0
+    0b0 @  // G=0
+    (if p.user  then 0b1 else 0b0) @
+    (if p.exec  then 0b1 else 0b0) @
+    (if p.write then 0b1 else 0b0) @
+    (if p.read  then 0b1 else 0b0) @
+    (if p.valid then 0b1 else 0b0);
+  let ext_n : bits(1) = if p.napot then 0b1 else 0b0;
+  ext_n @ 0b000000000 @ p.ppn @ 0b00 @ flags
+}
+
 // ---- hardware page-table walk (3 levels, Sv39) ----
 //
 // The walk calls `walk_decision` at each level — the decision logic is shared
