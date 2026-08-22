@@ -185,8 +185,8 @@ carved out of.
 ### SSG-6 — Console device (UART)
 
 - **Objective.** The console driver drives the UART correctly.
-- **Modeled today.** *No.*
-- **Proof needed.** As SSG-5 — a different verification target (I/O correctness).
+- **Modeled today.** *Yes* (2026-08-22): `uart.sail` (types), `uart_ops.v` (write_thr, tx_complete, read_rbr), `uart_proofs.v` (9 axiom-free test vectors).
+- **Proof needed.** Tx round-trip (write→tx_complete→read returns same character): done.
 
 ### SSG-7 — Network device
 

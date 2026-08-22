@@ -14,6 +14,7 @@ SA_SRC="$HW/src/sail_arm_tlb.sail"
 INTC_SRC="$HW/src/intc.sail"
 TIMER_SRC="$HW/src/timer.sail"
 UPSTREAM_VMEM_PTE_SRC="$HW/src/upstream_vmem_pte.sail"
+UPSTREAM_PTW_SRC="$HW/src/upstream_ptw.sail"
 UART_SRC="$HW/src/uart.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
@@ -45,6 +46,7 @@ sail --just-check "$INTC_SRC"
 sail --just-check "$TIMER_SRC"
 sail --just-check "$UART_SRC"
 sail --just-check "$UPSTREAM_VMEM_PTE_SRC"
+sail --just-check "$UPSTREAM_PTW_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
@@ -57,6 +59,7 @@ sail "$TIMER_SRC" --rocq --rocq-output-dir "$HERE" -o timer
 # G1 upstream-gen: generate PTE types + predicates from verbatim sail-riscv vmem_pte.sail
 # (self-contained Sv39 fragment with externs stubbed)
 sail "$UPSTREAM_VMEM_PTE_SRC" --rocq --rocq-output-dir "$HERE" -o upstream_vmem_pte
+sail "$UPSTREAM_PTW_SRC" --rocq --rocq-output-dir "$HERE" -o upstream_ptw
 sail "$UART_SRC" --rocq --rocq-output-dir "$HERE" -o uart
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
@@ -64,7 +67,7 @@ sail "$UART_SRC" --rocq --rocq-output-dir "$HERE" -o uart
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v" "$HERE/uart_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v" "$HERE/uart_types.v "$HERE/upstream_ptw_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -112,6 +115,8 @@ rocq compile $FLAGS upstream_vmem_pte_types.v
 rocq compile $FLAGS upstream_vmem_pte.v
 rocq compile $FLAGS upstream_gen_bridge.v
 rocq compile $FLAGS upstream_ptw_bridge.v
+rocq compile $FLAGS upstream_ptw_types.v
+rocq compile $FLAGS upstream_ptw.v
 rocq compile $FLAGS uart_types.v
 rocq compile $FLAGS uart_ops.v
 rocq compile $FLAGS uart_proofs.v
@@ -409,6 +414,8 @@ axiom_free upstream_ptw_bridge test_level0
 axiom_free upstream_ptw_bridge test_empty
 axiom_free upstream_ptw_bridge test_only_l2
 axiom_free upstream_ptw_bridge test_l0_leaf
+# G1 upstream-ptw generated: the actual Sail pt_walk (Z-level, termination_measure)
+axiom_free upstream_ptw _rec_pt_walk
 # SSG-6 UART console: 8250/16550 register set, tx/rx round-trip.
 axiom_free uart_proofs uart_default_tx_ready
 axiom_free uart_proofs uart_default_rx_ready
