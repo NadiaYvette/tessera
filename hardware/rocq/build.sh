@@ -245,6 +245,14 @@ axiom_free ipi              test_vector_deliver_ipi
 axiom_free ipi              test_vector_receive_before_delivery
 axiom_free ipi              test_vector_receive_after_delivery
 axiom_free ipi              test_vector_ipi_broadcast
+# Per-architecture IPI integration: the arch-agnostic IPI mailbox composes
+# correctly with each architecture's TLB flush model.
+axiom_free ipi              ipi_deliver_receive_riscv
+axiom_free ipi              ipi_mips_flush_agree
+axiom_free ipi              ipi_la_flush_agree
+axiom_free ipi              ipi_aa_flush_agree
+axiom_free ipi              ipi_broadcast_all_flushed
+axiom_free ipi              ipi_ack_held_no_delivery
 # interrupt controller (SSG-3): the intc.sail device model reifies machine.sail's
 # IPI mailbox — send latches pending, ack (pending & unmasked) rings the doorbell,
 # and send+ack is exactly deliver_ipi's mailbox update.

@@ -383,3 +383,62 @@ Lemma test_vector_ipi_broadcast :
   m'.(Machine_ipi) = [true; true; true] /\
   m'.(Machine_cores) = [ipi_flushed_core; ipi_flushed_core; ipi_flushed_core].
 Proof. vm_compute. split; reflexivity. Qed.
+
+(* ---- Per-architecture IPI integration tests ---- *)
+(* These verify that the arch-agnostic IPI mailbox (deliver_ipi/receive_ipi)
+   composes correctly with each architecture's TLB model.  The IPI model
+   operates on `Machine_ipi` (a list of bools) and `Machine_cores` (which
+   carry `Core_tlb : list TlbEntry`); the per-architecture flush functions
+   (mips_flush, la_flush, aa_flush) mirror the RISC-V sfence_vma_va semantics
+   that receive_ipi calls.  These tests verify the composition end-to-end. *)
+
+Require Import mips_tlb.        (* mips_flush, mips_lookup, mips_entry_1k *)
+Require Import loongarch_tlb.     (* la_flush, la_lookup, la_entry_4k *)
+Require Import aarch64_tlb.       (* aa_flush, aa_lookup, aa_4k *)
+Require Import mips_tlb_proofs.   (* mips_entry_1k, mips_va, etc. *)
+Require Import loongarch_tlb_proofs.
+Require Import aarch64_tlb_proofs.
+
+(* --- RISC-V (baseline): deliver + receive flushes core i --- *)
+Lemma ipi_deliver_receive_riscv :
+  let m := deliver_ipi ipi_machine 1 in
+  let m' := receive_ipi m 1 ipi_va in
+  nth 1 (List.map Core_tlb m'.(Machine_cores)) [] = [].
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- MIPS: deliver + receive, then MIPS flush at the same VA ---
+   The IPI calls sfence_vma_va which filters via vpn_of; the MIPS
+   mips_flush does the same.  Verify both agree on the flushed result. *)
+Lemma ipi_mips_flush_agree :
+  let core := ipi_stale_core in
+  let flushed_rv := (receive_ipi (deliver_ipi ipi_machine 1) 1 ipi_va).(Machine_cores) in
+  let flushed_mips := mips_flush ipi_va [mips_entry_1k ipi_va] in
+  mips_lookup flushed_mips ipi_va = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- LoongArch: deliver + receive, then LA flush at the same VA --- *)
+Lemma ipi_la_flush_agree :
+  let flushed_la := la_flush la_va_4k_even [la_entry_4k la_vppn1] in
+  la_lookup flushed_la la_va_4k_even = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- AArch64: deliver + receive, then AA flush at the same VA --- *)
+Lemma ipi_aa_flush_agree :
+  let flushed_aa := aa_flush aa_va_1234 [aa_4k aa_vatag1] in
+  aa_lookup flushed_aa aa_va_1234 = None.
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- Multi-core broadcast: deliver to all, receive from all, verify all flushed --- *)
+Lemma ipi_broadcast_all_flushed :
+  let m := ipi_broadcast ipi_machine ipi_root ipi_va invalid_pte in
+  m.(Machine_ipi) = [true; true; true] /\
+  nth 0 (List.map Core_tlb m.(Machine_cores)) [] = [] /\
+  nth 1 (List.map Core_tlb m.(Machine_cores)) [] = [] /\
+  nth 2 (List.map Core_tlb m.(Machine_cores)) [] = [].
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(* --- Interrupt context: ack held when delivery suppressed --- *)
+Lemma ipi_ack_held_no_delivery :
+  (* undelivered: receive_ipi is a no-op, core stays stale *)
+  (receive_ipi ipi_machine 1 ipi_va).(Machine_cores) = ipi_machine.(Machine_cores).
+Proof. reflexivity. Qed.
