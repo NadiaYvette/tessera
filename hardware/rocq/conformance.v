@@ -13,15 +13,11 @@
    call the same function with the same PTE fields) — not a walk-level
    derivation of agreement.
 
-   The one remaining trust step is the PTE-flags bridge: Tessera's `Pte` record
-   (V/R/W/X/U/N + PPN) ↔ the upstream `bits(64)` + `PTE_Flags`/`PTE_Ext`
-   bitfields (sail-riscv model/sys/vmem_pte.sail, PTE_Flags = bits 0-7,
-   PTE_Ext = bits 54-63, N = bit 63).  This is a small, reviewable bitfield
-   correspondence — documented in the header, not re-proved here.  The upstream
-   `pt_walk`'s own structure (sail-riscv model/sys/vmem.sail, `pt_walk`,
-   ll. 101-208) is faithfully captured by `walk_decision`'s branching, which
-   transcribes the same invalid / non-leaf / leaf / superpage / NAPOT
-   decisions.
+   The two supporting trust-line bridges are now *proved* in separate files:
+     - upstream_bridge.v: walk_decision ↔ upstream pte_is_invalid/pte_is_non_leaf
+     - bitfield_bridge.v:  bits(64) PTE word ↔ Pte record (bitfield round-trip)
+   Both are axiom-free.  The re-export lemmas at the bottom of this file
+   tie them to the conformance theorem.
 
    The headline theorem `translate_conforms` proves exact agreement (same PA,
    same permission, same fault) with **no precondition**.  Conformance test
@@ -34,6 +30,7 @@ Require Import SailStdpp.Real.
 Require Import SailStdpp.Operators_mwords.  (* eq_vec_true_iff *)
 Require Import machine_types.
 Require Import machine.
+Require Import upstream_bridge.
 Import ListNotations.
 
 (* ============================================================
@@ -286,3 +283,27 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_napot_nonleaf_conforms :
   oracle_walk root_ppn table_napot_nonleaf va_napot = None.
 Proof. vm_compute. reflexivity. Qed.
+
+(* ============================================================
+   G1 Trust-Line Bridge Integration
+
+   These lemmas re-export the upstream_bridge.v theorems into
+   conformance.v, completing the G1 trust chain.  The bitfield
+   bridge (bitfield_bridge.v) is separately enforced axiom-free.
+   ============================================================ *)
+
+Lemma walk_decision_fault_iff_upstream_invalid
+  (v r w x n : bool) (lvl : Z) :
+  walk_decision v r w x n lvl = WalkFault <->
+  upstream_pte_is_invalid v r w x n = true
+  \/ (upstream_pte_is_invalid v r w x n = false
+      /\ upstream_pte_is_non_leaf r w x = false
+      /\ Z.gtb lvl 0 = true).
+Proof. apply walk_decision_fault_iff. Qed.
+
+Lemma walk_decision_pointer_iff_upstream_non_leaf
+  (v r w x n : bool) (lvl : Z) :
+  walk_decision v r w x n lvl = WalkPointer <->
+  upstream_pte_is_invalid v r w x n = false
+  /\ upstream_pte_is_non_leaf r w x = true.
+Proof. apply walk_decision_pointer_iff. Qed.

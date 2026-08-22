@@ -12,6 +12,7 @@ LA_SRC="$HW/src/loongarch_tlb.sail"
 AA_SRC="$HW/src/aarch64_tlb.sail"
 SA_SRC="$HW/src/sail_arm_tlb.sail"
 INTC_SRC="$HW/src/intc.sail"
+TIMER_SRC="$HW/src/timer.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -39,6 +40,7 @@ sail --just-check "$LA_SRC"
 sail --just-check "$AA_SRC"
 sail --just-check "$SA_SRC"
 sail --just-check "$INTC_SRC"
+sail --just-check "$TIMER_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
@@ -47,13 +49,14 @@ sail "$LA_SRC" --rocq --rocq-output-dir "$HERE" -o loongarch_tlb
 sail "$AA_SRC" --rocq --rocq-output-dir "$HERE" -o aarch64_tlb
 sail "$SA_SRC" --rocq --rocq-output-dir "$HERE" -o sail_arm_tlb
 sail "$INTC_SRC" --rocq --rocq-output-dir "$HERE" -o intc
+sail "$TIMER_SRC" --rocq --rocq-output-dir "$HERE" -o timer
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -90,6 +93,9 @@ rocq compile $FLAGS intc_types.v
 rocq compile $FLAGS intc.v
 rocq compile $FLAGS intc_proofs.v
 rocq compile $FLAGS intc_priority.v
+rocq compile $FLAGS timer_types.v
+rocq compile $FLAGS timer_ops.v
+rocq compile $FLAGS timer_proofs.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS upstream_bridge.v
 rocq compile $FLAGS bitfield_bridge.v
@@ -242,6 +248,18 @@ axiom_free intc_proofs      intc_set_bit_length
 axiom_free intc_proofs      intc_exit_then_ack_delivers
 axiom_free intc_proofs      intc_no_lost_shootdown
 axiom_free intc_proofs      test_vector_intc_context_holds_pending
+
+# ---- timer (SSG-5) ----
+axiom_free timer_proofs      timer_tick_mtime
+axiom_free timer_proofs      timer_pending_after_ack
+axiom_free timer_proofs      timer_set_mtimecmp_other
+axiom_free timer_proofs      timer_set_mtimecmp_mtime_unchanged
+axiom_free timer_proofs      build_harts_length
+axiom_free timer_proofs      test_vec_init_mtime
+axiom_free timer_proofs      test_vec_init_pending_hart0
+axiom_free timer_proofs      test_vec_tick_increases
+axiom_free timer_proofs      test_vec_set_cmp_then_tick
+axiom_free timer_proofs      test_vec_ack_clears
 # intc -> S2.4 bridge: the controller's send+ack realizes the weak-memory
 # broadcast's deliver_ipi ghost step (delivery precedes ack via the device).
 axiom_free intc_proofs      intc_receive_ipi_eq_deliver
@@ -272,6 +290,8 @@ axiom_free conformance      test_vector_napot_conforms
 axiom_free conformance      test_vector_napot_bad_conforms
 axiom_free conformance      test_vector_napot_nonleaf_faults
 axiom_free conformance      test_vector_napot_nonleaf_conforms
+axiom_free conformance      walk_decision_fault_iff_upstream_invalid
+axiom_free conformance      walk_decision_pointer_iff_upstream_non_leaf
 # G1 upstream-bridge: the shared `walk_decision` agrees with the *verbatim
 # upstream* sail-riscv PTE predicates (pte_is_invalid / pte_is_non_leaf),
 # mechanically generated from machine.sail — the bridge lemma set of
