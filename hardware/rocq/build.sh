@@ -132,6 +132,8 @@ rocq compile $FLAGS net_proofs.v
 rocq compile $FLAGS disk_types.v
 rocq compile $FLAGS disk_ops.v
 rocq compile $FLAGS disk_proofs.v
+rocq compile $FLAGS topology.v
+rocq compile $FLAGS disk_dma_coherence.v
 rocq compile $FLAGS net_dma_coherence.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
@@ -453,6 +455,24 @@ axiom_free net_dma_coherence dma_default_ring_base_zero
 axiom_free net_dma_coherence dma_default_rx_ring_base_zero
 axiom_free net_dma_coherence dma_tx_advance_ring_base_idempotent
 axiom_free net_dma_coherence dma_rx_advance_ring_base_idempotent
+# SSG-8 DMA coherence: disk cmd/cmp ring ↔ IOMMU translation
+axiom_free disk_dma_coherence disk_dma_default_cmd_ring_base_zero
+axiom_free disk_dma_coherence disk_dma_default_cmp_ring_base_zero
+axiom_free disk_dma_coherence disk_dma_cmd_submit_preserves_cmp
+axiom_free disk_dma_coherence disk_dma_cmp_complete_preserves_cmd
+axiom_free disk_dma_coherence disk_dma_cmd_submit_preserves_head
+axiom_free disk_dma_coherence disk_dma_cmp_complete_preserves_head
+axiom_free disk_dma_coherence disk_dma_cmd_cmp_independent
+# SSG-9 topology: grouping hierarchy
+axiom_free topology topo_find_node0
+axiom_free topology topo_find_node1
+axiom_free topology topo_find_node_unknown
+axiom_free topology topo_find_domain0
+axiom_free topology topo_core0_in_node0
+axiom_free topology topo_core2_not_in_node0
+axiom_free topology topo_node0_in_domain0
+axiom_free topology topo_node1_not_in_domain0
+axiom_free topology topo_node_mem_disjoint
 # SSG-8 disk device: command/completion ring model
 axiom_free disk_proofs disk_default_cmd_not_pending
 axiom_free disk_proofs disk_default_cmp_not_pending
