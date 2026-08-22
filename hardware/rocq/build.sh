@@ -488,7 +488,13 @@ axiom_free placement node0_mem
 axiom_free placement node1_mem
 axiom_free placement node_mem_adjacent
 axiom_free placement find_node_0_is_node0
+axiom_free placement node_in_domain_true_In
+axiom_free placement find_node_In
+axiom_free placement find_node_node_id
+axiom_free placement find_node_In_Some
 axiom_free placement find_node_1_is_node1
+axiom_free placement same_node_implies_same_domain
+axiom_free placement example_topo_wf
 axiom_free placement concrete_same_node_implies_same_domain
 axiom_free placement core0_core1_same_node
 axiom_free placement core0_core1_same_domain
