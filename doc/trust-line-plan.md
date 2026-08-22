@@ -188,6 +188,8 @@ upstream `PTE_Flags`/`PTE_Ext` bitfields and `pte_of_bits`/`bits_of_pte`
 agreement — per-field vectors on 7 concrete Sv39 words covering every flag
 combination + a per-field roundtrip on an encoded Pte. All axiom-free.
 
+**Upstream-gen bridge closed (2026-08-22):** `hardware/src/upstream_vmem_pte.sail` is a self-contained extraction of the upstream `PTE_Flags`/`PTE_Ext` bitfields + `pte_is_invalid`/`pte_is_non_leaf` from `vmem_pte.sail`, with all externs stubbed for the Sv39 fragment. Generated to Rocq via `sail --rocq`, and `upstream_gen_bridge.v` proves the generated predicates agree with the transcribed ones in `machine.sail` — 32 exhaustive test vectors for `pte_is_invalid` (V,R,W,X,N) and 8 for `pte_is_non_leaf` (R,W,X), all axiom-free. This closes the transcription trust gap.
+
 **What remains open in G1:** the *upstream-interface* half — generating the
 upstream model itself to Rocq and isolating its `pt_walk` (`PTW_Result`, the
 `read_pte` memory interface, `check_PTE_permission`, A/D bit updates), the

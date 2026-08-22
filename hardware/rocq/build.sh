@@ -13,6 +13,7 @@ AA_SRC="$HW/src/aarch64_tlb.sail"
 SA_SRC="$HW/src/sail_arm_tlb.sail"
 INTC_SRC="$HW/src/intc.sail"
 TIMER_SRC="$HW/src/timer.sail"
+UPSTREAM_VMEM_PTE_SRC="$HW/src/upstream_vmem_pte.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -41,6 +42,7 @@ sail --just-check "$AA_SRC"
 sail --just-check "$SA_SRC"
 sail --just-check "$INTC_SRC"
 sail --just-check "$TIMER_SRC"
+sail --just-check "$UPSTREAM_VMEM_PTE_SRC"
 
 # --- 3. generate Rocq (SailStdpp style) ---
 sail "$SRC" --rocq --rocq-output-dir "$HERE" -o machine
@@ -50,13 +52,16 @@ sail "$AA_SRC" --rocq --rocq-output-dir "$HERE" -o aarch64_tlb
 sail "$SA_SRC" --rocq --rocq-output-dir "$HERE" -o sail_arm_tlb
 sail "$INTC_SRC" --rocq --rocq-output-dir "$HERE" -o intc
 sail "$TIMER_SRC" --rocq --rocq-output-dir "$HERE" -o timer
+# G1 upstream-gen: generate PTE types + predicates from verbatim sail-riscv vmem_pte.sail
+# (self-contained Sv39 fragment with externs stubbed)
+sail "$UPSTREAM_VMEM_PTE_SRC" --rocq --rocq-output-dir "$HERE" -o upstream_vmem_pte
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -99,6 +104,10 @@ rocq compile $FLAGS timer_proofs.v
 rocq compile $FLAGS conformance.v
 rocq compile $FLAGS upstream_bridge.v
 rocq compile $FLAGS bitfield_bridge.v
+# G1 upstream-gen bridge: verbatim sail-riscv PTE predicates → Rocq
+rocq compile $FLAGS upstream_vmem_pte_types.v
+rocq compile $FLAGS upstream_vmem_pte.v
+rocq compile $FLAGS upstream_gen_bridge.v
 rocq compile $FLAGS iommu_conformance.v
 rocq compile $FLAGS iommu_proofs.v
 rocq compile $FLAGS cmdq_mmio.v
@@ -342,6 +351,49 @@ axiom_free bitfield_bridge roundtrip_write
 axiom_free bitfield_bridge roundtrip_exec
 axiom_free bitfield_bridge roundtrip_user
 axiom_free bitfield_bridge roundtrip_napot
+# G1 upstream-gen bridge: verbatim sail-riscv PTE predicates generated to Rocq,
+# 32 exhaustive test vectors for pte_is_invalid (V,R,W,X,N) in bool^5,
+# 8 exhaustive test vectors for pte_is_non_leaf (R,W,X) in bool^3.
+axiom_free upstream_gen_bridge vec_v0r0w0x0n0
+axiom_free upstream_gen_bridge vec_v0r0w0x0n1
+axiom_free upstream_gen_bridge vec_v0r0w0x1n0
+axiom_free upstream_gen_bridge vec_v0r0w0x1n1
+axiom_free upstream_gen_bridge vec_v0r0w1x0n0
+axiom_free upstream_gen_bridge vec_v0r0w1x0n1
+axiom_free upstream_gen_bridge vec_v0r0w1x1n0
+axiom_free upstream_gen_bridge vec_v0r0w1x1n1
+axiom_free upstream_gen_bridge vec_v0r1w0x0n0
+axiom_free upstream_gen_bridge vec_v0r1w0x0n1
+axiom_free upstream_gen_bridge vec_v0r1w0x1n0
+axiom_free upstream_gen_bridge vec_v0r1w0x1n1
+axiom_free upstream_gen_bridge vec_v0r1w1x0n0
+axiom_free upstream_gen_bridge vec_v0r1w1x0n1
+axiom_free upstream_gen_bridge vec_v0r1w1x1n0
+axiom_free upstream_gen_bridge vec_v0r1w1x1n1
+axiom_free upstream_gen_bridge vec_v1r0w0x0n0
+axiom_free upstream_gen_bridge vec_v1r0w0x0n1
+axiom_free upstream_gen_bridge vec_v1r0w0x1n0
+axiom_free upstream_gen_bridge vec_v1r0w0x1n1
+axiom_free upstream_gen_bridge vec_v1r0w1x0n0
+axiom_free upstream_gen_bridge vec_v1r0w1x0n1
+axiom_free upstream_gen_bridge vec_v1r0w1x1n0
+axiom_free upstream_gen_bridge vec_v1r0w1x1n1
+axiom_free upstream_gen_bridge vec_v1r1w0x0n0
+axiom_free upstream_gen_bridge vec_v1r1w0x0n1
+axiom_free upstream_gen_bridge vec_v1r1w0x1n0
+axiom_free upstream_gen_bridge vec_v1r1w0x1n1
+axiom_free upstream_gen_bridge vec_v1r1w1x0n0
+axiom_free upstream_gen_bridge vec_v1r1w1x0n1
+axiom_free upstream_gen_bridge vec_v1r1w1x1n0
+axiom_free upstream_gen_bridge vec_v1r1w1x1n1
+axiom_free upstream_gen_bridge nl_r0w0x0
+axiom_free upstream_gen_bridge nl_r0w0x1
+axiom_free upstream_gen_bridge nl_r0w1x0
+axiom_free upstream_gen_bridge nl_r0w1x1
+axiom_free upstream_gen_bridge nl_r1w0x0
+axiom_free upstream_gen_bridge nl_r1w0x1
+axiom_free upstream_gen_bridge nl_r1w1x0
+axiom_free upstream_gen_bridge nl_r1w1x1
 # IOMMU (SSG-4) conformance cross-check: the walker is translate re-rooted (so
 # G1's upstream-oracle agreement transfers), and the invalidation is pinned per
 # platform (VT-d IOTLB Invalidate §6.5.2.3 / SMMU TLBI §4.4 /
