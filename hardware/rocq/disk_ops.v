@@ -34,7 +34,7 @@ Definition cmd_submit (d : DiskRegs) : DiskRegs :=
   {| DiskRegs_cmd_ring_base := d.(DiskRegs_cmd_ring_base);
      DiskRegs_cmd_ring_len := d.(DiskRegs_cmd_ring_len);
      DiskRegs_cmd_head := d.(DiskRegs_cmd_head);
-     DiskRegs_cmd_tail := mword_of_int (Z_of_N (mword_to_N d.(DiskRegs_cmd_tail)) + 1 mod
+     DiskRegs_cmd_tail := mword_of_int ((Z_of_N (mword_to_N d.(DiskRegs_cmd_tail)) + 1) mod
                           Z_of_N (mword_to_N d.(DiskRegs_cmd_ring_len)));
      DiskRegs_cmp_ring_base := d.(DiskRegs_cmp_ring_base);
      DiskRegs_cmp_ring_len := d.(DiskRegs_cmp_ring_len);
@@ -53,7 +53,7 @@ Definition cmp_complete (d : DiskRegs) : DiskRegs :=
      DiskRegs_cmp_ring_base := d.(DiskRegs_cmp_ring_base);
      DiskRegs_cmp_ring_len := d.(DiskRegs_cmp_ring_len);
      DiskRegs_cmp_head := d.(DiskRegs_cmp_head);
-     DiskRegs_cmp_tail := mword_of_int (Z_of_N (mword_to_N d.(DiskRegs_cmp_tail)) + 1 mod
+     DiskRegs_cmp_tail := mword_of_int ((Z_of_N (mword_to_N d.(DiskRegs_cmp_tail)) + 1) mod
                           Z_of_N (mword_to_N d.(DiskRegs_cmp_ring_len)));
      DiskRegs_ctrl := d.(DiskRegs_ctrl);
      DiskRegs_status := d.(DiskRegs_status);

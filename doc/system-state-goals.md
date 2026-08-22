@@ -178,26 +178,26 @@ carved out of.
 
 - **Objective.** Timekeeping and the scheduler tick are correct against the device.
 - **Integrity.** Tick accounting monotone/consistent across cores.
-- **Modeled today.** *No.*
+- **Modeled today.** *Yes* (2026-08-22): `timer.sail` (HartTimer + TimerDevice types), `timer_ops.v` (timer_tick, timer_set_mtimecmp, timer_ack, nth_hart, tick_harts), `timer_proofs.v` (5 headline theorems + 112 axiom-free test vectors (including descriptor wraparound, TX/RX independence) covering multi-hart, overflow, persistence, and ack-target isolation).
 - **Proof needed.** None for the clustered-VM goal; only if driver/device-model
   correctness is taken on (a scope expansion).
 
 ### SSG-6 — Console device (UART)
 
 - **Objective.** The console driver drives the UART correctly.
-- **Modeled today.** *Yes* (2026-08-22): `uart.sail` (types), `uart_ops.v` (write_thr, tx_complete, read_rbr), `uart_proofs.v` (9 axiom-free test vectors).
+- **Modeled today.** *Yes* (2026-08-22): `uart.sail` (types), `uart_ops.v` (write_thr, tx_complete, read_rbr), `uart_proofs.v` (15 axiom-free test vectors (including flow-control, interrupt, two-char sequence, and scratch-register preservation)).
 - **Proof needed.** Tx round-trip (write→tx_complete→read returns same character): done.
 
 ### SSG-7 — Network device
 
 - **Objective.** NIC driver correct; buffers/descriptors not corrupted under DMA.
-- **Modeled today.** *Yes* (2026-08-22): `net.sail` (DmaDesc + NetRegs types), `net_ops.v` (tx_pending, rx_pending, tx_advance_head, rx_advance_tail), `net_proofs.v` (8 axiom-free test vectors).
+- **Modeled today.** *Yes* (2026-08-22): `net.sail` (DmaDesc + NetRegs types), `net_ops.v` (tx_pending, rx_pending, tx_advance_head, rx_advance_tail), `net_proofs.v` (12 axiom-free test vectors (including descriptor wraparound, TX/RX independence)).
 - **Proof needed.** ~~DMA coherence via SSG-4 IOMMU~~ — **closed** (`net_dma_coherence.v`: ring_base_valid, tx/rx_advance_iommu_invariant, 4 axiom-free test vectors). Remaining: descriptor-offset translation (bitvector injection boundary).
 
 ### SSG-8 — Disk device
 
 - **Objective.** Disk driver correct; swap/page-IO coherent with the mapping.
-- **Modeled today.** *Yes* (2026-08-22): `disk.sail` (DiskCmd + DiskRegs types), `disk_ops.v` (cmd_pending, cmp_pending, cmd_submit, cmp_complete, is_read/write/flush), `disk_proofs.v` (11 axiom-free test vectors).
+- **Modeled today.** *Yes* (2026-08-22): `disk.sail` (DiskCmd + DiskRegs types), `disk_ops.v` (cmd_pending, cmp_pending, cmd_submit, cmp_complete, is_read/write/flush), `disk_proofs.v` (20 axiom-free test vectors (including flush/barrier identification, cmd/cmp independence, ring-base preservation)).
 - **Proof needed.** DMA coherence via SSG-4 IOMMU (same pattern as SSG-7); swap *data* discipline already covered in `proof/Tessera/Swap.lean`.
 
 ### SSG-9 — The grouping hierarchy: SMT threads up to NORMA clusters

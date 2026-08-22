@@ -297,6 +297,15 @@ axiom_free timer_proofs      test_vec_init_pending_hart0
 axiom_free timer_proofs      test_vec_tick_increases
 axiom_free timer_proofs      test_vec_set_cmp_then_tick
 axiom_free timer_proofs      test_vec_ack_clears
+# SSG-5 timer: multi-hart + overflow + persistence test vectors
+axiom_free timer_proofs      test_vec_multi_hart_hart0_pending
+axiom_free timer_proofs      test_vec_multi_hart_hart1_not_pending
+axiom_free timer_proofs      test_vec_multi_hart_hart2_not_pending
+axiom_free timer_proofs      test_vec_multi_hart_ack_only_target
+axiom_free timer_proofs      test_vec_two_harts_pending
+axiom_free timer_proofs      test_vec_two_harts_ack_one
+axiom_free timer_proofs      test_vec_overflow_pending
+axiom_free timer_proofs      test_vec_pending_persists_across_ticks
 # intc -> S2.4 bridge: the controller's send+ack realizes the weak-memory
 # broadcast's deliver_ipi ghost step (delivery precedes ack via the device).
 axiom_free intc_proofs      intc_receive_ipi_eq_deliver
@@ -442,6 +451,13 @@ axiom_free uart_proofs uart_tx_complete_sets_tx
 axiom_free uart_proofs uart_read_rbr_returns_char
 axiom_free uart_proofs uart_read_rbr_clears_rx
 axiom_free uart_proofs uart_tx_roundtrip
+# SSG-6 UART: flow-control + interrupt + scratch test vectors
+axiom_free uart_proofs      test_vec_write_blocks_tx
+axiom_free uart_proofs      test_vec_tx_complete_rearms
+axiom_free uart_proofs      test_vec_two_char_sequence
+axiom_free uart_proofs      test_vec_read_clears_rx
+axiom_free uart_proofs      test_vec_tx_complete_sets_rx
+axiom_free uart_proofs      test_vec_scratch_preserved
 # SSG-7 NIC: DMA descriptor ring model.
 axiom_free net_proofs net_default_tx_not_pending
 axiom_free net_proofs net_default_rx_not_pending
@@ -451,6 +467,11 @@ axiom_free net_proofs rx_advance_creates_pending
 axiom_free net_proofs tx_advance_preserves_ring_base
 axiom_free net_proofs rx_advance_preserves_tx_head
 axiom_free net_proofs dma_desc_zero
+# SSG-7 NIC: descriptor wraparound test vectors
+axiom_free net_proofs      test_vec_tx_wraparound
+axiom_free net_proofs      test_vec_tx_wraparound_pending
+axiom_free net_proofs      test_vec_rx_wraparound
+axiom_free net_proofs      test_vec_tx_advance_preserves_rx
 # SSG-7 DMA coherence: NIC ring_base ↔ IOMMU translation
 axiom_free net_dma_coherence dma_default_ring_base_zero
 axiom_free net_dma_coherence dma_default_rx_ring_base_zero
@@ -512,6 +533,16 @@ axiom_free disk_proofs is_read_read
 axiom_free disk_proofs is_write_write
 axiom_free disk_proofs is_flush_flush
 axiom_free disk_proofs disk_cmd_zero_lba
+# SSG-8 disk: barrier/flush + cmd/cmp independence test vectors
+axiom_free disk_proofs      test_vec_flush_identified
+axiom_free disk_proofs      test_vec_flush_not_read
+axiom_free disk_proofs      test_vec_flush_not_write
+axiom_free disk_proofs      test_vec_read_identified
+axiom_free disk_proofs      test_vec_write_identified
+axiom_free disk_proofs      test_vec_submit_preserves_cmd_ring_base
+axiom_free disk_proofs      test_vec_complete_preserves_cmp_ring_base
+axiom_free disk_proofs      test_vec_submit_complete_independent_cmd_head
+axiom_free disk_proofs      test_vec_submit_complete_independent_cmp_head
 axiom_free upstream_ptw_bridge test_read_0
 axiom_free upstream_ptw_bridge test_read_16777216
 axiom_free upstream_ptw_bridge test_ppn

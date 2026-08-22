@@ -76,3 +76,74 @@ Proof. reflexivity. Qed.
 Lemma disk_cmd_zero_lba :
   (Build_DiskCmd (mword_of_int 0) (mword_of_int 0) (mword_of_int 0) (mword_of_int 0) (mword_of_int 0)).(DiskCmd_lba) = mword_of_int 0.
 Proof. reflexivity. Qed.
+
+(* ---- Additional test vectors (SSG-8): barrier, flush, cmd/cmp independence ---- *)
+
+(* Flush command: opcode 0x35 is identified correctly *)
+Definition flush_cmd : DiskCmd :=
+  Build_DiskCmd (mword_of_int 0) (mword_of_int 0) (mword_of_int 0x35) (mword_of_int 0) (mword_of_int 0).
+
+Lemma test_vec_flush_identified :
+  is_flush flush_cmd = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_flush_not_read :
+  is_read flush_cmd = false.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_flush_not_write :
+  is_write flush_cmd = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Read command: opcode 0x20 *)
+Definition read_cmd : DiskCmd :=
+  Build_DiskCmd (mword_of_int 0) (mword_of_int 0) (mword_of_int 0x20) (mword_of_int 0) (mword_of_int 0).
+
+Lemma test_vec_read_identified :
+  is_read read_cmd = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_read_not_flush :
+  is_flush read_cmd = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Write command: opcode 0x28 *)
+Definition write_cmd : DiskCmd :=
+  Build_DiskCmd (mword_of_int 0) (mword_of_int 0) (mword_of_int 0x28) (mword_of_int 0) (mword_of_int 0).
+
+Lemma test_vec_write_identified :
+  is_write write_cmd = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_write_not_read :
+  is_read write_cmd = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Submit preserves cmd_ring_base *)
+Lemma test_vec_submit_preserves_cmd_ring_base :
+  (cmd_submit configured_disk).(DiskRegs_cmd_ring_base) =
+  configured_disk.(DiskRegs_cmd_ring_base).
+Proof. vm_compute. reflexivity. Qed.
+
+(* Complete preserves cmp_ring_base *)
+Lemma test_vec_complete_preserves_cmp_ring_base :
+  (cmp_complete configured_disk).(DiskRegs_cmp_ring_base) =
+  configured_disk.(DiskRegs_cmp_ring_base).
+Proof. vm_compute. reflexivity. Qed.
+
+(* Submit and complete are independent: submit then complete vs complete then submit *)
+Definition disk_submitted_then_completed : DiskRegs :=
+  cmp_complete (cmd_submit configured_disk).
+
+Definition disk_completed_then_submitted : DiskRegs :=
+  cmd_submit (cmp_complete configured_disk).
+
+Lemma test_vec_submit_complete_independent_cmd_head :
+  disk_submitted_then_completed.(DiskRegs_cmd_head) =
+  disk_completed_then_submitted.(DiskRegs_cmd_head).
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_submit_complete_independent_cmp_head :
+  disk_submitted_then_completed.(DiskRegs_cmp_head) =
+  disk_completed_then_submitted.(DiskRegs_cmp_head).
+Proof. vm_compute. reflexivity. Qed.

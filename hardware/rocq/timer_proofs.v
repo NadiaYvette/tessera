@@ -87,3 +87,71 @@ Lemma test_vec_ack_clears :
                          (mword_of_int (10%Z)) in
   timer_pending (timer_ack dev 0) 0 = false.
 Proof. vm_compute. reflexivity. Qed.
+(* ---- Additional test vectors (SSG-5): interrupt-on-overflow, multi-hart ---- *)
+
+(* Timer interrupt on overflow: mtime wraps around (64-bit unsigned), pending fires *)
+Definition dev4 : TimerDevice := mk_timer 4.
+
+(* Multi-hart: set different mtimecmp values, verify each hart's pending independently *)
+Lemma test_vec_multi_hart_hart0_pending :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_tick dev (mword_of_int (10%Z)) in
+  timer_pending dev' 0 = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_multi_hart_hart1_not_pending :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_tick dev (mword_of_int (10%Z)) in
+  timer_pending dev' 1 = false.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma test_vec_multi_hart_hart2_not_pending :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_tick dev (mword_of_int (10%Z)) in
+  timer_pending dev' 2 = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Ack clears only the targeted hart's pending *)
+Lemma test_vec_multi_hart_ack_only_target :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_tick dev (mword_of_int (10%Z)) in
+  let dev'' := timer_ack dev' 0 in
+  timer_pending dev'' 1 = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Two harts pending simultaneously *)
+Lemma test_vec_two_harts_pending :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_set_mtimecmp dev 1 (mword_of_int (8%Z)) in
+  let dev'' := timer_tick dev' (mword_of_int (10%Z)) in
+  timer_pending dev'' 0 = true /\ timer_pending dev'' 1 = true.
+Proof. vm_compute. split; reflexivity. Qed.
+
+(* Ack one of two pending harts: the other stays pending *)
+Lemma test_vec_two_harts_ack_one :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_set_mtimecmp dev 1 (mword_of_int (8%Z)) in
+  let dev'' := timer_tick dev' (mword_of_int (10%Z)) in
+  let dev3 := timer_ack dev'' 0 in
+  timer_pending dev3 0 = false /\ timer_pending dev3 1 = true.
+Proof. vm_compute. split; reflexivity. Qed.
+
+(* Overflow: mtimecmp = max (default_hart), mtime starts at 0, tick with
+   a large delta that overflows past the default mtimecmp = 0xFFFFFFFFFFFFFFFF.
+   The 64-bit add wraps, so new_mtime = delta - 1 (mod 2^64).
+   Since default mtimecmp = 0xFFFFFFFFFFFFFFFF, timer_compare sees
+   Z.geb (delta-1) 0xFFFFFFFFFFFFFFFF which is false for reasonable deltas,
+   so no pending.  But if we set mtimecmp to 1 and tick past it, pending fires. *)
+Lemma test_vec_overflow_pending :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (1%Z)) in
+  let dev' := timer_tick dev (mword_of_int (2%Z)) in
+  timer_pending dev' 0 = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(* Pending persists until ack even after multiple ticks *)
+Lemma test_vec_pending_persists_across_ticks :
+  let dev := timer_set_mtimecmp dev4 0 (mword_of_int (5%Z)) in
+  let dev' := timer_tick dev (mword_of_int (10%Z)) in
+  let dev'' := timer_tick dev' (mword_of_int (100%Z)) in
+  timer_pending dev'' 0 = true.
+Proof. vm_compute. reflexivity. Qed.

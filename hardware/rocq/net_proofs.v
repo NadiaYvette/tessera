@@ -63,3 +63,56 @@ Proof. reflexivity. Qed.
 Lemma dma_desc_zero :
   (Build_DmaDesc (mword_of_int 0) (mword_of_int 0) (mword_of_int 0) (mword_of_int 0)).(DmaDesc_addr) = mword_of_int 0.
 Proof. reflexivity. Qed.
+
+(* ---- Additional test vectors (SSG-7): descriptor wraparound ---- *)
+
+(* TX wraparound: head advances from ring_len-1 back to 0 *)
+Definition configured_net_small : NetRegs :=
+  {| NetRegs_tx_ring_base := mword_of_int 0;
+     NetRegs_tx_ring_len := mword_of_int 4;
+     NetRegs_tx_head := mword_of_int 3;   (* last slot *)
+     NetRegs_tx_tail := mword_of_int 1;   (* one descriptor already consumed *)
+     NetRegs_rx_ring_base := mword_of_int 0;
+     NetRegs_rx_ring_len := mword_of_int 4;
+     NetRegs_rx_head := mword_of_int 0;
+     NetRegs_rx_tail := mword_of_int 0;
+     NetRegs_ctrl := mword_of_int 0;
+     NetRegs_status := mword_of_int 0;
+     NetRegs_irq_status := mword_of_int 0 |}.
+
+(* Head wraps from 3 to 0 (ring_len=4), so head=0, tail=1, pending=true *)
+Lemma test_vec_tx_wraparound :
+  (tx_advance_head configured_net_small).(NetRegs_tx_head) = mword_of_int 0.
+Proof. vm_compute. reflexivity. Qed.
+
+(* After wraparound head=0 != tail=1, so ring is still pending *)
+Lemma test_vec_tx_wraparound_pending :
+  tx_pending (tx_advance_head configured_net_small) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(* RX wraparound: tail advances from ring_len-1 back to 0 *)
+Definition configured_net_rx_wrap : NetRegs :=
+  {| NetRegs_tx_ring_base := mword_of_int 0;
+     NetRegs_tx_ring_len := mword_of_int 4;
+     NetRegs_tx_head := mword_of_int 0;
+     NetRegs_tx_tail := mword_of_int 0;
+     NetRegs_rx_ring_base := mword_of_int 0;
+     NetRegs_rx_ring_len := mword_of_int 4;
+     NetRegs_rx_head := mword_of_int 0;
+     NetRegs_rx_tail := mword_of_int 3;   (* last slot *)
+     NetRegs_ctrl := mword_of_int 0;
+     NetRegs_status := mword_of_int 0;
+     NetRegs_irq_status := mword_of_int 0 |}.
+
+Lemma test_vec_rx_wraparound :
+  (rx_advance_tail configured_net_rx_wrap).(NetRegs_rx_tail) = mword_of_int 0.
+Proof. vm_compute. reflexivity. Qed.
+
+(* TX advance preserves all RX registers *)
+Lemma test_vec_tx_advance_preserves_rx :
+  let n := tx_advance_head configured_net_small in
+  n.(NetRegs_rx_ring_base) = configured_net_small.(NetRegs_rx_ring_base) /\
+  n.(NetRegs_rx_ring_len) = configured_net_small.(NetRegs_rx_ring_len) /\
+  n.(NetRegs_rx_head) = configured_net_small.(NetRegs_rx_head) /\
+  n.(NetRegs_rx_tail) = configured_net_small.(NetRegs_rx_tail).
+Proof. vm_compute. repeat split; reflexivity. Qed.
