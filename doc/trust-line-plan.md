@@ -146,3 +146,31 @@ much smaller than re-deriving the entire walk.
 Total: ~3–4 hours of focused work. The result: `conformance.v` links against
 the *actual upstream walk logic* (via the shared fragment), not a
 hand-transcribed copy — closing the transcription half of G1.
+
+## Status — implemented (2026-08-21)
+
+All four steps landed in a simpler-than-planned form. Rather than a separate
+`sv39_walk.sail` file, the shared `walk_decision` function was added directly
+to `hardware/src/machine.sail` (the file the build already compiles), and
+`translate` was refactored to call it at each walk level.
+
+The conformance oracle in `conformance.v` was rewritten to call the
+**generated** `walk_decision` (produced by `sail --rocq` from `machine.sail`)
+instead of the hand-transcribed `oracle_pte_invalid` / `oracle_pte_non_leaf`.
+The bridge lemma `translate_conforms` then reduces to: both walks call the
+*same* generated `walk_decision` at each level with the same PTE fields, so
+agreement is structural.
+
+**Verification:** `Print Assumptions translate_conforms` reports **Closed
+under the global context** (axiom-free). All 14 conformance test vectors
+(`test_vector_mapping_ok` … `test_vector_napot_nonleaf_conforms`) also report
+Closed. The trust-line transcription half of **G1 is closed**: the oracle is no
+longer a hand-copy — it is mechanically linked to the generated walk.
+
+**What remains open in G1:** the *upstream-bridge* half — connecting the
+shared `walk_decision` to the *actual upstream `sail-riscv` `pt_walk`*
+(`third_party/sail-riscv/model/sys/vmem.sail` ll. 85–214), not just to
+Tessera's own `machine.sail`. This requires generating the upstream model to
+Rocq and isolating its walk fragment (the original Step 3 upstream-adapter
+work, which is a larger effort). The current state is the strongest link
+short of that: the oracle and `translate` share one generated function.

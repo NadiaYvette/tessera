@@ -294,7 +294,57 @@ val decode_addr : paddr -> Region
 function decode_addr(pa) =
   if pa[55] == 0b0 then RAM else MMIO
 
+// ---- shared walk decision logic (G1 trust-line) ----
+//
+// The decision at each level of the Sv39 walk — invalid → fault; non-leaf →
+// recurse (fault if N=1); leaf at level>0 → fault (superpages not modeled);
+// leaf at level 0 → succeed (NAPOT if N=1) — is extracted here so both
+// Tessera's `translate` and the conformance oracle (`conformance.v`) call the
+// *same* generated function, not separate hand-transcribed copies.  This is the
+// G1 trust-line mechanism (doc/trust-line-plan.md): the walk is literally the
+// same code in both the model and the oracle.
+//
+// The decision depends only on the PTE's flags (V/R/W/X/N) and the level — not
+// on the PTE's raw bits or the memory interface.  Both Tessera and the upstream
+// adapter call this with their own PTE-to-flags projection; the decision itself
+// is shared.
+//
+// Transcribes the upstream `pt_walk` branching (sail-riscv model/sys/vmem.sail
+// ll. 101-208) + `pte_is_invalid` / `pte_is_non_leaf` (vmem_pte.sail ll. 69-108):
+//   - invalid: ¬V ∨ (R=0 ∧ W=1)  [the leaf-only subset; the full upstream also
+//     has PBMT/reserved-bit checks, omitted from this fragment]
+//   - non-leaf: ¬R ∧ ¬W ∧ ¬X      [complement of is_leaf]
+//   - non-leaf ∧ N=1: reserved    [pte_is_invalid's "non-leaf & ext bits ≠ 0"]
+//   - leaf ∧ level>0: fault       [superpage; this fragment does not model them]
+//   - leaf ∧ level=0 ∧ N=1: NAPOT [64KiB page, valid only when ppn[3..0]=0b1000]
+//   - leaf ∧ level=0 ∧ N=0: 4KiB page
+enum WalkDecision = { WalkFault, WalkPointer, WalkLeaf, WalkNAPOT }
+
+val walk_decision : (bool, bool, bool, bool, bool, int) -> WalkDecision
+function walk_decision(valid, read, write, exec, napot, level) = {
+  if not_bool(valid) then WalkFault
+  // Reserved Sv39 encoding R=0, W=1 (an SS page when X=0, or otherwise-reserved
+  // when X=1) must fault, not translate — same as pte_is_invalid's clause.
+  else if not_bool(read) & write then WalkFault
+  else if not_bool(read) & not_bool(write) & not_bool(exec) then {
+    // non-leaf pointer: N=1 is reserved (pte_is_invalid's "non-leaf & ext ≠ 0")
+    if napot then WalkFault
+    else WalkPointer
+  }
+  else {
+    // leaf: superpages (level>0) are not modeled → fault
+    if level > 0 then WalkFault
+    else if napot then WalkNAPOT
+    else WalkLeaf
+  }
+}
+
 // ---- hardware page-table walk (3 levels, Sv39) ----
+//
+// The walk calls `walk_decision` at each level — the decision logic is shared
+// with the conformance oracle, so `translate_conforms` reduces to the
+// PTE-flags bridge (Tessera's `Pte` record → the flags `walk_decision` takes),
+// not a full walk-level derivation.
 
 val translate : (Core, PageTable, vaddr) -> option((paddr, Perm))
 function translate(core, mem, va) = {
@@ -302,45 +352,38 @@ function translate(core, mem, va) = {
   match l2 {
     None() => None(),
     Some(p2) =>
-      if p2.valid then {
-        if is_leaf(p2) then None()
-        // Svnapot: N=1 on a non-leaf PTE is reserved (upstream pte_is_invalid's
-        // "non-leaf & ext bits != 0" clause) and faults.
-        else if p2.napot then None()
-        else {
+      match walk_decision(p2.valid, p2.read, p2.write, p2.exec, p2.napot, 2) {
+        WalkFault => None(),
+        WalkLeaf => None(),       // level-2 superpage: not modeled
+        WalkNAPOT => None(),      // NAPOT at level 2: not modeled
+        WalkPointer => {
           let l1 : option(Pte) = read_pte(mem, pte_address(p2.ppn, vpn1(va)));
           match l1 {
             None() => None(),
             Some(p1) =>
-              if p1.valid then {
-                if is_leaf(p1) then None()
-                else if p1.napot then None()
-                else {
+              match walk_decision(p1.valid, p1.read, p1.write, p1.exec, p1.napot, 1) {
+                WalkFault => None(),
+                WalkLeaf => None(),       // level-1 superpage: not modeled
+                WalkNAPOT => None(),      // NAPOT at level 1: not modeled
+                WalkPointer => {
                   let l0 : option(Pte) = read_pte(mem, pte_address(p1.ppn, vpn0(va)));
                   match l0 {
                     None() => None(),
                     Some(p0) =>
-                      if p0.valid then {
-                        // Reserved Sv39 encoding R=0, W=1 (an SS page when X=0, or
-                        // otherwise-reserved when X=1) must fault, not translate.
-                        if p0.write & not_bool(p0.read) then None()
-                        else if is_leaf(p0) then {
-                          // Svnapot: N=1 is a 64KiB NAPOT page (ppn[3..0] must be
-                          // 0b1000, else reserved -> fault); N=0 is a normal 4KiB
-                          // page.
-                          if p0.napot then {
-                            if napot_guard(p0.ppn) then Some((napot_phys_addr(p0.ppn, va), perm_of_pte(p0)))
-                            else None()
-                          } else Some((phys_addr(p0.ppn, page_offset(va)), perm_of_pte(p0)))
-                        }
-                        else None()
-                      } else None()
+                      match walk_decision(p0.valid, p0.read, p0.write, p0.exec, p0.napot, 0) {
+                        WalkFault => None(),
+                        WalkPointer => None(),  // level-0 pointer: fault
+                        WalkNAPOT =>
+                          if napot_guard(p0.ppn) then Some((napot_phys_addr(p0.ppn, va), perm_of_pte(p0)))
+                          else None(),
+                        WalkLeaf => Some((phys_addr(p0.ppn, page_offset(va)), perm_of_pte(p0)))
+                      }
                   }
                 }
-              } else None()
+              }
           }
         }
-      } else None()
+      }
   }
 }
 

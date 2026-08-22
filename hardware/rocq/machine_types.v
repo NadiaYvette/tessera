@@ -866,6 +866,61 @@ Defined.
 Instance dummy_Region : Inhabited Region := { inhabitant := RAM }.
 
 
+Inductive WalkDecision := WalkFault | WalkPointer | WalkLeaf | WalkNAPOT.
+Definition num_of_WalkDecision (arg_ : WalkDecision) : Z :=
+   match arg_ with | WalkFault => 0 | WalkPointer => 1 | WalkLeaf => 2 | WalkNAPOT => 3 end.
+
+Definition WalkDecision_of_num (arg_ : Z) (*(0 <=? arg_) && (arg_ <=? 3)*) : WalkDecision :=
+   let l__0 := arg_ in
+   if Z.eqb (l__0) (0) then WalkFault
+   else if Z.eqb (l__0) (1) then WalkPointer
+   else if Z.eqb (l__0) (2) then WalkLeaf
+   else WalkNAPOT.
+
+Lemma WalkDecision_num_of_roundtrip (x : WalkDecision) : WalkDecision_of_num (num_of_WalkDecision x) = x.
+  destruct x; reflexivity.
+Qed.
+Lemma num_of_WalkDecision_injective (x y : WalkDecision) : num_of_WalkDecision x = num_of_WalkDecision y -> x = y.
+  intro.
+  rewrite <- (WalkDecision_num_of_roundtrip x).
+  rewrite <- (WalkDecision_num_of_roundtrip y).
+  congruence.
+Qed.
+Definition WalkDecision_eq_dec (x y : WalkDecision) : {x = y} + {x <> y}.
+  refine (match Z.eq_dec (num_of_WalkDecision x) (num_of_WalkDecision y) with
+  | left e => left (num_of_WalkDecision_injective x y e)
+  | right ne => right _
+  end).
+  congruence.
+Defined.
+Definition WalkDecision_beq (x y : WalkDecision) : bool :=
+  Z.eqb (num_of_WalkDecision x) (num_of_WalkDecision y).
+Lemma WalkDecision_beq_iff x y : WalkDecision_beq x y = true <-> x = y.
+  unfold WalkDecision_beq.
+  rewrite Z.eqb_eq.
+  split; [apply num_of_WalkDecision_injective | congruence].
+Qed.
+Lemma WalkDecision_beq_refl x : WalkDecision_beq x x = true.
+apply WalkDecision_beq_iff; reflexivity.
+Qed.
+#[export]
+Instance Decidable_eq_WalkDecision : EqDecision WalkDecision := WalkDecision_eq_dec.
+#[export]
+Instance Countable_WalkDecision : Countable WalkDecision.
+refine {|
+  encode x := encode (num_of_WalkDecision x);
+  decode x := z ← decode x; mret (WalkDecision_of_num z);
+|}.
+abstract (
+  intro s; rewrite decode_encode;
+  simpl;
+  rewrite WalkDecision_num_of_roundtrip;
+  reflexivity).
+Defined.
+#[export]
+Instance dummy_WalkDecision : Inhabited WalkDecision := { inhabitant := WalkFault }.
+
+
 Record VtdPasid := {
   VtdPasid_present : bool;
   VtdPasid_s1_root : bits 44;

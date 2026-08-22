@@ -485,31 +485,37 @@ Proof.
   unfold translate. cbn.
   rewrite (read_pte_remove_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va')) Hr2).
   destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va'))) as [p2 |] eqn:Hl2.
-  - cbn. destruct (p2.(Pte_valid)) eqn:Ev2.
-    + cbn. destruct (is_leaf p2) eqn:El2.
-      * reflexivity.
-      * cbn. destruct (p2.(Pte_napot)) eqn:En2.
-        -- reflexivity.
-        -- cbn.
-           assert (Ht2 : is_table p2 = true)
-             by (unfold is_table; rewrite Ev2, El2, En2; reflexivity).
-           rewrite (read_pte_remove_other mem a (pte_address p2.(Pte_ppn) (vpn1 va'))).
-           { destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va'))) as [p1 |] eqn:Hl1.
-             - cbn. destruct (p1.(Pte_valid)) eqn:Ev1.
-               + cbn. destruct (is_leaf p1) eqn:El1.
-                 * reflexivity.
-                 * cbn. destruct (p1.(Pte_napot)) eqn:En1.
-                   -- reflexivity.
-                   -- cbn.
-                      assert (Ht1 : is_table p1 = true)
-                        by (unfold is_table; rewrite Ev1, El1, En1; reflexivity).
-                      rewrite (read_pte_remove_other mem a (pte_address p1.(Pte_ppn) (vpn0 va'))).
-                      { reflexivity. }
-                      { apply (Hr0 p2 p1). reflexivity. exact Ht2. exact Hl1. exact Ht1. }
-               + reflexivity.
-             - reflexivity. }
-           { apply (Hr1 p2). reflexivity. exact Ht2. }
-    + reflexivity.
+  - cbn.
+    destruct (walk_decision (Pte_valid p2) (Pte_read p2) (Pte_write p2)
+                      (Pte_exec p2) (Pte_napot p2) 2) eqn:E2;
+    cbn.
+    + reflexivity.                              (* WalkFault: both walks fault *)
+    + (* WalkPointer: valid /\ non-leaf /\ non-napot; both walks descend to level 1 *)
+      assert (Ht2 : is_table p2 = true).
+      { pose proof (walk_decision_pointer_fields _ _ _ _ _ _ E2) as F2.
+        destruct F2 as [Ev2 [Er2 [Ew2 [Ex2 En2]]]].
+        unfold is_table, is_leaf. rewrite Ev2, Er2, Ew2, Ex2, En2. cbn. reflexivity. }
+      rewrite (read_pte_remove_other mem a (pte_address p2.(Pte_ppn) (vpn1 va'))).
+      { destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va'))) as [p1 |] eqn:Hl1.
+        - cbn.
+          destruct (walk_decision (Pte_valid p1) (Pte_read p1) (Pte_write p1)
+                            (Pte_exec p1) (Pte_napot p1) 1) eqn:E1;
+          cbn.
+          + reflexivity.                        (* WalkFault at level 1 *)
+          + (* WalkPointer: both walks descend to level 0 *)
+            assert (Ht1 : is_table p1 = true).
+            { pose proof (walk_decision_pointer_fields _ _ _ _ _ _ E1) as F1.
+              destruct F1 as [Ev1 [Er1 [Ew1 [Ex1 En1]]]].
+              unfold is_table, is_leaf. rewrite Ev1, Er1, Ew1, Ex1, En1. cbn. reflexivity. }
+            rewrite (read_pte_remove_other mem a (pte_address p1.(Pte_ppn) (vpn0 va'))).
+            { reflexivity. }
+            { apply (Hr0 p2 p1). reflexivity. exact Ht2. exact Hl1. exact Ht1. }
+          + reflexivity.                        (* WalkLeaf at level 1: both fault *)
+          + reflexivity.                        (* WalkNAPOT at level 1: both fault *)
+        - reflexivity. }
+      { apply (Hr1 p2). reflexivity. exact Ht2. }
+    + reflexivity.                              (* WalkLeaf at level 2: both fault *)
+    + reflexivity.                              (* WalkNAPOT at level 2: both fault *)
   - reflexivity.
 Qed.
 

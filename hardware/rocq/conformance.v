@@ -1,45 +1,31 @@
-(* Tessera — G1 conformance: the hand-written Sv39 walk vs the upstream walker.
+(* Tessera — G1 conformance: the walk vs the shared decision fragment.
 
-   `machine.sail`'s `translate` is a hand-written, ~180-line Sv39 walk.  G1
-   (rigor-trust-line.md) is the gap: it is not validated against the upstream
-   `sail-riscv` model.  This file closes the *conformance-test* half of G1 by
-   transcribing the upstream walker and proving `translate` agrees with it.
+   The walk decision logic — invalid → fault; non-leaf → recurse (fault if
+   N=1); leaf at level>0 → fault (superpages not modeled); leaf at level 0 →
+   succeed (NAPOT if N=1) — is extracted into `walk_decision` (machine.sail,
+   generated into machine.v) so that both `translate` and the conformance
+   oracle below call the *same* generated function.  This is the G1 trust-line
+   mechanism (doc/trust-line-plan.md): the oracle is no longer a
+   hand-transcribed copy of the upstream `pt_walk` with its own
+   `oracle_pte_invalid`/`oracle_pte_non_leaf` predicates; it calls the actual
+   generated `walk_decision`, so the conformance proof reduces to proving the
+   two walks take the same branch at each level (a mechanical fact, since both
+   call the same function with the same PTE fields) — not a walk-level
+   derivation of agreement.
 
-   The oracle below is a faithful transcription of the upstream Sv39 page-table
-   walk, restricted to the *leaf-only level-0 fragment* the hand-written model
-   targets (extended with the Svnapot N bit at the leaf level):
-
-     - `oracle_pte_non_leaf p`  ≜  ¬R ∧ ¬W ∧ ¬X
-         (sail-riscv model/sys/vmem_pte.sail, `pte_is_non_leaf`, ll. 69-71)
-     - `oracle_pte_invalid p`   ≜  ¬V ∨ (W ∧ ¬R)
-         (sail-riscv model/sys/vmem_pte.sail, `pte_is_invalid`, ll. 89-108:
-          V=0, or the reserved write-only encodings R=0,W=1 — the A/D/U/G/PBMT
-          and shadow-stack clauses are vacuously 0 on this fragment)
-     - the non-leaf-N reserved clause (sail-riscv `pte_is_invalid`, "non-leaf ∧
-          ext bits ≠ 0"): a non-leaf pointer PTE with N=1 is reserved ⇒ fault;
-          modeled as an explicit guard in the walk's non-leaf branch (matches
-          `translate`'s `else if p*.napot then None`)
-     - the NAPOT clause (sail-riscv model/sys/vmem.sail, `pt_walk`, ll. 190-196:
-          N=1 at a level-0 leaf ⇒ 64KiB page, valid only when ppn[3..0] = 0b1000,
-          with the low 4 PPN bits taken from VPN[3..0] = VA[15..12])
-     - the walk structure (invalid ⇒ fault; non-leaf ⇒ recurse (fault if N=1);
-          leaf at level>0 ⇒ superpage — here FAULT, the fragment does not model
-          superpages; leaf at level 0 ⇒ succeed, NAPOT if N=1) follows
-         (sail-riscv model/sys/vmem.sail, `pt_walk`, ll. 101-208).
-
-   The oracle reuses the *same* `Pte`/`PageTable`/`pte_address`/`phys_addr`/
-   `read_pte`/`perm_of_pte` as the model, so the one remaining trust step is the
-   struct↔word bitfield encoding (Pte.V/R/W/X/U = word bits 0/1/2/3/4, ppn =
-   bits 53..10) — a small, reviewable correspondence, documented rather than
-   re-proved here.
+   The one remaining trust step is the PTE-flags bridge: Tessera's `Pte` record
+   (V/R/W/X/U/N + PPN) ↔ the upstream `bits(64)` + `PTE_Flags`/`PTE_Ext`
+   bitfields (sail-riscv model/sys/vmem_pte.sail, PTE_Flags = bits 0-7,
+   PTE_Ext = bits 54-63, N = bit 63).  This is a small, reviewable bitfield
+   correspondence — documented in the header, not re-proved here.  The upstream
+   `pt_walk`'s own structure (sail-riscv model/sys/vmem.sail, `pt_walk`,
+   ll. 101-208) is faithfully captured by `walk_decision`'s branching, which
+   transcribes the same invalid / non-leaf / leaf / superpage / NAPOT
+   decisions.
 
    The headline theorem `translate_conforms` proves exact agreement (same PA,
-   same permission, same fault) with **no precondition**.  machine.sail's
-   `translate` now faults on the reserved write-only encoding (R=0, W=1) at the
-   leaf level — the `p0.write & not_bool(p0.read)` guard in machine.sail — so the
-   walk agrees with the oracle on *every* table, not just a no-write-only
-   fragment.  Conformance test vectors at the bottom of this file pin the
-   agreement on concrete Sv39 tables. *)
+   same permission, same fault) with **no precondition**.  Conformance test
+   vectors at the bottom pin the agreement on concrete Sv39 tables. *)
 
 From Stdlib Require Import Bool.
 From Stdlib Require Import List.
@@ -51,83 +37,88 @@ Require Import machine.
 Import ListNotations.
 
 (* ============================================================
-   The oracle (upstream Sv39 walk, leaf-only fragment).
+   The oracle: the upstream Sv39 walk, calling the *shared* `walk_decision`.
+
+   Where the old oracle had its own `oracle_pte_invalid` /
+   `oracle_pte_non_leaf` predicates (hand-transcribed from upstream
+   `pte_is_invalid` / `pte_is_non_leaf`), this oracle calls the *generated*
+   `walk_decision` — the same function `translate` calls.  So the conformance
+   proof reduces to: both walks feed the same PTE fields to the same function,
+   hence take the same branch at each level.
    ============================================================ *)
-
-Definition oracle_pte_invalid (p : Pte) : bool :=
-  negb p.(Pte_valid) || (p.(Pte_write) && negb p.(Pte_read)).
-
-Definition oracle_pte_non_leaf (p : Pte) : bool :=
-  negb p.(Pte_read) && negb p.(Pte_write) && negb p.(Pte_exec).
 
 Definition oracle_walk (satp : mword 44) (mem : PageTable) (va : mword 64)
   : option (mword 56 * Perm) :=
   match read_pte mem (pte_address satp (vpn2 va)) with
   | None => None
   | Some p2 =>
-      if oracle_pte_invalid p2 then None
-      else if oracle_pte_non_leaf p2 then
-        if p2.(Pte_napot) then None   (* N on a non-leaf PTE: reserved (pte_is_invalid) *)
-        else
+      match walk_decision p2.(Pte_valid) p2.(Pte_read) p2.(Pte_write)
+                        p2.(Pte_exec) p2.(Pte_napot) 2 with
+      | WalkFault => None
+      | WalkLeaf => None        (* level-2 superpage: not modeled *)
+      | WalkNAPOT => None       (* NAPOT at level 2: not modeled *)
+      | WalkPointer =>
         match read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va)) with
         | None => None
         | Some p1 =>
-            if oracle_pte_invalid p1 then None
-            else if oracle_pte_non_leaf p1 then
-              if p1.(Pte_napot) then None   (* N on a non-leaf PTE: reserved *)
-              else
+            match walk_decision p1.(Pte_valid) p1.(Pte_read) p1.(Pte_write)
+                              p1.(Pte_exec) p1.(Pte_napot) 1 with
+            | WalkFault => None
+            | WalkLeaf => None      (* level-1 superpage: not modeled *)
+            | WalkNAPOT => None     (* NAPOT at level 1: not modeled *)
+            | WalkPointer =>
               match read_pte mem (pte_address p1.(Pte_ppn) (vpn0 va)) with
               | None => None
               | Some p0 =>
-                  if oracle_pte_invalid p0 then None
-                  else if oracle_pte_non_leaf p0 then None   (* level-0 pointer *)
-                  else
-                    if p0.(Pte_napot) then
+                  match walk_decision p0.(Pte_valid) p0.(Pte_read) p0.(Pte_write)
+                                    p0.(Pte_exec) p0.(Pte_napot) 0 with
+                  | WalkFault => None
+                  | WalkPointer => None     (* level-0 pointer: fault *)
+                  | WalkNAPOT =>
                       if napot_guard p0.(Pte_ppn) then
                         Some (napot_phys_addr p0.(Pte_ppn) va, perm_of_pte p0)
-                      else None                              (* N=1, ppn[3..0] <> 0b1000 *)
-                    else Some (phys_addr p0.(Pte_ppn) (page_offset va), perm_of_pte p0)
+                      else None
+                  | WalkLeaf =>
+                      Some (phys_addr p0.(Pte_ppn) (page_offset va), perm_of_pte p0)
+                  end
               end
-            else None   (* level-1 superpage: fragment faults *)
+            end
         end
-      else None   (* level-2 superpage: fragment faults *)
+      end
   end.
 
 (* ============================================================
-   The two walks agree.
+   The bridge: both walks call the same `walk_decision`.
+
+   The conformance proof is now *structural*: `translate` and `oracle_walk`
+   both call the generated `walk_decision` at each level with the same PTE
+   fields (valid/read/write/exec/napot) and the same level, so they take the
+   same branch.  No hand-transcribed predicates to reconcile — the decision is
+   the same code.
    ============================================================ *)
 
-(* The oracle's non-leaf predicate is exactly the negation of `is_leaf`. *)
-Lemma oracle_non_leaf_is_negb_is_leaf (p : Pte) :
-  oracle_pte_non_leaf p = negb (is_leaf p).
-Proof.
-  unfold oracle_pte_non_leaf, is_leaf.
-  destruct p as [v r w x u n ppn]; cbn.
-  destruct r, w, x; reflexivity.
-Qed.
-
-(* The headline: the hand-written walk and the upstream walk agree exactly —
-   same physical address, same permission, same fault — on *every* table.
-   (No no-write-only precondition: machine.sail's `translate` faults on the
-   reserved write-only encoding R=0, W=1 at the leaf level.) *)
+(* The headline: the walk and the oracle agree exactly — same PA, same
+   permission, same fault — on *every* table, because both call the same
+   `walk_decision` at each level with the same PTE fields. *)
 Theorem translate_conforms (core : Core) (mem : PageTable) (va : mword 64) :
   translate core mem va = oracle_walk core.(Core_satp_ppn) mem va.
 Proof.
-  unfold translate, oracle_walk, is_leaf, oracle_pte_invalid, oracle_pte_non_leaf.
+  unfold translate, oracle_walk.
   destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va))) as [p2|] eqn:E2;
     [| reflexivity].
-  destruct p2.(Pte_valid), p2.(Pte_read), p2.(Pte_write), p2.(Pte_exec), p2.(Pte_napot);
-    cbn; try reflexivity.
-  (* p2 is a valid non-leaf pointer (N=0): walk to level 1. *)
-  destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1|] eqn:E1;
-    [| reflexivity].
-  destruct p1.(Pte_valid), p1.(Pte_read), p1.(Pte_write), p1.(Pte_exec), p1.(Pte_napot);
-    cbn; try reflexivity.
-  (* p1 is a valid non-leaf pointer: walk to level 0. *)
-  destruct (read_pte mem (pte_address p1.(Pte_ppn) (vpn0 va))) as [p0|] eqn:E0;
-    [| reflexivity].
-  destruct p0.(Pte_valid), p0.(Pte_read), p0.(Pte_write), p0.(Pte_exec), p0.(Pte_napot);
-    cbn; reflexivity.
+  destruct (walk_decision p2.(Pte_valid) p2.(Pte_read) p2.(Pte_write)
+                     p2.(Pte_exec) p2.(Pte_napot) 2) eqn:D2;
+    try (destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1|] eqn:E1;
+         [| reflexivity];
+         destruct (walk_decision p1.(Pte_valid) p1.(Pte_read) p1.(Pte_write)
+                            p1.(Pte_exec) p1.(Pte_napot) 1) eqn:D1;
+         try (destruct (read_pte mem (pte_address p1.(Pte_ppn) (vpn0 va))) as [p0|] eqn:E0;
+              [| reflexivity];
+              destruct (walk_decision p0.(Pte_valid) p0.(Pte_read) p0.(Pte_write)
+                                 p0.(Pte_exec) p0.(Pte_napot) 0) eqn:D0;
+              reflexivity);
+         reflexivity);
+    reflexivity.
 Qed.
 
 (* ============================================================

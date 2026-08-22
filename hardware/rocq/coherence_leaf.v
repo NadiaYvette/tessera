@@ -19,6 +19,7 @@ Require Import SailStdpp.Operators_mwords. (* eq_vec_true_iff / eq_vec_false_iff
 Require Import machine_types.
 Require Import machine.
 Require Import coherence. (* eq_vec_refl, remove_entry, read_pte_absent_after_remove,
+Arguments walk_decision : simpl never.
                              sfence_vma_va_clears, translate_sfence_invariant, tlb_stale *)
 Import ListNotations.
 
@@ -92,30 +93,88 @@ Proof.
       * exact IH.
 Qed.
 
+(* ============================================================
+   Linking `walk_decision` back to the PTE fields.
+   ============================================================ *)
+
+(* `is_leaf` (the nested if over read/write/exec) is false iff all three are false. *)
+Lemma is_leaf_false_fields (p : Pte) :
+  is_leaf p = false -> Pte_read p = false /\ Pte_write p = false /\ Pte_exec p = false.
+Proof.
+  intros H. unfold is_leaf in H.
+  destruct (Pte_read p) eqn:Er; cbn in H; try discriminate H.
+  destruct (Pte_write p) eqn:Ew; cbn in H; try discriminate H.
+  destruct (Pte_exec p) eqn:Ee; cbn in H; try discriminate H.
+  repeat split; reflexivity.
+Qed.
+
+(* Inversion: if `walk_decision` returns WalkPointer, the PTE is a valid,
+   non-leaf, non-napot entry (independent of the walk level — the pointer branch
+   of `walk_decision` precedes the level check). *)
+Lemma walk_decision_pointer_fields (v r w e n : bool) (lv : Z) :
+  walk_decision v r w e n lv = WalkPointer ->
+  v = true /\ r = false /\ w = false /\ e = false /\ n = false.
+Proof.
+  intros H. unfold walk_decision in H. cbn in H.
+  destruct v; cbn in H; [| discriminate].
+  destruct r; cbn in H.
+  - destruct (Z.gtb lv 0) eqn:Eg; cbn in H; [discriminate |].
+    destruct n; cbn in H; discriminate.
+  - destruct w; cbn in H; [discriminate |].
+    destruct e; cbn in H.
+    + destruct (Z.gtb lv 0) eqn:Eg; cbn in H; [discriminate |].
+      destruct n; cbn in H; discriminate.
+    + destruct n; cbn in H; [discriminate |].
+      repeat split; reflexivity.
+Qed.
+
+(* Forward: a valid, non-leaf, non-napot entry makes the walk descend
+   (WalkPointer), at any level. *)
+Lemma walk_decision_pointer_iff (p : Pte) (lv : Z) :
+  Pte_valid p = true -> is_leaf p = false -> Pte_napot p = false ->
+  walk_decision (Pte_valid p) (Pte_read p) (Pte_write p) (Pte_exec p) (Pte_napot p) lv = WalkPointer.
+Proof.
+  intros Hv Hl Hn.
+  pose proof (is_leaf_false_fields p Hl) as F. destruct F as [Hr [Hw He]].
+  unfold walk_decision. rewrite Hv, Hr, Hw, He, Hn. cbn. reflexivity.
+Qed.
+
 (* If the software walk faults, so does the hardware walk: the two share the same
    read_pte calls on the same memory, and `translate` returns None in exactly the
    cases where `leaf_addr` fails to reach a level-0 entry. *)
 Lemma leaf_addr_none_implies_translate_none (core : Core) (mem : list MemEntry) (va : mword 64) :
   leaf_addr core mem va = None -> translate core mem va = None.
 Proof.
-  unfold leaf_addr, translate. cbn.
-  destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va))) as [p2 |].
-  - cbn. destruct (p2.(Pte_valid)) eqn:Ev2.
-    + cbn. destruct (is_leaf p2) eqn:El2.
-      * reflexivity.
-      * cbn. destruct (p2.(Pte_napot)) eqn:En2.
-        -- reflexivity.
-        -- cbn. destruct (read_pte mem (pte_address p2.(Pte_ppn) (vpn1 va))) as [p1 |].
-           ++ cbn. destruct (p1.(Pte_valid)) eqn:Ev1.
-              ** cbn. destruct (is_leaf p1) eqn:El1.
-                 --- reflexivity.
-                 --- cbn. destruct (p1.(Pte_napot)) eqn:En1.
-                     +++ reflexivity.
-                     +++ intros H. discriminate.
-              ** reflexivity.
-           ++ reflexivity.
-    + reflexivity.
-  - reflexivity.
+  unfold leaf_addr, translate. cbn. intros H.
+  destruct (read_pte mem (pte_address core.(Core_satp_ppn) (vpn2 va))) as [p2|] eqn:Hl2.
+  - (* Some p2 *)
+    destruct (walk_decision (Pte_valid p2) (Pte_read p2) (Pte_write p2)
+                      (Pte_exec p2) (Pte_napot p2) 2) eqn:E2;
+    cbn in *.
+    + reflexivity.                              (* WalkFault: translate=None *)
+    + (* WalkPointer: valid /\ non-leaf /\ non-napot; both walks descend to level 1 *)
+      pose proof (walk_decision_pointer_fields _ _ _ _ _ _ E2) as F2.
+      destruct F2 as [Ev2 [Er2 [Ew2 [Ex2 En2]]]].
+      cbn in H. unfold is_leaf in H.
+      rewrite Ev2, Er2, Ew2, Ex2, En2 in H. cbn in H.
+      destruct (read_pte mem (pte_address (Pte_ppn p2) (vpn1 va))) as [p1|] eqn:Hl1.
+      * (* Some p1 *)
+        cbn in H.
+        destruct (walk_decision (Pte_valid p1) (Pte_read p1) (Pte_write p1)
+                          (Pte_exec p1) (Pte_napot p1) 1) eqn:E1;
+        cbn in *.
+        -- reflexivity.                         (* WalkFault at level 1 *)
+        -- (* WalkPointer at level 1: leaf_addr returns Some, contradicting H *)
+           pose proof (walk_decision_pointer_fields _ _ _ _ _ _ E1) as F1.
+           destruct F1 as [Ev1 [Er1 [Ew1 [Ex1 En1]]]].
+           unfold is_leaf in H. rewrite Ev1, Er1, Ew1, Ex1, En1 in H. cbn in H.
+           discriminate H.
+        -- reflexivity.                         (* WalkLeaf at level 1: translate=None *)
+        -- reflexivity.                         (* WalkNAPOT at level 1: translate=None *)
+      * (* None *) cbn. reflexivity.             (* level-1 read misses: translate=None *)
+    + reflexivity.                              (* WalkLeaf at level 2: translate=None *)
+    + reflexivity.                              (* WalkNAPOT at level 2: translate=None *)
+  - (* None *) reflexivity.
 Qed.
 
 (* The crux of Stage 1.1: after the software walk resolves the leaf address `a`,
@@ -147,7 +206,7 @@ Proof.
                          ---- (* a <> root: the root PTE survives. *)
                               apply eq_vec_false_iff in Eroot.
                               rewrite (read_pte_remove_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) Eroot).
-                              rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn. rewrite En2. cbn.
+                              rewrite Hl2. cbn. rewrite (walk_decision_pointer_iff p2 2 Ev2 El2 En2). cbn.
                               destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
                               ----- (* a = l1: the level-1 PTE was removed; fault at level 1. *)
                                     apply eq_vec_true_iff in El1a.
@@ -155,7 +214,7 @@ Proof.
                               ----- (* a <> l1: the level-1 PTE survives; fault at level 0. *)
                                     apply eq_vec_false_iff in El1a.
                                     rewrite (read_pte_remove_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) El1a).
-                                    rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn. rewrite En1. cbn.
+                                    rewrite Hl1. cbn. rewrite (walk_decision_pointer_iff p1 1 Ev1 El1 En1). cbn.
                                     rewrite Ha. rewrite read_pte_absent_after_remove. reflexivity.
               ** simpl in H. discriminate.
            ++ simpl in H. discriminate.
@@ -200,17 +259,17 @@ Proof.
                          unfold translate. cbn.
                          destruct (eq_vec a (pte_address core.(Core_satp_ppn) (vpn2 va))) eqn:Eroot.
                          ---- apply eq_vec_true_iff in Eroot.
-                              rewrite <- Eroot. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                              rewrite <- Eroot. rewrite read_pte_after_write. cbn. rewrite Hinv. unfold walk_decision. cbn. reflexivity.
                          ---- apply eq_vec_false_iff in Eroot.
                               rewrite (read_pte_after_write_other mem a (pte_address core.(Core_satp_ppn) (vpn2 va)) p Eroot).
-                              rewrite Hl2. cbn. rewrite Ev2. cbn. rewrite El2. cbn. rewrite En2. cbn.
+                              rewrite Hl2. cbn. rewrite (walk_decision_pointer_iff p2 2 Ev2 El2 En2). cbn.
                               destruct (eq_vec a (pte_address p2.(Pte_ppn) (vpn1 va))) eqn:El1a.
                               ----- apply eq_vec_true_iff in El1a.
-                                    rewrite <- El1a. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                                    rewrite <- El1a. rewrite read_pte_after_write. cbn. rewrite Hinv. unfold walk_decision. cbn. reflexivity.
                               ----- apply eq_vec_false_iff in El1a.
                                     rewrite (read_pte_after_write_other mem a (pte_address p2.(Pte_ppn) (vpn1 va)) p El1a).
-                                    rewrite Hl1. cbn. rewrite Ev1. cbn. rewrite El1. cbn. rewrite En1. cbn.
-                                    rewrite Ha. rewrite read_pte_after_write. cbn. rewrite Hinv. reflexivity.
+                                    rewrite Hl1. cbn. rewrite (walk_decision_pointer_iff p1 1 Ev1 El1 En1). cbn.
+                                    rewrite Ha. rewrite read_pte_after_write. cbn. rewrite Hinv. unfold walk_decision. cbn. reflexivity.
               ** simpl in H. discriminate.
            ++ simpl in H. discriminate.
     + simpl in H. discriminate.

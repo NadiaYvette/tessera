@@ -242,43 +242,62 @@ Definition undefined_Region '(tt : unit) : M (Region) :=
 Definition decode_addr (pa : mword 56) : Region :=
    if eq_vec ((access_vec_dec (pa) (55))) (('b"0")) then RAM else MMIO.
 
+Definition undefined_WalkDecision '(tt : unit) : M (WalkDecision) :=
+   (internal_pick ([WalkFault; WalkPointer; WalkLeaf; WalkNAPOT]))  : M (WalkDecision).
+
+Definition walk_decision
+(valid : bool) (read : bool) (write : bool) (exec : bool) (napot : bool) (level : Z)
+: WalkDecision :=
+   if negb (valid) then WalkFault
+   else if andb ((negb (read))) (write) then WalkFault
+   else if andb ((negb (read))) ((andb ((negb (write))) ((negb (exec))))) then
+     if napot then WalkFault
+     else WalkPointer
+   else if Z.gtb (level) (0) then WalkFault
+   else if napot then WalkNAPOT
+   else WalkLeaf.
+
 Definition translate (core : Core) (mem : list MemEntry) (va : mword 64)
 : option ((mword 56 * Perm)) :=
    let l2 : option Pte := read_pte (mem) ((pte_address (core.(Core_satp_ppn)) ((vpn2 (va))))) in
    match l2 with
    | None => None
    | Some p2 =>
-      if p2.(Pte_valid) then
-        if is_leaf (p2) then None
-        else if p2.(Pte_napot) then None
-        else
-          let l1 : option Pte := read_pte (mem) ((pte_address (p2.(Pte_ppn)) ((vpn1 (va))))) in
-          match l1 with
-          | None => None
-          | Some p1 =>
-             if p1.(Pte_valid) then
-               if is_leaf (p1) then None
-               else if p1.(Pte_napot) then None
-               else
-                 let l0 : option Pte := read_pte (mem) ((pte_address (p1.(Pte_ppn)) ((vpn0 (va))))) in
-                 match l0 with
-                 | None => None
-                 | Some p0 =>
-                    if p0.(Pte_valid) then
-                      if andb (p0.(Pte_write)) ((negb (p0.(Pte_read)))) then None
-                      else if is_leaf (p0) then
-                        if p0.(Pte_napot) then
-                          if napot_guard (p0.(Pte_ppn)) then
-                            Some ((napot_phys_addr (p0.(Pte_ppn)) (va), perm_of_pte (p0)))
-                          else None
-                        else
-                          Some ((phys_addr (p0.(Pte_ppn)) ((page_offset (va))), perm_of_pte (p0)))
-                      else None
-                    else None
-                 end
-             else None
-          end
-      else None
+      match walk_decision (p2.(Pte_valid)) (p2.(Pte_read)) (p2.(Pte_write)) (p2.(Pte_exec))
+              (p2.(Pte_napot)) (2) with
+      | WalkFault => None
+      | WalkLeaf => None
+      | WalkNAPOT => None
+      | WalkPointer =>
+         let l1 : option Pte := read_pte (mem) ((pte_address (p2.(Pte_ppn)) ((vpn1 (va))))) in
+         match l1 with
+         | None => None
+         | Some p1 =>
+            match walk_decision (p1.(Pte_valid)) (p1.(Pte_read)) (p1.(Pte_write)) (p1.(Pte_exec))
+                    (p1.(Pte_napot)) (1) with
+            | WalkFault => None
+            | WalkLeaf => None
+            | WalkNAPOT => None
+            | WalkPointer =>
+               let l0 : option Pte := read_pte (mem) ((pte_address (p1.(Pte_ppn)) ((vpn0 (va))))) in
+               match l0 with
+               | None => None
+               | Some p0 =>
+                  match walk_decision (p0.(Pte_valid)) (p0.(Pte_read)) (p0.(Pte_write))
+                          (p0.(Pte_exec)) (p0.(Pte_napot)) (0) with
+                  | WalkFault => None
+                  | WalkPointer => None
+                  | WalkNAPOT =>
+                     if napot_guard (p0.(Pte_ppn)) then
+                       Some ((napot_phys_addr (p0.(Pte_ppn)) (va), perm_of_pte (p0)))
+                     else None
+                  | WalkLeaf =>
+                     Some ((phys_addr (p0.(Pte_ppn)) ((page_offset (va))), perm_of_pte (p0)))
+                  end
+               end
+            end
+         end
+      end
    end.
 
 Definition iommu_walk (root : mword 44) (mem : list MemEntry) (iova : mword 64)

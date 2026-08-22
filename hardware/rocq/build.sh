@@ -62,6 +62,7 @@ FLAGS="-Q $UC/stdpp stdpp -Q $UC/SailStdpp SailStdpp -Q $UC/iris iris"
 rocq compile $FLAGS machine_types.v
 rocq compile $FLAGS machine.v
 rocq compile $FLAGS machine_encoding.v
+rocq compile $FLAGS mword_lemmas.v
 rocq compile $FLAGS coherence.v
 rocq compile $FLAGS coherence_leaf.v
 rocq compile $FLAGS tlb_tags.v
@@ -78,7 +79,6 @@ rocq compile $FLAGS aarch64_tlb.v
 rocq compile $FLAGS aarch64_tlb_proofs.v
 rocq compile $FLAGS sail_arm_tlb_types.v
 rocq compile $FLAGS sail_arm_tlb.v
-rocq compile $FLAGS mword_lemmas.v
 rocq compile $FLAGS aarch64_sail_oracle.v
 rocq compile $FLAGS aarch64_pgcl.v
 rocq compile $FLAGS pgcl_split.v
@@ -257,7 +257,6 @@ axiom_free intc_priority    test_vector_topei_threshold
 axiom_free intc_priority    test_vector_topei_threshold_masks_all
 axiom_free intc_priority    test_vector_topei_none
 axiom_free conformance      translate_conforms
-axiom_free conformance      oracle_non_leaf_is_negb_is_leaf
 axiom_free conformance      test_vector_mapping_ok
 axiom_free conformance      test_vector_writeonly_faults
 axiom_free conformance      test_vector_writeonly_exec_faults
