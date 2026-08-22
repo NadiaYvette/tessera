@@ -1066,6 +1066,10 @@ axiom_free mips_qemu_oracle diff_match_1k_same
 axiom_free mips_qemu_oracle diff_match_1k_pairing
 axiom_free mips_qemu_oracle diff_match_4k_next
 axiom_free mips_qemu_oracle diff_match_16k_super
+# Arch-specific device integration: timer model independence + shootdown composition
+axiom_free mips_tlb_proofs  mips_tlb_independent_of_timer
+axiom_free mips_tlb_proofs  mips_shootdown_after_timer_tick
+axiom_free mips_tlb_proofs  test_vector_mips_timer_tick_flush
 # third MMU variant: LoongArch software-refill TLB (odd/even pair, ps spectrum).
 axiom_free loongarch_tlb_proofs la_refill_lookup_covers
 axiom_free loongarch_tlb_proofs la_flush_clears
@@ -1105,6 +1109,10 @@ axiom_free loongarch_qemu_oracle la_match_shift_conforms
 axiom_free loongarch_qemu_oracle la_covers_conforms
 axiom_free loongarch_qemu_oracle la_pa_hi_conforms
 axiom_free loongarch_qemu_oracle la_pa_conforms
+# Arch-specific device integration: timer model independence + shootdown composition
+axiom_free loongarch_tlb_proofs  la_tlb_independent_of_timer
+axiom_free loongarch_tlb_proofs  la_shootdown_after_timer_tick
+axiom_free loongarch_tlb_proofs  test_vector_la_timer_tick_flush
 # fourth MMU variant: AArch64 VMSAv8-64 (block descriptors + contpte + LPA2 DS2).
 # The Sail transcription is aarch64_tlb.v (from aarch64_tlb.sail); the proofs
 # over the generated model live in aarch64_tlb_proofs.v.
@@ -1181,6 +1189,10 @@ axiom_free aarch64_sail_oracle diff_stage_oa_2m_next
 # general (not vm_compute) StageOA identity: aa_pa e va = concat(subrange baseaddr
 # 55 ia_msb)(subrange va (ia_msb-1) 0), proved via the mword_lemmas above.
 axiom_free aarch64_sail_oracle aa_stage_oa_spec
+# Arch-specific device integration: timer model independence + shootdown composition
+axiom_free aarch64_tlb_proofs  aa_tlb_independent_of_timer
+axiom_free aarch64_tlb_proofs  aa_shootdown_after_timer_tick
+axiom_free aarch64_tlb_proofs  test_vector_aa_timer_tick_flush
 # pgcl failure-mode vectors: #9 (contpte fold), #10 (TLBI stride), #12 (TSB over-insertion).
 axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page0
 axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page1

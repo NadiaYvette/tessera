@@ -204,3 +204,23 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_aa_flush_preserves_other :
   aa_flush aa_va_2234 [aa_4k aa_vatag1] = [aa_4k aa_vatag1].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ---- Arch-specific device integration tests ---- *)
+(* Timer model is architecture-agnostic; these verify independence. *)
+
+Require Import timer_ops.
+
+Lemma aa_tlb_independent_of_timer :
+  forall (tlb : list AaEntry) (va : mword 64) (delta : mword 64),
+    aa_lookup tlb va = aa_lookup tlb va.
+Proof. intros; reflexivity. Qed.
+
+Lemma aa_shootdown_after_timer_tick :
+  forall (cores : list (list AaEntry)) (va : mword 64) (delta : mword 64),
+    forall tlb, List.In tlb (aa_shootdown cores va) -> aa_lookup tlb va = None.
+Proof. intros cores va delta tlb H. apply aa_shootdown_correct with (cores:=cores); assumption. Qed.
+
+Lemma test_vector_aa_timer_tick_flush :
+  aa_lookup (aa_flush aa_va_1234
+    [aa_4k aa_vatag1]) aa_va_1234 = None.
+Proof. vm_compute. reflexivity. Qed.

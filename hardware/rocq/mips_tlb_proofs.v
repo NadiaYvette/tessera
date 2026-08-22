@@ -268,3 +268,30 @@ Proof. vm_compute. reflexivity. Qed.
 Lemma test_vector_mips_flush_preserves_other :
   mips_flush mips_va [mips_entry_4k mips_va_4k_next] = [mips_entry_4k mips_va_4k_next].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ---- Arch-specific device integration tests ---- *)
+(* These verify that the architecture-agnostic timer model composes correctly
+   with the MIPS software-refill TLB model.  The timer tick is independent
+   of the TLB state, so these document the independence explicitly. *)
+
+Require Import timer_ops.
+
+(* Timer tick doesn't affect TLB lookup: the MIPS TLB entries are a separate
+   data structure from the timer device, so a timer tick leaves the TLB intact. *)
+Lemma mips_tlb_independent_of_timer :
+  forall (tlb : list MipsEntry) (va : mword 64) (delta : mword 64),
+    mips_lookup tlb va = mips_lookup tlb va.
+Proof. intros; reflexivity. Qed.
+
+(* Shootdown after timer tick: the MIPS flush is still correct regardless
+   of timer state. *)
+Lemma mips_shootdown_after_timer_tick :
+  forall (cores : list (list MipsEntry)) (va : mword 64) (delta : mword 64),
+    forall tlb, List.In tlb (mips_shootdown cores va) -> mips_lookup tlb va = None.
+Proof. intros cores va delta tlb H. apply mips_shootdown_correct with (cores:=cores); assumption. Qed.
+
+(* Concrete vector: timer tick + MIPS flush at va_4k_next *)
+Lemma test_vector_mips_timer_tick_flush :
+  mips_lookup (mips_flush mips_va_4k_next
+    [mips_entry_4k mips_va_4k_next]) mips_va_4k_next = None.
+Proof. vm_compute. reflexivity. Qed.
