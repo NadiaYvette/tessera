@@ -154,7 +154,7 @@ Definition phipt_hash (sp : mword 56) (part : mword 2) : mword 26 :=
 
 Definition undefined_SlbEntry '(tt : unit) : M (SlbEntry) :=
    (undefined_bool (tt)) >>= fun (w__0 : bool) =>
-   (undefined_bitvector (36)) >>= fun (w__1 : mword 36) =>
+   (undefined_bitvector (14)) >>= fun (w__1 : mword 14) =>
    (undefined_bitvector (20)) >>= fun (w__2 : mword 20) =>
    (undefined_bitvector (4)) >>= fun (w__3 : mword 4) =>
    (undefined_bitvector (4)) >>= fun (w__4 : mword 4) =>
@@ -173,7 +173,7 @@ Fixpoint slb_lookup (slb : list SlbEntry) (va : mword 64) (asid : mword 16) : op
    | [] => None
    | e :: rest =>
       if andb (e.(SlbEntry_valid))
-           ((andb ((eq_vec (e.(SlbEntry_vsid)) ((subrange_vec_dec (va) (63) (28)))))
+           ((andb ((eq_vec (e.(SlbEntry_vsid)) ((subrange_vec_dec (va) (63) (50)))))
                ((orb (e.(SlbEntry_global)) ((eq_vec (e.(SlbEntry_asid)) (asid))))))) then
         Some (e)
       else slb_lookup (rest) (va) (asid)

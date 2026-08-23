@@ -26,7 +26,7 @@ Definition sp_vpn_typ : Type := bits 56.
 
 Record SlbEntry := {
   SlbEntry_valid : bool;
-  SlbEntry_vsid : bits 36;
+  SlbEntry_vsid : bits 14;
   SlbEntry_ppn : bits 20;
   SlbEntry_size : bits 4;
   SlbEntry_perms : bits 4;

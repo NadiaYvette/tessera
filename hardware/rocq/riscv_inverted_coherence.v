@@ -195,7 +195,7 @@ Proof. vm_compute. auto. Qed.
 (* Build concrete SLB entries *)
 Definition slb_entry_256m (vsid : Z) : SlbEntry :=
   {| SlbEntry_valid  := true;
-     SlbEntry_vsid   := 'b"000000000000000000000000000000000001";
+     SlbEntry_vsid   := 'b"00000000000001";
      SlbEntry_ppn    := 'b"00000000000000000001";
      SlbEntry_size   := 'b"0100";
      SlbEntry_perms  := 'b"0111";
@@ -205,7 +205,7 @@ Definition slb_entry_256m (vsid : Z) : SlbEntry :=
 
 Definition slb_entry_other : SlbEntry :=
   {| SlbEntry_valid  := true;
-     SlbEntry_vsid   := 'b"000000000000000000000000000100000000";  (* different VSID *)
+     SlbEntry_vsid   := 'b"00000000000010";  (* different VSID *)
      SlbEntry_ppn    := 'b"00000000000000000010";
      SlbEntry_size   := 'b"0100";
      SlbEntry_perms  := 'b"0111";
@@ -213,9 +213,9 @@ Definition slb_entry_other : SlbEntry :=
      SlbEntry_asid   := 'b"0000000000000001"
   |}.
 
-(* VSID = VA[63:28]. For VSID=1, the '1' must be at position 28. *)
-Definition va_in_slb  : mword 64 := 'b"0000000000000000000000000000000000010000000000000000000000000000".  (* 0x1000_0000 — VA[63:28]=1 *)
-Definition va_not_slb : mword 64 := 'b"0000000000000000000000000000000001000000000000000000000000000000".  (* 0x4000_0000 — VA[63:28]=4 *)
+(* VSID = VA[63:50]. For VSID=1, the '1' must be at position 50. *)
+Definition va_in_slb  : mword 64 := 'b"0000000000000100000000000000000000000000000000000000000000000000".  (* 0x0004_0000_0000_0000 — VA[63:50]=1 *)
+Definition va_not_slb : mword 64 := 'b"0000000000001000000000000000000000000000000000000000000000000000".  (* 0x0008_0000_0000_0000 — VA[63:50]=2 *)
 
 (* Test: SLB hit — VA falls in the segment *)
 Lemma test_vector_slb_hit :
@@ -237,20 +237,20 @@ Lemma test_vector_slb_different_asid :
   slb_lookup [slb_entry_256m 1] va_in_slb asid_2 = None.
 Proof. vm_compute. reflexivity. Qed.
 
-(* Test: SLB hit — segment boundary low (VA = 0x1000_0000, first byte of segment with VSID=1 at position 28) *)
-Definition va_slb_boundary_low : mword 64 := 'b"0000000000000000000000000000000000010000000000000000000000000000".
+(* Test: SLB hit — segment boundary low (VA = 0x0004000000000000, first byte of segment with VSID=1 at position 50) *)
+Definition va_slb_boundary_low : mword 64 := 'b"0000000000000100000000000000000000000000000000000000000000000000".
 Lemma test_vector_slb_hit_boundary_low :
   slb_lookup [slb_entry_256m 1] va_slb_boundary_low asid_1 = Some (slb_entry_256m 1).
 Proof. vm_compute. reflexivity. Qed.
 
-(* Test: SLB hit — segment boundary high (VA = 0x1FFF_FFFF, last byte of segment) *)
-Definition va_slb_boundary_high : mword 64 := 'b"0000000000000000000000000000000000011111111111111111111111111111".
+(* Test: SLB hit — segment boundary high (VA = 0x0007_FFFF_FFFF_FFFF, last byte of segment) *)
+Definition va_slb_boundary_high : mword 64 := 'b"0000000000000111111111111111111111111111111111111111111111111111".
 Lemma test_vector_slb_hit_boundary_high :
   slb_lookup [slb_entry_256m 1] va_slb_boundary_high asid_1 = Some (slb_entry_256m 1).
 Proof. vm_compute. reflexivity. Qed.
 
 (* Test: SLB miss — one byte past segment boundary *)
-Definition va_slb_past_boundary : mword 64 := 'b"0000000000000000000000000000000000100000000000000000000000000000".  (* VSID=2 *)
+Definition va_slb_past_boundary : mword 64 := 'b"0000000000001000000000000000000000000000000000000000000000000000".  (* VSID=2 *)
 Lemma test_vector_slb_miss_past_boundary :
   slb_lookup [slb_entry_256m 1] va_slb_past_boundary asid_1 = None.
 Proof. vm_compute. reflexivity. Qed.

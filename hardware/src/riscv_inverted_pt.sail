@@ -83,7 +83,7 @@ function phipt_hash(sp, part) = {
 
 struct SlbEntry = {
   valid  : bool,
-  vsid   : bits(36),
+  vsid   : bits(14),
   ppn    : bits(20),
   size   : bits(4),
   perms  : bits(4),
@@ -97,7 +97,7 @@ val slb_lookup : (Slb, vaddr, bits(16)) -> option(SlbEntry)
 function slb_lookup(slb, va, asid) = match slb {
   [||] => None(),
   e :: rest =>
-    if e.valid & (e.vsid == va[63 .. 28]) & (e.global | e.asid == asid) then
+    if e.valid & (e.vsid == va[63 .. 50]) & (e.global | e.asid == asid) then
       Some(e)
     else
       slb_lookup(rest, va, asid)
