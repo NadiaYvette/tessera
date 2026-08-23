@@ -99,6 +99,7 @@ rocq compile $FLAGS loongarch_qemu_oracle.v
 rocq compile $FLAGS aarch64_tlb_types.v
 rocq compile $FLAGS aarch64_tlb.v
 rocq compile $FLAGS aarch64_tlb_proofs.v
+rocq compile $FLAGS cross_arch_shootdown.v
 rocq compile $FLAGS sail_arm_tlb_types.v
 rocq compile $FLAGS sail_arm_tlb.v
 rocq compile $FLAGS aarch64_sail_oracle.v
@@ -1255,6 +1256,12 @@ axiom_free aarch64_sail_oracle aa_stage_oa_spec
 # Arch-specific device integration: timer model independence + shootdown composition
 axiom_free aarch64_tlb_proofs  aa_tlb_independent_of_timer
 axiom_free aarch64_tlb_proofs  aa_shootdown_after_timer_tick
+
+# cross-arch generic shootdown module
+axiom_free cross_arch_shootdown generic_shootdown_correct
+axiom_free cross_arch_shootdown mips_shootdown_via_generic
+axiom_free cross_arch_shootdown la_shootdown_via_generic
+axiom_free cross_arch_shootdown aa_shootdown_via_generic
 axiom_free aarch64_tlb_proofs  test_vector_aa_timer_tick_flush
 # pgcl failure-mode vectors: #9 (contpte fold), #10 (TLBI stride), #12 (TSB over-insertion).
 axiom_free aarch64_pgcl test_vector_pgcl9_prefold_page0
