@@ -125,6 +125,7 @@ rocq compile $FLAGS upstream_gen_bridge.v
 rocq compile $FLAGS upstream_ptw_bridge.v
 rocq compile $FLAGS upstream_ptw_types.v
 rocq compile $FLAGS upstream_ptw.v
+rocq compile $FLAGS upstream_walk_conformance.v
 rocq compile $FLAGS uart_types.v
 rocq compile $FLAGS uart_ops.v
 rocq compile $FLAGS uart_proofs.v
@@ -455,6 +456,18 @@ axiom_free upstream_ptw_bridge test_only_l2
 axiom_free upstream_ptw_bridge test_l0_leaf
 # G1 upstream-ptw generated: the actual Sail pt_walk (Z-level, termination_measure)
 axiom_free upstream_ptw _rec_pt_walk
+# G1 upstream-walk conformance (oracle_walk ≈ pt_walk_up_z)
+axiom_free upstream_walk_conformance test_oracle_cross
+axiom_free upstream_walk_conformance test_upstream_cross
+axiom_free upstream_walk_conformance cross_equiv_ppn
+axiom_free upstream_walk_conformance cross_empty_oracle
+axiom_free upstream_walk_conformance cross_empty_upstream
+axiom_free upstream_walk_conformance cross_inv_oracle
+axiom_free upstream_walk_conformance cross_inv_upstream
+axiom_free upstream_walk_conformance test_oracle_cross2
+axiom_free upstream_walk_conformance cross_equiv2_ppn
+axiom_free upstream_walk_conformance test_napot_oracle
+axiom_free upstream_walk_conformance cross_napot_upstream_ppn
 # SSG-6 UART console: 8250/16550 register set, tx/rx round-trip.
 axiom_free uart_proofs uart_default_tx_ready
 axiom_free uart_proofs uart_default_rx_ready
