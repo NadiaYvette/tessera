@@ -18,6 +18,7 @@ UPSTREAM_PTW_SRC="$HW/src/upstream_ptw.sail"
 UART_SRC="$HW/src/uart.sail"
 NET_SRC="$HW/src/net.sail"
 DISK_SRC="$HW/src/disk.sail"
+RIV_INV_SRC="$HW/src/riscv_inverted_pt.sail"
 
 # --- 1. build/install the vendored Rocq stack (stdpp -> iris -> SailStdpp -> gpfsl).
 # When the third_party submodules are checked out, delegate the whole stack to
@@ -67,13 +68,14 @@ sail "$UPSTREAM_PTW_SRC" --rocq --rocq-output-dir "$HERE" -o upstream_ptw
 sail "$UART_SRC" --rocq --rocq-output-dir "$HERE" -o uart
 sail "$NET_SRC" --rocq --rocq-output-dir "$HERE" -o net
 sail "$DISK_SRC" --rocq --rocq-output-dir "$HERE" -o disk
+sail "$RIV_INV_SRC" --rocq --rocq-output-dir "$HERE" -o riscv_inverted_pt
 
 # Dev stdpp (9c7afbb6) lowered its singleton notations {[ x ]} / {[ k := a ]}
 # to level 0, while Sail emits record-update notations
 # {[ r 'with' field := e ]} at level 1; the two then have an incompatible
 # prefix and {[ k := a ]} stops parsing.  Move the (unused) record-update
 # notations to level 0 to restore coexistence with stdpp's singletons.
-sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v" "$HERE/uart_types.v" "$HERE/upstream_ptw_types.v" "$HERE/net_types.v" "$HERE/disk_types.v"
+sed -i 's/\(Build_.*\)(at level 1)\./\1(at level 0)./' "$HERE/machine_types.v" "$HERE/mips_tlb_types.v" "$HERE/loongarch_tlb_types.v" "$HERE/aarch64_tlb_types.v" "$HERE/sail_arm_tlb_types.v" "$HERE/intc_types.v" "$HERE/timer_types.v" "$HERE/upstream_vmem_pte_types.v" "$HERE/uart_types.v" "$HERE/upstream_ptw_types.v" "$HERE/net_types.v" "$HERE/disk_types.v" "$HERE/riscv_inverted_pt_types.v"
 
 # --- 4. compile the generated Rocq against SailStdpp + stdpp + iris ---
 # (run from $HERE so machine.v can resolve `Require Import machine_types`)
@@ -132,6 +134,9 @@ rocq compile $FLAGS net_proofs.v
 rocq compile $FLAGS disk_types.v
 rocq compile $FLAGS disk_ops.v
 rocq compile $FLAGS disk_proofs.v
+rocq compile $FLAGS riscv_inverted_pt_types.v
+rocq compile $FLAGS riscv_inverted_pt.v
+rocq compile $FLAGS riscv_inverted_pt_proofs.v
 rocq compile $FLAGS topology.v
 rocq compile $FLAGS placement.v
 rocq compile $FLAGS disk_dma_coherence.v
@@ -551,6 +556,19 @@ axiom_free disk_proofs      test_vec_submit_preserves_cmd_ring_base
 axiom_free disk_proofs      test_vec_complete_preserves_cmp_ring_base
 axiom_free disk_proofs      test_vec_submit_complete_independent_cmd_head
 axiom_free disk_proofs      test_vec_submit_complete_independent_cmp_head
+# custom RISC-V MMU extension: inverted page table with SLB + residue partitioning
+axiom_free riscv_inverted_pt_proofs phipt_hash_deterministic_eqvec
+axiom_free riscv_inverted_pt_proofs sp_vpn_hash_consistency
+axiom_free riscv_inverted_pt_proofs partition_deterministic
+axiom_free riscv_inverted_pt_proofs covers_implies_same_hash
+axiom_free riscv_inverted_pt_proofs test_hash_4k
+axiom_free riscv_inverted_pt_proofs test_hash_64k
+axiom_free riscv_inverted_pt_proofs test_partition_differs
+axiom_free riscv_inverted_pt_proofs test_partition_same_4
+axiom_free riscv_inverted_pt_proofs test_sp_vpn_4k_agree
+axiom_free riscv_inverted_pt_proofs test_sp_vpn_4k_differ
+axiom_free riscv_inverted_pt_proofs test_sp_vpn_64k_agree
+axiom_free riscv_inverted_pt_proofs test_sp_vpn_64k_differ
 axiom_free upstream_ptw_bridge test_read_0
 axiom_free upstream_ptw_bridge test_read_16777216
 axiom_free upstream_ptw_bridge test_ppn
