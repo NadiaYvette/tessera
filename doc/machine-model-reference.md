@@ -243,13 +243,64 @@ a 56-size superpage spectrum (`g_n = K × 2^(W×n)`, K=256B, W=1, n ∈ [0,55]).
 Features:
 - **Partner hashing** (BKZ-style): additive fold of sp_vpn + partition, linear probe,
   O(1) amortized with no rehashing
-- **SLB** (Segment Lookaside Buffer): POWER9-style 256-entry segment bypass
+- **SLB** (Segment Lookaside Buffer): POWER9-style 256-entry segment cache
 - **Residue-based TLB partitioning**: partition = `size_log2 mod 4`, so each TLB
   partition spans the full size spectrum (avoids Intel's fixed-reach trap)
-- **PhiPT**: the full inverted page table with linear probing
+- **PhiPT**: the full inverted page table with linear probing over all 56 sizes,
+  largest-first (Zipf-order)
 
-Sail source: `hardware/src/riscv_inverted_pt.sail`. QEMU branch: `nadia.chambers/
-satp-custom-mmu` in `~/src/QEMU` (full hash walk implementation + bare-metal test).
+#### SLB design: S=50 segment boundary
+
+The SLB matches on the **VA segment ID** — the top bits of the virtual address.
+The split point S determines both segment size and VSID width:
+
+```
+VA = [63 : S] [S-1 : 0]
+     VSID      intra-segment
+```
+
+| Parameter | Old (S=28) | New (S=50) | Rationale |
+|-----------|-----------|-----------|-----------|
+| Segment size | 256 MiB | 16 PiB | Must exceed max superpage (64 TiB) |
+| VSID bits | 36 | 14 | Still 16,384 segments; 256-entry SLB never thrashes |
+| Max segments | 68B | 16,384 | Typical process uses 2–5; namespace exhaustion impossible |
+
+**Why S=50 specifically:**
+
+1. **Superpage containment**: the max superpage is 64 TiB (size_log2=46). A segment
+   must be ≥ max superpage to avoid a single superpage crossing multiple SLB entries
+   with potentially conflicting VSIDs. S=50 (16 PiB) comfortably exceeds 64 TiB.
+
+2. **POWER reference**: IBM POWER supports 256 MiB and 1 TiB segments. Linux
+   normally uses 256 MiB, but the 1 TiB option exists precisely for large-memory
+   workloads where the SLB would otherwise thrash. Our 16 PiB segments are the
+   logical endpoint of that trajectory: large enough that segmentation *never*
+   fragments.
+
+3. **VSID headroom**: 14 bits = 16,384 segments. POWER hardware has only 32–64 SLB
+   entries yet a single process uses 2–5 active segments. Even with petabyte-scale
+   address spaces and hundreds of concurrent processes, 16K segments won't be
+   exhausted. The remaining bits are available for ASID multiplexing.
+
+4. **64-bit VA**: unlike architectures that truncate at 48 or 57 bits, the inverted
+   PT has no radix-tree cost for wide virtual addresses. Full 64-bit VAs are natural.
+
+**SLB entry layout:**
+
+```
+word0[0]      = valid
+word0[1]      = global
+word0[5:2]    = perms (R/W/X/U bits)
+word0[9:6]    = size (4 bits, for forward-compat)
+word0[29:10]  = PPN (20 bits, placeholder)
+word1[13:0]   = VSID (14-bit segment identifier)
+word1[29:14]  = ASID (16-bit address-space ID)
+word1[63:30]  = reserved
+```
+
+**Translation path (mode 15):** TLB lookup → SLB lookup (gating step) → PHIPT
+probe (all 56 sizes, largest first) → TLB fill. Mode 14 skips the SLB and goes
+directly to the PHIPT.
 
 ## 4. Proven theorems about machine state
 
