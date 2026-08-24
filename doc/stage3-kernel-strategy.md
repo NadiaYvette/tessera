@@ -72,17 +72,27 @@ Rocq/Coq proofs. The following tools have reached maturity (2024–2025):
 | **Verus** | VMware/Community | SMT-based (Z3), annotation-driven; no Coq connection | Active, most ergonomic |
 | **Rocq-of-Rust** | Formal Land | Direct Rust → Rocq translation; targets smart-contract and system code | New (2024–25) |
 
-**RefinedRust is the natural candidate** for Telix because:
-1. It embeds into **Iris** — the same separation logic that Tessera's hardware
-   proofs use (`shootdown_iris.v`, gpfsl weak-memory proofs).
-2. Both sides (kernel code + machine model) speak the *same* specification
-   language, so composition is direct: RefinedRust proves `{ P } kernel_fn { Q }`
-   and hardware theorems prove `Q ⇒ coherence_invariant`.
-3. It handles real (surface) Rust, including `unsafe` blocks that Telix needs
-   for MMIO, `sfence.vma`, and atomic fence insertion.
+**RefinedRust was the initial candidate** for Telix because it embeds
+into **Iris** — the same separation logic that Tessera's hardware proofs use
+(`shootdown_iris.v`, gpfsl weak-memory proofs) — and handles real (surface)
+Rust, including `unsafe` blocks.
+
+However, after further analysis (documented in the whitepaper's verification
+chapter, §Toolchain Selection), **manual Iris heap_lang was chosen instead**.
+The reason: RefinedRust and Aeneas assume the standard library memory model
+and have not been tested on bare-metal kernel code (no `std`, raw MMIO,
+inline assembly, custom allocator).  The adaptation burden is unbounded
+toolchain risk; the manual Iris approach has a bounded, auditable semantic
+gap (the Iris program is read and audited, not a compiler pipeline whose
+translation correctness must itself be proved).  This is the same decision
+seL4 made (manual Isabelle specification rather than an automatic
+C-to-Isabelle translator), for the same reason.
+
+The tool survey above is retained as rationale for *why* manual Iris was
+chosen: each automatic tool was considered and rejected for specific reasons.
 
 The missing piece is **not** a tool — it is a discrete, well-scoped layer of
-~2,000 lines of Rocq: **the machine interface Iris layer** (see §3.6).
+~2,000 lines of Rocq: **the machine interface Iris layer** (see §3.4).
 
 ---
 
@@ -100,19 +110,20 @@ KAUs — and we need to know these operations preserve:
 ### The toolchain connection: both sides already speak Iris
 
 The Tessera hardware proofs use Iris separation logic (the `shootdown_iris.v`
-family). RefinedRust also embeds into Iris. This means:
+family). The kernel's behaviour is specified by hand in Iris heap_lang (the
+same separation logic, same proof assistant). This means:
 
 ```
-Telix (Rust)  ──RefinedRust──►  Coq/Iris model of kernel  ──compose──►  Machine (Tessera)
-                                     │                                      │
-                                     │  Iris separation logic               │  Iris separation logic
-                                     │  (memory ownership,                  │  (TLB ownership,
-                                     │   page-table authority)              │   weak memory, IOMMU)
-                                     └──────────────┬───────────────────────┘
-                                                    │
-                                          Same proof assistant
-                                          Same separation logic
-                                          Different invariants → same composition
+Telix (Rust)  ──manual Iris spec──►  Coq/Iris model of kernel  ──compose──►  Machine (Tessera)
+                                          │                                      │
+                                          │  Iris separation logic               │  Iris separation logic
+                                          │  (memory ownership,                  │  (TLB ownership,
+                                          │   page-table authority)              │   weak memory, IOMMU)
+                                          └──────────────┬───────────────────────┘
+                                                         │
+                                               Same proof assistant
+                                               Same separation logic
+                                               Different invariants → same composition
 ```
 
 A kernel function like `unmap_range()` gets an Iris spec:
@@ -121,16 +132,20 @@ A kernel function like `unmap_range()` gets an Iris spec:
 ```
 
 The hardware's `bc_broadcast_spec` theorem guarantees that following the
-shootdown protocol achieves `¬TLB_entry(va)`. RefinedRust proves the kernel
-follows the protocol. The two proofs **compose**.
+shootdown protocol achieves `¬TLB_entry(va)`. The manual Iris proof shows the
+kernel follows the protocol. The two proofs **compose**.
 
 ### The limitation: kernel Rust ≠ normal Rust
 
 Kernel code has no `std`, uses raw MMIO, executes assembly (`sfence.vma`,
 `mret`), and uses a custom allocator (LLFree, no global `Box`). Tools like
 RefinedRust and Aeneas assume the standard library memory model and have not
-been tested on bare-metal kernel code. The adaptation burden is real but
-well-scoped (~3–6 months of Rocq work to define the machine interface layer).
+been tested on bare-metal kernel code. This is the primary reason manual Iris
+was chosen over automatic translation: the semantic gap between an Iris
+heap_lang spec and the Rust implementation is a single text that is read and
+audited, not a compiler pipeline whose translation correctness must itself be
+proved. The adaptation burden is well-scoped (~3–6 months of Rocq work to
+define the machine interface layer).
 
 ### The redesign makes verification easier
 
@@ -265,28 +280,30 @@ inherits these resources. The existing Tessera theorems (`bc_broadcast_spec`,
 `iommu_shootdown_correct`, etc.) prove that the hardware semantics genuinely
 satisfy these Iris specifications.
 
-### Phase 3.5: RefinedRust integration
+### Phase 3.5: Manual Iris kernel proofs
 
-**Goal**: Apply RefinedRust (or Aeneas) to the Telix kernel's protocol-relevant
-paths, connecting Rust code to the machine interface Iris layer.
+**Goal**: Specify the framekernel core's protocol-relevant paths by hand in
+Iris heap_lang and prove they satisfy the machine interface Iris layer from
+Phase 3.4.
 
-Unlike the earlier "manual extraction" plan, this leverages existing tooling:
+This is the chosen path (not RefinedRust; see §1 above and the whitepaper's
+verification chapter). The kernel's behaviour is modelled by hand, in the style
+of seL4's Isabelle specification:
 
-1. **Translate** the kernel's page-table manipulation, TLB shootdown, and IPI
-   paths from Rust MIR to Coq using RefinedRust
-2. **Annotate** with Iris pre/post-conditions from the machine interface layer
-   (Phase 3.4)
-3. **Prove** that the kernel satisfies the machine interface specs
-4. The hardware theorems guarantee that satisfying the specs implies coherence
+1. **Specify** each kernel function (page-table manipulation, TLB shootdown,
+   IPI send/receive, IOTLB invalidate) as an Iris heap_lang program with
+   pre/post-conditions from the machine interface layer (Phase 3.4)
+2. **Prove** that each function satisfies its machine interface spec
+3. The hardware theorems guarantee that satisfying the specs implies coherence
 
 Target scope: the protocol-relevant code paths only — PTE walk/modify,
 `sfence.vma`, IPI send/receive, IOTLB invalidate. Not the allocator, scheduler,
 filesystem, or personality servers.
 
-Estimated extracted model: 500–1,000 lines of Coq after tooling.
+Estimated Iris model: 500–1,000 lines of Rocq (hand-written, not extracted).
 
 **Parallel track for external pagers**: Each pager (userspace VM server) gets
-its own RefinedRust proof. The pager's spec is "if the kernel gives me PTE
+its own manual Iris proof. The pager's spec is "if the kernel gives me PTE
 ownership, I will manage COW/faults correctly." Since pagers are isolated
 processes, their proofs are independent and can be developed incrementally.
 
@@ -311,14 +328,15 @@ require running both provers simultaneously.
 | **3.2 Contract proofs** | ~2 weeks | Connects to hardware theorems; reusable |
 | **3.3 Kernel-PMC instrumentation** | ~1 week | Can run on real hardware; catches regressions |
 | **3.4 Machine interface Iris layer** | ~3 months | The connecting piece: Iris resources for kernel↔hardware |
-| **3.5 RefinedRust integration** | ~3 months | Prove kernel satisfies machine interface specs |
+| **3.5 Manual Iris kernel proofs** | ~3 months | Prove kernel satisfies machine interface specs |
 | **3.6 Cross-prover refinement** | ~2 weeks | Closes the Lean↔Rocq gap |
 
 The recommended order: **3.1 → 3.2 → 3.3** gives us a concrete deliverable
 (a kernel that traces and verifies its own protocol compliance) in ~4 weeks.
 **3.4** is the critical path for deep verification — it defines the Iris
-resources that both RefinedRust (kernel) and the hardware theorems consume.
-**3.5** then applies the tooling to prove the kernel satisfies the specs.
+resources that both the manual Iris kernel proofs (3.5) and the hardware
+theorems consume.
+**3.5** then hand-writes the Iris heap_lang specs and proves them against 3.4.
 **3.6** closes the Lean↔Rocq gap.
 
 ---
@@ -347,7 +365,7 @@ The redesign splits the prototype's monolithic VM into:
 
 Verification implications:
 - The **framekernel core** is the only part that needs deep verification
-  (RefinedRust + machine interface Iris layer). It's small and well-bounded.
+  (manual Iris heap_lang + machine interface Iris layer). It's small and well-bounded.
 - **External pagers** each get their own, independent proofs. A bug in the Linux
   personality server cannot corrupt the framekernel or other pagers.
 - **Capability channels** between components can be verified at the protocol
@@ -382,8 +400,9 @@ tracing enabled provides end-to-end validation.
 3. **Is the Rust type system sufficient?** Rust's ownership model already
    prevents many classes of bugs (use-after-free, data races). Combined with
    the hardware coherence proofs, the remaining gap is: does the kernel follow
-   the protocol? Rust can't answer that on its own, but RefinedRust can — by
-   connecting Rust's MIR to Iris specs.
+   the protocol? Rust can't answer that on its own — the manual Iris heap_lang
+   specification closes the gap by hand-writing the kernel's behavioural spec
+   and proving it against the machine interface resources.
 
 4. **How does the framekernel's continuation-passing style interact with
    verification?** CPS state machines have explicit, finite state sets — this is
