@@ -5,7 +5,8 @@
 A custom RISC-V MMU extension (proposed satp modes 14 and 15) that replaces the
 traditional hardware-walked radix tree with an **inverted (hashed) page table**,
 a **POWER9-style SLB** segment cache, and **residue-based TLB partitioning**
-covering **56 distinct superpage sizes** down to a 256 B base page.
+covering **42 distinct translation sizes** (41 superpage sizes above the base
+page) down to a 256 B base page.
 
 The extension is modelled in Sail and proved in Rocq as part of the Tessera
 hardware-model verification (§G1–G5 trust line).
@@ -31,13 +32,44 @@ the number of *mappings* (not pages), so superpages **reduce** the table size
 rather than requiring more PTEs.  The result is:
 
 - **VAX-fine protection granularity** (256 B COW/sharing/dirty-tracking)
-- **Large-page TLB reach** (64 KiB–256 MiB superpages, 56 gradations)
+- **Large-page TLB reach** (64 KiB–256 MiB superpages, 42 translation sizes)
 - **No radix-tree walk** (O(1) expected hash lookup)
 - **Provable correctness** (the refill handler is verified, not trusted)
 
 This is the "fine granularity *and* large-page efficiency" thesis that MIPS
 PageGrain demo'd at 1 KiB; 256 B extends it further, recovering the VAX's
 granularity without its pathologies.
+
+### Why Existing Kernels Cannot Operate This MMU
+
+No general-purpose OS in wide use could drive modes 14/15 in anything remotely
+resembling its current form, for two compounding reasons.
+
+**1. Explosive per-page metadata.** Almost every kernel allocates a per-page
+descriptor (`struct page` in Linux, `mem_map[]`-equivalent elsewhere) sized to
+the number of hardware pages.  At 256 B pages that metadata overhead is 16×
+what it is at 4 KiB (and 8× the VAX's 512 B), for the *same* physical RAM.  The
+metadata would rival or exceed the memory it tracks — exactly the
+"Memory Wall" pathology Telix's coremapless design exists to eliminate.  A
+kernel that keeps per-page descriptors cannot survive a 256 B base page
+without a wholesale rewrite of its allocator, page cache, and reverse-mapping
+structures.
+
+**2. Radix-tree emulation is still unworkable.** The few kernels that might
+attempt to dress the inverted page table up as a legacy radix-tree MMU (to
+reuse existing walker/shootdown/reverse-map logic) hit the same wall from the
+other side: a 256 B base page would need a radix tree of ~16 levels over a
+64-bit VA (2^56 pages), whose page-table overhead dwarfs the mapped memory.
+The dense 42-size spectrum cannot be flattened onto a fixed 4-level
+walk without abandoning both the fine granularity and the inverted table's
+size-∝-mappings property.
+
+Both failures are specialisations of the same root cause: this MMU is only
+drivable by a kernel whose memory management is built around extents and an
+inverted structure from the start.  That is precisely what Telix provides
+(morsel allocator, extent accounting, software-managed refill with a verified
+handler), which is why the MMU is a Telix-specific research target rather than
+a drop-in feature for existing kernels.
 
 ## Architecture
 
@@ -52,37 +84,39 @@ Both modes use the same 64-bit VA space (no radix tree → no reason to limit to
 48 bits).  The existing Sv39/Sv48/Sv57 modes are unaffected — modes 14/15 are
 strictly additional.
 
-### Page-Size Spectrum: g_n = K × 2^(W×n)
+### Address-Space Split and Page-Size Spectrum: g_n = K × 2^(W×n)
 
-- **K** (Körnung, grain): 256 B
+The 64-bit VA is split into a **14-bit segment ID** (16,384 segments) and a
+50-bit segment offset.  The segment offset splits again into a **42-bit VPN**
+and an **8-bit offset** within the minimum mapping granularity.
+
+- **K** (Körnung, grain): 256 B (8 offset bits)
+- **Segment**: 2^50 B = 1 PiB (14-bit segment ID)
 - **W** (Sprungweite, jump increment): 1 bit
-- **n** (size index): 0–55 → 56 distinct superpage sizes
+- **n** (size index): 0–41 → 42 distinct translation sizes
 
 | n | Size | n | Size | n | Size |
 |---|------|---|------|---|------|
-| 0 | 256 B | 19 | 128 MiB | 38 | 64 TiB |
-| 1 | 512 B | 20 | 256 MiB | 39 | 128 TiB |
-| 2 | 1 KiB | 21 | 512 MiB | 40 | 256 TiB |
-| 3 | 2 KiB | 22 | 1 GiB | 41 | 512 TiB |
-| 4 | 4 KiB | 23 | 2 GiB | 42 | 1 PiB |
-| 5 | 8 KiB | 24 | 4 GiB | 43 | 2 PiB |
-| 6 | 16 KiB | 25 | 8 GiB | 44 | 4 PiB |
-| 7 | 32 KiB | 26 | 16 GiB | 45 | 8 PiB |
-| 8 | 64 KiB | 27 | 32 GiB | 46 | 16 PiB |
-| 9 | 128 KiB | 28 | 64 GiB | 47 | 32 PiB |
-| 10 | 256 KiB | 29 | 128 GiB | 48 | 64 PiB |
-| 11 | 512 KiB | 30 | 256 GiB | 49 | 128 PiB |
-| 12 | 1 MiB | 31 | 512 GiB | 50 | 256 PiB |
-| 13 | 2 MiB | 32 | 1 TiB | 51 | 512 PiB |
-| 14 | 4 MiB | 33 | 2 TiB | 52 | 1 EiB |
-| 15 | 8 MiB | 34 | 4 TiB | 53 | 2 EiB |
-| 16 | 16 MiB | 35 | 8 TiB | 54 | 4 EiB |
-| 17 | 32 MiB | 36 | 16 TiB | 55 | 8 EiB |
-| 18 | 64 MiB | 37 | 32 TiB | — | — |
+| 0 | 256 B | 14 | 4 MiB | 28 | 64 GiB |
+| 1 | 512 B | 15 | 8 MiB | 29 | 128 GiB |
+| 2 | 1 KiB | 16 | 16 MiB | 30 | 256 GiB |
+| 3 | 2 KiB | 17 | 32 MiB | 31 | 512 GiB |
+| 4 | 4 KiB | 18 | 64 MiB | 32 | 1 TiB |
+| 5 | 8 KiB | 19 | 128 MiB | 33 | 2 TiB |
+| 6 | 16 KiB | 20 | 256 MiB | 34 | 4 TiB |
+| 7 | 32 KiB | 21 | 512 MiB | 35 | 8 TiB |
+| 8 | 64 KiB | 22 | 1 GiB | 36 | 16 TiB |
+| 9 | 128 KiB | 23 | 2 GiB | 37 | 32 TiB |
+| 10 | 256 KiB | 24 | 4 GiB | 38 | 64 TiB |
+| 11 | 512 KiB | 25 | 8 GiB | 39 | 128 TiB |
+| 12 | 1 MiB | 26 | 16 GiB | 40 | 256 TiB |
+| 13 | 2 MiB | 27 | 32 GiB | 41 | 512 TiB |
 
-The upper end of the spectrum is bounded by the 64-bit VA space, not by the page
-table format.  The `sp_vpn` (superpage VPN) is 56 bits, so sizes up to
-K × 2^55 = 2^63 bytes are representable.
+The upper end of the spectrum is bounded by the segment size, not by the page
+table format.  The `sp_vpn` (superpage VPN) is at most 42 bits, so the largest
+representable translation is K × 2^41 = 2^49 bytes = 512 TiB (the whole 42-bit
+VPN field, one bit above the 8-bit offset).  A segment (2^50 B) is exactly twice
+the largest superpage, so no superpage can cross a segment boundary.
 
 ### Hash Function
 
@@ -98,8 +132,9 @@ superpage.
 
 ### SLB (Segment Lookaside Buffer)
 
-256-entry POWER9-style segment cache.  Each entry maps a 256 MiB virtual
-segment to its segment-table pointer.  The SLB is probed first on TLB miss;
+256-entry POWER9-style segment cache.  Each entry maps a 1 PiB virtual segment
+(the 50-bit segment offset implied by the 14-bit segment ID) to its
+segment-table pointer.  The SLB is probed first on TLB miss;
 if it hits, the PHIPT search is restricted to the segment's translations
 (avoiding a full table scan).
 
@@ -128,7 +163,7 @@ TLB → SLB → PHIPT (largest first, Zipf-optimised)
 
 1. **TLB hit** (fast path): most-specific matching entry → PA
 2. **SLB hit**: narrow PHIPT search to the segment
-3. **SLB miss**: full PHIPT search, 56 sizes largest-first
+3. **SLB miss**: full PHIPT search, 42 sizes largest-first
 
 With the Zipf distribution of superpage sizes (peak at the allocation unit Z,
 short left tail, long right tail), the "largest first" strategy averages O(1)
