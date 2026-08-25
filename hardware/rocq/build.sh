@@ -142,6 +142,8 @@ rocq compile $FLAGS riscv_inverted_pt_proofs.v
 rocq compile $FLAGS riscv_inverted_coherence.v
 rocq compile $FLAGS topology.v
 rocq compile $FLAGS placement.v
+# K1.5 kernel-side capability transport model (pure stdpp, no iris dependency)
+rocq compile $FLAGS cap_transport_model.v
 rocq compile $FLAGS disk_dma_coherence.v
 rocq compile $FLAGS net_dma_coherence.v
 rocq compile $FLAGS iommu_conformance.v
@@ -549,6 +551,27 @@ axiom_free placement core0_core1_same_node
 axiom_free placement core0_core1_same_domain
 axiom_free placement core2_core3_same_node
 axiom_free placement core2_core3_same_domain
+# K1.5 capability transport (Layer-A model, cap_transport_model.v): the four
+# headline invariants — the gate is necessary (cap_unforgeable), the gate is
+# sufficient after a grant (no amplification, copy semantics), sends are never
+# lost, and recv is FIFO — plus the table bookkeeping lemmas they rest on.
+axiom_free cap_transport_model cap_unforgeable
+axiom_free cap_transport_model gated_send_requires_cap
+axiom_free cap_transport_model gated_send_queues_msg
+axiom_free cap_transport_model grant_amplification_none
+axiom_free cap_transport_model grant_occupied_dest_none
+axiom_free cap_transport_model grant_success_copies
+axiom_free cap_transport_model grant_preserves_others
+axiom_free cap_transport_model alloc_slot_fills_slot
+axiom_free cap_transport_model alloc_slot_preserves_others
+axiom_free cap_transport_model free_slot_invalidates
+axiom_free cap_transport_model port_send_full_none
+axiom_free cap_transport_model port_send_appends
+axiom_free cap_transport_model port_recv_empty_none
+axiom_free cap_transport_model port_recv_fifo
+axiom_free cap_transport_model has_port_cap_sound
+axiom_free cap_transport_model has_port_cap_replace_nth
+axiom_free cap_transport_model has_port_cap_after_grant
 # SSG-8 disk device: command/completion ring model
 axiom_free disk_proofs disk_default_cmd_not_pending
 axiom_free disk_proofs disk_default_cmp_not_pending
