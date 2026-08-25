@@ -27,17 +27,27 @@ pagers, and continuation-passing style demand a different code
 structure.  Building side-by-side lets the prototype guide the
 redesign without being entangled by it.
 
+The sketch below is the *intent* (prototype and second-round side by
+side in one repo).  The **actual repository layout** (2026-08-25) is:
+`kernel/` is the frozen prototype (it already owns that path and the
+`telix-kernel` crate name), and the second-round kernel grows in a new
+`kernel-v2/` crate next to it.  The repo/build mechanics of that split
+(standalone cargo workspace, neutral-CWD build entry, host-testable
+`no_std`-in-kernel crate) are recorded in Telix's
+[`docs/kernel-v2-build-plan.md`](~/src/telix/docs/kernel-v2-build-plan.md)
+— the planning here is authoritative for strategy/order; that document
+is authoritative for the Telix-repo mechanics.
+
 ```
 telix/
-├── prototype/          ← first-round, frozen, reference + test harnesses
-│   ├── src/
-│   └── tests/
-└── kernel/             ← second-round, verified, built incrementally
-    ├── framekernel/    ← Phase 1: page tables, shootdown, IPI, IOMMU
-    ├── allocator/       ← LLFree (lock-free, coremapless)
-    ├── pagers/          ← external pagers (COW, ZFOD, page cache)
-    ├── personality/    ← Linux, Windows, Zircon, OpenHarmony servers
-    └── drivers/        ← device drivers (userspace, untrusted)
+├── kernel/             ← first-round prototype (frozen), reference + harnesses
+└── kernel-v2/          ← second-round, verified, built incrementally (OWN workspace)
+    ├── src/caps/       ← K1.5: capability transport (done, host-tested)
+    ├── framekernel/    ← K2: page tables, shootdown, IPI, IOMMU
+    ├── allocator/       ← K3: LLFree (lock-free, coremapless)
+    ├── pagers/          ← K7-K8: external pagers (COW, ZFOD, page cache)
+    ├── personality/    ← K9: Linux, Windows, Zircon, OpenHarmony servers
+    └── drivers/        ← K10: device drivers (userspace, untrusted)
 ```
 
 ---
@@ -50,6 +60,7 @@ each stage, not by what would be fastest to boot.
 | Phase | Component | Lines (est.) | Verification | Dependency |
 |-------|-----------|-------------|--------------|------------|
 | **K1** | Machine interface Iris layer | ~2,000 Rocq | Proved against Tessera machine model | Tessera hardware proofs (done) |
+| **K1.5** | Capability transport (cap table, ports, message passing) | ~900 Rust + Iris spec | Manual Iris against K1 resources (decided 2026-08-25; Rust host-tested in `kernel-v2/src/caps/`) | K1 |
 | **K2** | Framekernel core: PTE walk/modify, sfence.vma, IPI send/recv | ~1,500 Rust | Manual Iris against K1 resources | K1 |
 | **K3** | LLFree allocator (lock-free, coremapless) | ~1,000 Rust | Manual Iris (or trusted primitive) | K1 |
 | **K4** | TLB shootdown protocol implementation | ~500 Rust | Manual Iris composing K1 + S2 theorems | K1, K2 |
@@ -141,3 +152,17 @@ architectures) can proceed in parallel with K1–K2.
 4. **External pager independence**: each pager gets its own proof,
    but the capability-channel protocol between pager and framekernel
    must be verified first (K7).  This is the dependency that gates K8+.
+
+5. **K1 minimal subset for K1.5**: the capability-transport spec needs
+   only a slice of the machine interface (memory/alloc resources,
+   gpfsl for the lock-free rings, the intc wakeup ghost step, SSG-1
+   scoping).  Recommended: define the minimal K1 subset first so K1.5
+   is not blocked on the full ~2,000-line K1 layer.
+
+6. **Ring refinement scope**: the port queue's lock-free-ring
+   refinement (gpfsl) is a later milestone; confirm it stays out of
+   K1.5's initial scope.
+
+7. **Transport wakeup path**: cross-partition `recv` blocking + IPI
+   wakeup composes with the SSG-3 theorems (`bc_machine_ipi_step_via_
+   intc`); the concrete spec for it is a K1.5 follow-up.
